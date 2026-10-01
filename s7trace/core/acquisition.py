@@ -75,7 +75,7 @@ class Acquirer(threading.Thread):
         self.on_sample = on_sample
         self.stats = Stats()
         self.t0 = 0.0
-        self._stop = threading.Event()
+        self._stop_evt = threading.Event()
         self._factory = client_factory or (lambda: snap7.client.Client())
         self.plan: list[ReadBlock] = build_plan(self.signals, mode)
 
@@ -110,7 +110,7 @@ class Acquirer(threading.Thread):
         """Precise sleep (time.sleep is high-res on Windows, Event.wait is ~15 ms).
         Returns True if stop was requested."""
         while True:
-            if self._stop.is_set():
+            if self._stop_evt.is_set():
                 return True
             rem = target - time.perf_counter()
             if rem <= 0:
@@ -119,7 +119,7 @@ class Acquirer(threading.Thread):
 
     # ------------------------------------------------------------ lifecycle
     def stop(self) -> None:
-        self._stop.set()
+        self._stop_evt.set()
 
     def run(self) -> None:
         self.on_state("connecting", f"Łączenie z {self.host}:{self.port}…")
@@ -132,7 +132,7 @@ class Acquirer(threading.Thread):
         self.on_state("running", f"Połączono z {self.host} (rack={self.rack}, slot={self.slot}).")
         k = 0
         try:
-            while not self._stop.is_set():
+            while not self._stop_evt.is_set():
                 sched = self.t0 + k * self.cycle
                 if self._sleep_until(sched):
                     break
@@ -174,8 +174,8 @@ class Acquirer(threading.Thread):
             client.disconnect()
         except Exception:
             pass
-        while not self._stop.is_set():
-            if self._stop.wait(2.0):
+        while not self._stop_evt.is_set():
+            if self._stop_evt.wait(2.0):
                 break
             try:
                 c = self._connect()

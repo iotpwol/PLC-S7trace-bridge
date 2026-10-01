@@ -5,3 +5,4 @@ __pycache__/
 snapshots/
 prof.out
 .claude/
+dist/

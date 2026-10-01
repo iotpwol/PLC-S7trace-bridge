@@ -1,0 +1,21 @@
+S7Trace - wersja przenosna (nie wymaga Pythona ani internetu)
+
+URUCHOMIENIE
+  S7Trace.bat          - uruchamia program
+  S7Trace-debug.bat    - to samo z oknem konsoli (gdy program sie nie uruchamia - pokaze blad)
+  Symulator.bat        - lokalny symulator PLC; w programie wpisz IP 127.0.0.1:1102, rack 0, slot 2
+
+INSTALACJA NA INNYM KOMPUTERZE
+  Skopiuj / rozpakuj CALY folder S7Trace (np. do C:\Dev\S7Trace - trzymaj sciezke krotka).
+  Nie trzeba niczego instalowac.
+
+GDZIE SA DANE
+  Konfiguracja (zakladki, sygnaly, trigger):  %APPDATA%\S7Trace\config.json
+  Zapisy triggera (snapshots), REC:           podfolder snapshots\ obok S7Trace.bat
+
+AKTUALIZACJA
+  Podmien tylko folder app\ (python\ zostaje bez zmian).
+
+STEROWNIK
+  S7-300/400: rack 0, slot 2.  S7-1200/1500: rack 0, slot 1,
+  w CPU wlaczony 'Permit access with PUT/GET', DB bez 'Optimized block access'.
