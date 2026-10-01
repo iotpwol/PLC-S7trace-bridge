@@ -39,6 +39,7 @@ class CsvRecorder:
         self._f.write("# s7trace v1\n")
         for s in signals:
             self._f.write("# signal: " + json.dumps(s.to_dict(), ensure_ascii=False) + "\n")
+        self._k = len(signals)
         self._w = csv.writer(self._f)
         self._w.writerow(["time_s", "timestamp"] + [s.name for s in signals])
         self._n = 0
@@ -46,7 +47,8 @@ class CsvRecorder:
 
     def write(self, t: float, values) -> None:
         ts = (self.start_wall + timedelta(seconds=t)).isoformat(timespec="milliseconds")
-        self._w.writerow([f"{t:.4f}", ts] + ["" if x != x else f"{x:.10g}" for x in values])
+        self._w.writerow([f"{t:.4f}", ts] + ["" if x != x else f"{x:.10g}" for x in values[: self._k]]
+                         + [""] * max(self._k - len(values), 0))
         self._n += 1
         if self._n % 40 == 0:
             self._f.flush()

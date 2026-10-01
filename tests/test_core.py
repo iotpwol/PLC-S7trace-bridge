@@ -246,3 +246,16 @@ def test_peak_decimate_nan_gap_and_speed():
     t2, y2 = render.peak_decimate(t, y, 1000)
     assert _t.perf_counter() - t0 < 0.05
     assert np.isnan(y2).any() and np.all(np.diff(t2) > 0)
+
+
+def test_buffer_add_columns_and_short_rows():
+    b = TraceBuffer(1)
+    for i in range(5):
+        b.append(float(i), [float(i)])
+    b.add_columns(2)
+    b.append(5.0, [5.0])                                  # row from before the change (old width)
+    b.append(6.0, [6.0, 1.0, 2.0])
+    t, v = b.snapshot()
+    assert v.shape == (7, 3) and list(v[:, 0]) == [0, 1, 2, 3, 4, 5, 6]
+    assert np.isnan(v[:6, 1:]).all() and list(v[6]) == [6.0, 1.0, 2.0]
+    assert b.last_row().shape == (3,)

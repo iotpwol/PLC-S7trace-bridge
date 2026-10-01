@@ -45,3 +45,25 @@ def test_process_acquirer_connect_error():
     a.start()
     a.join(15)
     assert states[-1] == "error"
+
+
+def test_add_signal_while_running(sim):
+    """A signal appended during the run is read from then on; earlier samples keep NaN in its column."""
+    sim.db1[100] = 0b00000001
+    sim.mk[7] = 42
+    first = [Signal(name="b0", dtype="BOOL", db=1, byte=100, bit=0)]
+    buf = TraceBuffer(1)
+    a = ProcAcquirer("127.0.0.1:11105", 0, 2, 25, first, planner.MODE_BLOCKS, buf)
+    a.start()
+    time.sleep(1.5)
+    both = first + [Signal(name="m7", source="M", dtype="BYTE", byte=7)]
+    buf.add_columns(1)                       # buffer first, then the reader process
+    a.update_signals(both)
+    time.sleep(2.0)
+    a.stop()
+    a.join(8)
+    t, v = buf.snapshot()
+    assert v.shape[1] == 2
+    assert v[0, 0] == 1.0 and v[0, 1] != v[0, 1]                 # old sample: new column is NaN
+    assert list(v[-1]) == [1.0, 42.0]                            # newest sample: both signals read
+    assert not (v[:, 0] != v[:, 0]).any()                        # the old signal never lost a sample

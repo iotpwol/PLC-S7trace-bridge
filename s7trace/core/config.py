@@ -19,6 +19,7 @@ def app_dir() -> str:
 
 @dataclass
 class TabConfig:
+    name: str = ""                 # tab title; empty = use the IP
     ip: str = "192.168.0.1"
     rack: int = 0
     slot: int = 2
@@ -29,6 +30,10 @@ class TabConfig:
     y_min: float = 0.0
     y_max: float = 10.0
     show_points: bool = False
+    autonumber: bool = True        # numbering of new signal names (D160B -> D160C)
+    name_mode: str = "prev"        # "prev" = from previous signal, "own" = SIG1, SIG2, ...
+    own_name: str = "SIG"
+    offset_step: float = -1.1      # Offset Y step for newly added signals
     signals: list[Signal] = field(default_factory=lambda: [Signal(name="SIG1")])
     trigger: TriggerConfig = field(default_factory=TriggerConfig)
 
@@ -40,8 +45,8 @@ class TabConfig:
     @classmethod
     def from_dict(cls, d: dict) -> "TabConfig":
         c = cls()
-        for k in ("ip", "rack", "slot", "cycle_ms", "mode", "window_s", "auto_y",
-                  "y_min", "y_max", "show_points"):
+        for k in ("name", "ip", "rack", "slot", "cycle_ms", "mode", "window_s", "auto_y",
+                  "y_min", "y_max", "show_points", "autonumber", "name_mode", "own_name", "offset_step"):
             if k in d:
                 setattr(c, k, d[k])
         if d.get("signals"):

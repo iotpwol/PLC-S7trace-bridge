@@ -45,18 +45,20 @@ def test_tab_config_roundtrip(app):
 
 
 def test_signals_dialog_roundtrip_and_lock(app):
+    from s7trace.ui.signals_dialog import CI
     sigs = make_cfg().signals
     d = SignalsDialog(sigs, False, lambda: [Symbol("Sym", "M", "INT", 0, 10)])
     got = d.signals()
     assert [s.to_dict() for s in got] == [s.to_dict() for s in sigs]
     d._add()
-    assert len(d.signals()) == 3 and d.signals()[2].name == "SIG3"
+    assert len(d.signals()) == 3 and d.signals()[2].name == "C"      # B -> C
     d._remove()
     assert len(d.signals()) == 2
     locked = SignalsDialog(sigs, True, lambda: [])
-    assert not locked.btn_add.isEnabled()
-    assert not locked.table.cellWidget(0, 4).isEnabled()    # byte locked
-    assert locked.table.cellWidget(0, 6).isEnabled()        # offset editable
+    assert locked.btn_add.isEnabled()                                # adding is allowed while running
+    assert not locked.table.cellWidget(0, CI["byte"]).isEnabled()    # byte locked
+    assert locked.table.cellWidget(0, CI["offset"]).isEnabled()      # offset editable
+    assert locked.table.cellWidget(0, CI["plot"]).isEnabled()        # chart checkbox editable
 
 
 def test_import_csv_into_tab(app, tmp_path, monkeypatch):

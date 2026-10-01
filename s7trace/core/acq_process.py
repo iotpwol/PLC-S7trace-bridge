@@ -65,6 +65,8 @@ def _child_main(params: dict, conn) -> None:
                 msg = conn.recv()
                 if msg and msg[0] == "stop":
                     acq.stop()
+                elif msg and msg[0] == "signals":
+                    acq.update_signals([Signal.from_dict(d) for d in msg[1]])
         except (EOFError, OSError):
             acq.stop()
             break
@@ -103,6 +105,13 @@ class ProcAcquirer:
     def stop(self) -> None:
         try:
             self._conn.send(("stop",))
+        except (OSError, ValueError):
+            pass
+
+    def update_signals(self, signals: list[Signal]) -> None:
+        """Hand a longer signal list (old ones first, new ones appended) to the running child process."""
+        try:
+            self._conn.send(("signals", [s.to_dict() for s in signals]))
         except (OSError, ValueError):
             pass
 

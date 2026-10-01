@@ -39,6 +39,10 @@ class Signal:
     offset_y: float = 0.0       # display offset
     gain: float = 1.0           # display gain
     color: str = DEFAULT_COLORS[0]
+    comment: str = ""           # "Opis"
+    enabled: bool = True        # "Pobieraj" - read from the PLC
+    plot: bool = True           # "Wykres" - draw on the chart
+    fmt: str = "Domyślnie"      # "Sposób wyświetlania" of the current value
 
     @property
     def size(self) -> int:
@@ -76,6 +80,43 @@ class Signal:
         if s.dtype not in TYPES:
             s.dtype = "BOOL"
         return s
+
+
+FORMATS = ["Domyślnie", "Dziesiętnie", "HEX", "BIN", "TRUE/FALSE", "Naukowo"]
+
+
+def address_key(s: "Signal") -> tuple:
+    """Identity of the PLC address: source, type, DB (only for DB), byte, bit (only for BOOL)."""
+    return (s.source, s.dtype, s.db if s.source == "DB" else None, s.byte,
+            s.bit if s.dtype == "BOOL" else None)
+
+
+def format_value(sig: "Signal", v, fmt: str | None = None) -> str:
+    """Current value as text according to the 'Sposób wyświetlania' choice."""
+    fmt = fmt or sig.fmt
+    if v is None or v != v:
+        return "—"
+    t = sig.dtype
+    if fmt == "TRUE/FALSE":
+        return "TRUE" if v else "FALSE"
+    if fmt in ("HEX", "BIN"):
+        bits = 1 if t == "BOOL" else TYPES[t][0] * 8
+        if t == "REAL":
+            raw = struct.unpack(">I", struct.pack(">f", v))[0]
+        elif t == "LREAL":
+            raw = struct.unpack(">Q", struct.pack(">d", v))[0]
+        else:
+            raw = int(v) & ((1 << bits) - 1)
+        if fmt == "HEX":
+            return f"16#{raw:0{max(bits // 4, 1)}X}"
+        b = f"{raw:0{bits}b}"
+        groups = [b[max(i - 4, 0):i] for i in range(len(b), 0, -4)]
+        return "2#" + "_".join(reversed(groups))
+    if fmt == "Naukowo":
+        return f"{v:.6E}"
+    if t in ("REAL", "LREAL"):
+        return f"{v:.6g}"
+    return str(int(v))
 
 
 def default_signal(index: int, existing: list[Signal] | None = None) -> Signal:

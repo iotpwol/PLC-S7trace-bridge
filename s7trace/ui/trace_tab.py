@@ -19,9 +19,11 @@ from ..core.config import TabConfig
 from ..core.csvio import CsvRecorder, read_csv, write_csv
 from ..core.planner import MODES
 from ..core.symbols import Symbol
+from ..core.netaddr import ACCEPTABLE, ipv4_state
 from ..core.types import Signal
 from .plotview import PlotView
 from .signals_dialog import SignalsDialog
+from .validators import Ipv4Validator
 
 RACK_SLOT_HELP = (
     "Rack / Slot:\n\n"
@@ -56,11 +58,14 @@ class TraceTab(QWidget):
     titleChanged = QtSignal(str)
     _stateRaw = QtSignal(str, str)     # from worker thread
 
-    def __init__(self, cfg: TabConfig, symbols: callable, parent=None):
+    def __init__(self, cfg: TabConfig, symbols: callable, ui_state: dict | None = None,
+                 other_tabs: callable = None, parent=None):
         super().__init__(parent)
         self.cfg = cfg
         self.symbols = symbols
-        self.buffer = TraceBuffer(len(cfg.signals))
+        self.ui_state = ui_state if ui_state is not None else {}
+        self.other_tabs = other_tabs or (lambda: [])
+        self.buffer = TraceBuffer(len(self.display_signals()))
         self.acq: ProcAcquirer | None = None
         self.state = "stopped"
         self.status_msg = "Gotowy."
@@ -107,6 +112,11 @@ class TraceTab(QWidget):
 
         f = group("Połączenie")
         self.ed_ip = QLineEdit()
+        self.ed_ip.setValidator(Ipv4Validator(self.ed_ip))
+        self.ed_ip.setMaxLength(21)
+        self.ed_ip.setPlaceholderText("np. 192.168.0.1")
+        self.ed_ip.setToolTip("Adres IPv4 sterownika (opcjonalnie :port). IPv6 i nazwy hostów nie są obsługiwane.")
+        self.ed_ip.textChanged.connect(self._ip_check)
         self.sp_rack = _spin(0, 7, 0)
         self.sp_slot = _spin(0, 31, 2)
         help_btn = QPushButton("?")
@@ -233,7 +243,41 @@ class TraceTab(QWidget):
 
     # ============================================================= config
     def title(self) -> str:
-        return self.ed_ip.text().strip() or "PLC"
+        return self.cfg.name.strip() or self.ed_ip.text().strip() or "PLC"
+
+    def rename(self, name: str) -> None:
+        self.cfg.name = name.strip()
+        self.titleChanged.emit(self.title())
+
+    def display_signals(self) -> list[Signal]:
+        """Signals that are read from the PLC (= buffer columns, curves, CSV columns)."""
+        return [s for s in self.cfg.signals if s.enabled]
+
+    def current_values(self) -> list | None:
+        """Latest value per signal of cfg.signals (None = not read now)."""
+        if self.state not in ("running", "reconnecting"):
+            return None
+        row = self.buffer.last_row()
+        if row is None:
+            return None
+        out, k = [], 0
+        for s in self.cfg.signals:
+            if s.enabled and k < len(row):
+                out.append(float(row[k]))
+                k += 1
+            else:
+                out.append(None)
+        return out
+
+    def _ip_check(self, text: str = "") -> None:
+        bad = ipv4_state(self.ed_ip.text()) != ACCEPTABLE
+        if bool(self.ed_ip.property("invalid")) != bad:
+            self.ed_ip.setProperty("invalid", bad)
+            self.ed_ip.style().unpolish(self.ed_ip)
+            self.ed_ip.style().polish(self.ed_ip)
+
+    def apply_plot_theme(self, bg: str, fg: str) -> None:
+        self.plot.apply_theme(bg, fg)
 
     def _load_cfg(self):
         self._loading = True
@@ -294,11 +338,12 @@ class TraceTab(QWidget):
         keep = select if select is not None else self.cb_tsig.currentText()
         self.cb_tsig.blockSignals(True)
         self.cb_tsig.clear()
-        self.cb_tsig.addItems([s.name for s in self.cfg.signals])
-        if keep in [s.name for s in self.cfg.signals]:
+        names = [s.name for s in self.display_signals()]
+        self.cb_tsig.addItems(names)
+        if keep in names:
             self.cb_tsig.setCurrentText(keep)
         self.cb_tsig.blockSignals(False)
-        self.plot.set_signals(self.cfg.signals)
+        self.plot.set_signals(self.display_signals())
 
     # ============================================================ handlers
     def _on_auto_y(self, on: bool):
@@ -358,19 +403,26 @@ class TraceTab(QWidget):
         if self.state != "stopped":
             return
         c = self._collect()
-        if not c.signals:
-            QMessageBox.information(self, "S7Trace", "Dodaj przynajmniej jeden sygnał (przycisk 'Sygnały...').")
+        if ipv4_state(c.ip) != ACCEPTABLE:
+            QMessageBox.warning(self, "S7Trace", "Niepoprawny adres IP. Wpisz adres IPv4, np. 192.168.0.1 "
+                                "(opcjonalnie z portem: 127.0.0.1:1102).")
+            self.ed_ip.setFocus()
             return
-        self.buffer.reset(len(c.signals))
-        self._run_signals = [Signal.from_dict(s.to_dict()) for s in c.signals]
-        self.plot.set_signals(c.signals)
+        run = self.display_signals()
+        if not run:
+            QMessageBox.information(self, "S7Trace", "Brak sygnałów do pobierania. Dodaj sygnały albo zaznacz "
+                                    "„Pobierz” w oknie 'Sygnały...'.")
+            return
+        self.buffer.reset(len(run))
+        self._run_signals = [Signal.from_dict(s.to_dict()) for s in run]
+        self.plot.set_signals(run)
         self.plot.clear_trigger_marks()
         self._pending.clear()
         self.engine = trg.TriggerEngine(c.trigger)
         self.trig_state = "armed" if c.trigger.enabled else "idle"
         self.btn_pause.setChecked(False)
         self.acq = acq = ProcAcquirer(
-            c.ip, c.rack, c.slot, c.cycle_ms, c.signals, c.mode, self.buffer,
+            c.ip, c.rack, c.slot, c.cycle_ms, run, c.mode, self.buffer,
             on_state=lambda s, m: self._stateRaw.emit(s, m),
             on_sample=lambda t, v: self._pending.append((t, list(v))))
         self.plot.time_source = lambda a=acq: (time.perf_counter() - a.t0) if a.t0 else self.buffer.last_time()
@@ -446,7 +498,8 @@ class TraceTab(QWidget):
             t, vals = self._pending.popleft()
             if self.recorder:
                 self.recorder.write(t, vals)
-            if self.trig_state == "armed" and tc.enabled and tc.signal in names:
+            if self.trig_state == "armed" and tc.enabled and tc.signal in names \
+                    and names.index(tc.signal) < len(vals):
                 if self.engine.feed(vals[names.index(tc.signal)]):
                     self.trig_t, self.trig_win = t, self.plot.window
                     pre = min(tc.pretrigger, self.trig_win)
@@ -526,7 +579,7 @@ class TraceTab(QWidget):
         m = (t >= x0) & (t <= x1)
         if not m.any():
             raise ValueError("brak próbek w zakresie")
-        sigs = self._run_signals or self.cfg.signals
+        sigs = self._run_signals or self.display_signals()
         write_csv(path, sigs, t[m], v[m], self.start_wall)
 
     def export_window(self):
@@ -569,24 +622,49 @@ class TraceTab(QWidget):
 
     def edit_signals(self):
         locked = self.state != "stopped"
-        dlg = SignalsDialog(self.cfg.signals, locked, self.symbols, self)
+        c = self.cfg
+        opts = {"autonumber": c.autonumber, "name_mode": c.name_mode, "own_name": c.own_name,
+                "offset_step": c.offset_step}
+        dlg = SignalsDialog(self.cfg.signals, locked, self.symbols, opts, self.current_values,
+                            self.other_tabs, self.ui_state.setdefault("signals_dialog", {}), self)
         if not dlg.exec():
             return
-        new = dlg.signals()
+        c.autonumber, c.name_mode = dlg.opts["autonumber"], dlg.opts["name_mode"]
+        c.own_name, c.offset_step = dlg.opts["own_name"], dlg.opts["offset_step"]
+        self.apply_signals(dlg.signals(), locked)
+
+    def apply_signals(self, new: list[Signal], locked: bool) -> None:
         old = self.cfg.signals
-        if locked:
-            for o, n in zip(old, new):
+        if locked:       # structure of existing signals is fixed while running: display attributes change,
+            for o, n in zip(old, new):                      # new signals can only be appended at the end
                 o.name, o.offset_y, o.gain, o.color = n.name, n.offset_y, n.gain, n.color
+                o.comment, o.plot, o.fmt = n.comment, n.plot, n.fmt
+            self._append_live(new[len(old):])
         else:
-            struct = lambda L: [(s.source, s.dtype, s.db, s.byte, s.bit) for s in L]
-            if struct(old) != struct(new) and len(self.buffer):
-                self.buffer.reset(len(new))
-            elif len(new) != self.buffer.n:
-                self.buffer.reset(len(new))
+            addr = lambda L: [(s.source, s.dtype, s.db, s.byte, s.bit) for s in L if s.enabled]
+            if addr(old) != addr(new) or sum(s.enabled for s in new) != self.buffer.n:
+                self.buffer.reset(sum(s.enabled for s in new))
             self.cfg.signals = new
-            self._run_signals = [Signal.from_dict(s.to_dict()) for s in new]
+            self._run_signals = [Signal.from_dict(s.to_dict()) for s in new if s.enabled]
         self._refresh_signal_widgets()
         self.plot.touch()
+
+    def _append_live(self, added: list[Signal]) -> None:
+        """Add signals during a running connection: buffer gets NaN-filled columns, the acquisition process
+        gets the longer list and starts reading them from its next cycle."""
+        if not added:
+            return
+        self.cfg.signals.extend(added)
+        fetched = [Signal.from_dict(s.to_dict()) for s in added if s.enabled]
+        if not fetched:
+            return
+        self.buffer.add_columns(len(fetched))              # first the buffer, then the reader (row widths)
+        self._run_signals.extend(fetched)
+        if self.acq is not None and self.state != "stopped":
+            self.acq.update_signals(self._run_signals)
+        if self.recorder:                                  # new header = new REC file
+            self._close_recorder()
+            self._open_recorder()
 
     # ================================================================ REC
     def _on_rec(self, on: bool):

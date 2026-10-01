@@ -58,4 +58,25 @@ Typy: BOOL, BYTE, SINT, USINT, WORD, INT, UINT, DWORD, DINT, UDINT, REAL, LREAL.
 * Symbole (Plik → Importuj symbole): tablica tagów TIA (.xlsx/.csv), źródło DB z TIA (.db/.scl) i XML,
   Step 7 (.sdf/.asc/.seq). Potem „Sygnały… → Z symboli…”.
   Offsety w DB liczone według zasad wyrównania S7 dla bloków nieoptymalizowanych.
+* Okno „Sygnały…”: kolumny Pobierz ✓ / Wykres ✓ / Nazwa / Aktualna wartość / Sposób wyświetlania
+  (Domyślnie, Dziesiętnie, HEX 16#…, BIN 2#…, TRUE/FALSE, Naukowo) / Źródło / Typ / DB / Bajt / Bit / Offset Y / Gain / Kolor / Opis.
+  „Dodaj” dopisuje wiersz zawsze na końcu; nazwa idzie za wierszem z kursorem (`D160B`→`D160C`, `123M1`→`123M2`).
+  Zdublowane nazwy: czerwone tło. Zdublowane adresy (źródło, typ, DB, bajt, bit): żółte tło.
+  Najechanie na wiersz pokazuje wszystkie dane zmiennej (z opisem i bieżącą wartością).
+  Prawy przycisk na nagłówku: ukryj / pokaż kolumnę; „Offset Y”: skoryguj wszystkie, zmień krok;
+  „Nazwa”: auto-numerowanie, nazwa z poprzedniej zmiennej / własna. „Zapisz/Wczytaj listę”, „Z innej karty…”.
+  Kolejność wierszy zmieniasz chwytając numer wiersza (lewa kolumna) i przeciągając go na inny wiersz.
+  Podczas trwającego połączenia można DODAWAĆ nowe zmienne (Dodaj / Z symboli…) — po OK są pobierane od następnego
+  cyklu, w starszych próbkach mają przerwę; istniejących wierszy (adres, kolejność, usuwanie) nie zmienisz do Stop.
+  Jeśli trwa REC, po dodaniu zmiennej zapis przechodzi do nowego pliku (z nową kolumną).
+* Karty są na górze po prawej (w wierszu menu): dwuklik / F2 = zmiana nazwy, prawy przycisk = duplikuj, zamknij.
+* Widok → Interfejs…: kolory (okna, pola edycyjne, tabele, menu, wykres…) i czcionka, z podglądem na żywo.
+  Profil kolorów: Ciemny / Jasny / Systemowy (podąża za trybem aplikacji w Windows, także na żywo) / Własny
+  (ustawia się sam po ręcznej zmianie koloru; też w Widok → Profil kolorów).
+  Konfiguracje interfejsu: „Zapisz jako…” tworzy plik .json (każdy parametr w osobnej linii) w
+  `%APPDATA%\S7Trace\interfejs\`; zapisane wybierasz z listy w oknie Interfejs albo z Widok → Zapisane konfiguracje
+  interfejsu (tuż pod „Interfejs…”); „Wczytaj z pliku…” otwiera plik z dowolnego miejsca.
+* Pole IP przyjmuje tylko IPv4 (opcjonalnie `:port`), błędny adres jest podświetlony i blokuje Start.
+* Pamiętane: karty, sygnały, trigger, widok, motyw, rozmiar i położenie okna, kolumny okna sygnałów
+  (autozapis co 20 s i przy zamknięciu).
 * Konfiguracja zapisywana przy zamknięciu w `%APPDATA%\S7Trace\config.json` (zakładki, sygnały, trigger).

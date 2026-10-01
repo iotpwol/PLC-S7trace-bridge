@@ -78,6 +78,7 @@ class Acquirer(threading.Thread):
         self._stop_evt = threading.Event()
         self._factory = client_factory or (lambda: snap7.client.Client())
         self.plan: list[ReadBlock] = build_plan(self.signals, mode)
+        self._new_signals: list[Signal] | None = None
 
     # ------------------------------------------------------------------ io
     def _connect(self):
@@ -117,6 +118,16 @@ class Acquirer(threading.Thread):
                 return False
             time.sleep(min(rem, 0.05))
 
+    def update_signals(self, signals: list[Signal]) -> None:
+        """Replace the signal list on the fly (signals may only be appended); applied before the next read."""
+        self._new_signals = [Signal.from_dict(s.to_dict()) for s in signals]
+
+    def _apply_new_signals(self) -> None:
+        new, self._new_signals = self._new_signals, None
+        if new:
+            self.plan = build_plan(new, self.mode)
+            self.signals = new
+
     # ------------------------------------------------------------ lifecycle
     def stop(self) -> None:
         self._stop_evt.set()
@@ -136,6 +147,8 @@ class Acquirer(threading.Thread):
                 sched = self.t0 + k * self.cycle
                 if self._sleep_until(sched):
                     break
+                if self._new_signals is not None:
+                    self._apply_new_signals()
                 a = time.perf_counter()
                 try:
                     vals = self._read_all(client)

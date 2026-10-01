@@ -6,6 +6,7 @@ from typing import Callable
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import QObject, Qt, Signal as QtSignal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 from ..core import render
@@ -111,7 +112,7 @@ class PlotView(QWidget):
         self.legend.clear()
         self.curves, self.points, self.ov_curves = [], [], []
         for s in signals:
-            c = pg.PlotDataItem(pen=pg.mkPen(s.color, width=1), connect="finite", name=s.name)
+            c = pg.PlotDataItem(pen=pg.mkPen(s.color, width=1), connect="finite")
             p = pg.PlotDataItem(pen=None, symbol="o", symbolSize=4, symbolBrush=s.color,
                                 symbolPen=None)
             o = pg.PlotDataItem(pen=pg.mkPen(s.color, width=1), connect="finite")
@@ -121,8 +122,34 @@ class PlotView(QWidget):
             self.curves.append(c)
             self.points.append(p)
             self.ov_curves.append(o)
+        self._rebuild_legend()
         self._ov_version = -1
         self._dirty = True
+
+    def _rebuild_legend(self) -> None:
+        self.legend.clear()
+        for c, s in zip(self.curves, self.signals):
+            if s.plot:
+                self.legend.addItem(c, s.name)
+
+    def apply_theme(self, bg: str, fg: str) -> None:
+        """Chart colours from the 'Interfejs' settings."""
+        self.glw.setBackground(bg)
+        pen = pg.mkPen(fg)
+        for pl in (self.plot, self.ov):
+            for ax in ("left", "bottom"):
+                a = pl.getAxis(ax)
+                a.setPen(pen)
+                a.setTextPen(pen)
+        self.plot.setLabel("left", "Value")
+        self.plot.setLabel("bottom", "Time")
+        c = QColor(bg)
+        c.setAlpha(170)
+        self.legend.setBrush(pg.mkBrush(c))
+        self.legend.setPen(pen)
+        self.legend.setLabelTextColor(fg)
+        self.readout.setStyleSheet(f"background: rgba({c.red()},{c.green()},{c.blue()},200); color: {fg};"
+                                   f" border: 1px solid {fg}; padding: 4px; font-family: Consolas, monospace;")
 
     def set_follow(self, on: bool) -> None:
         self.follow = on
@@ -317,7 +344,7 @@ class PlotView(QWidget):
         for k, s in enumerate(self.signals):
             if k >= len(self.curves):
                 break
-            if len(t) == 0 or k >= v.shape[1]:
+            if not s.plot or len(t) == 0 or k >= v.shape[1]:
                 self.curves[k].setData([], [])
                 self.points[k].setData([], [])
                 continue
@@ -357,6 +384,9 @@ class PlotView(QWidget):
             for k, s in enumerate(self.signals):
                 if k >= len(self.ov_curves) or k >= v.shape[1]:
                     break
+                if not s.plot:
+                    self.ov_curves[k].setData([], [])
+                    continue
                 xs, ys = render.curve_data(t, v[:, k], s.gain, s.offset_y, None, max_points=2000)
                 self.ov_curves[k].setData(xs, ys, connect="finite")
                 fin = ys[np.isfinite(ys)]

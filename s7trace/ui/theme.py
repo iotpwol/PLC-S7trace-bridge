@@ -1,48 +1,192 @@
-"""Dark theme similar to the reference screenshots."""
-from PySide6.QtGui import QColor, QPalette
+"""Configurable look of the application (colours + font), applied through palette + stylesheet."""
+from __future__ import annotations
+
+import json
+import os
+
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QFont, QGuiApplication, QPalette
 from PySide6.QtWidgets import QApplication
 
-QSS = """
-QWidget { font-size: 9pt; }
-QMainWindow, QDialog { background: #2b2b2b; }
-QGroupBox { border: 1px solid #3c3c3c; border-radius: 3px; margin-top: 14px; padding-top: 6px; background: #303030; }
-QGroupBox::title { subcontrol-origin: margin; left: 2px; top: -2px; color: #d8d8d8; }
-QLabel { color: #d0d0d0; }
-QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {
-    background: #1e1e1e; color: #f0f0f0; border: 1px solid #3a3a3a; border-radius: 2px; padding: 2px 4px;
-    selection-background-color: #2a82da; }
-QLineEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled {
-    background: #2a2a2a; color: #777; }
-QComboBox QAbstractItemView { background: #1e1e1e; color: #f0f0f0; selection-background-color: #2a82da; }
-QPushButton { background: #3a3a3a; color: #e8e8e8; border: 1px solid #4a4a4a; border-radius: 2px; padding: 4px 12px; }
-QPushButton:hover { background: #454545; }
-QPushButton:pressed, QPushButton:checked { background: #1f5f9f; border-color: #2a82da; }
-QPushButton:disabled { background: #2f2f2f; color: #6a6a6a; border-color: #363636; }
-QTableWidget { background: #262626; gridline-color: #3a3a3a; color: #e0e0e0; }
-QHeaderView::section { background: #333; color: #bbb; border: 1px solid #3f3f3f; padding: 3px; }
-QMenuBar, QMenu { background: #2b2b2b; color: #e0e0e0; }
-QMenu::item:selected, QMenuBar::item:selected { background: #3d6fa5; }
-QTabBar::tab { background: #333; color: #ddd; padding: 5px 12px; border: 1px solid #444; }
-QTabBar::tab:selected { background: #444; }
-QToolTip { background: #202020; color: #eee; border: 1px solid #555; }
+from ..core.config import app_dir
+
+# key -> (label shown in the 'Interfejs' dialog, default dark colour)
+COLOR_KEYS: dict[str, tuple[str, str]] = {
+    "window_bg": ("Tło okna", "#2b2b2b"),
+    "panel_bg": ("Tło paneli (ramki grup)", "#303030"),
+    "text": ("Tekst", "#d0d0d0"),
+    "edit_bg": ("Tło okienek edycyjnych", "#1e1e1e"),
+    "edit_text": ("Tekst okienek edycyjnych", "#f0f0f0"),
+    "button_bg": ("Tło przycisków", "#3a3a3a"),
+    "button_text": ("Tekst przycisków", "#e8e8e8"),
+    "table_bg": ("Tło tabeli", "#262626"),
+    "table_text": ("Tekst tabeli", "#e0e0e0"),
+    "header_bg": ("Tło nagłówków tabeli", "#333333"),
+    "menu_bg": ("Tło menu", "#2b2b2b"),
+    "menu_text": ("Tekst menu", "#e0e0e0"),
+    "tab_bg": ("Tło kart (zakładek)", "#333333"),
+    "tab_selected": ("Aktywna karta", "#444444"),
+    "accent": ("Kolor zaznaczenia", "#2a82da"),
+    "plot_bg": ("Tło wykresu", "#000000"),
+    "plot_fg": ("Osie i opisy wykresu", "#d0d0d0"),
+}
+
+DARK = {k: v[1] for k, v in COLOR_KEYS.items()}
+DARK.update(profile="dark", font_family="", font_size=9)
+
+LIGHT = dict(DARK)
+LIGHT.update(
+    window_bg="#f0f0f0", panel_bg="#e6e6e6", text="#202020", edit_bg="#ffffff", edit_text="#101010",
+    button_bg="#e1e1e1", button_text="#101010", table_bg="#ffffff", table_text="#101010",
+    header_bg="#dcdcdc", menu_bg="#f0f0f0", menu_text="#101010", tab_bg="#dcdcdc",
+    tab_selected="#ffffff", accent="#2a82da", plot_bg="#ffffff", plot_fg="#303030", profile="light")
+
+PRESETS = {"Ciemny (domyślny)": DARK, "Jasny": LIGHT}
+
+# colour profile: dark / light follow the presets, system follows the Windows app mode, custom = own colours
+PROFILES = [("dark", "Ciemny"), ("light", "Jasny"), ("system", "Systemowy"), ("custom", "Własny")]
+PROFILE_KEYS = [k for k, _ in PROFILES]
+
+
+def system_is_dark() -> bool:
+    """Windows 'app mode' (Qt >= 6.5); older systems without a dark mode report light."""
+    try:
+        return QGuiApplication.styleHints().colorScheme() == Qt.ColorScheme.Dark
+    except Exception:
+        return False
+
+
+def profile_colors(profile: str) -> dict:
+    """Colours of a built-in profile ('custom' -> none)."""
+    if profile == "system":
+        profile = "dark" if system_is_dark() else "light"
+    preset = {"dark": DARK, "light": LIGHT}.get(profile)
+    return {k: preset[k] for k in COLOR_KEYS} if preset else {}
+
+
+def normalize(theme: dict | None) -> dict:
+    """Theme with every key present and valid."""
+    out = dict(DARK)
+    for k, v in (theme or {}).items():
+        if k in COLOR_KEYS and isinstance(v, str) and QColor(v).isValid():
+            out[k] = v
+    prof = (theme or {}).get("profile")
+    out["profile"] = prof if prof in PROFILE_KEYS else ("custom" if theme else "dark")
+    out.update(profile_colors(out["profile"]))       # dark / light / system override the stored colours
+    if theme:
+        out["font_family"] = str(theme.get("font_family", "") or "")
+        try:
+            out["font_size"] = max(6, min(32, int(theme.get("font_size", 9))))
+        except (TypeError, ValueError):
+            pass
+    return out
+
+
+# ----------------------------------------------------- saved configurations (.json, one parameter per line)
+def profiles_dir() -> str:
+    d = os.path.join(app_dir(), "interfejs")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def list_profiles() -> list[tuple[str, str]]:
+    """(name, path) of every *.json in the configurations folder, sorted by name."""
+    d = profiles_dir()
+    return sorted(((os.path.splitext(f)[0], os.path.join(d, f)) for f in os.listdir(d)
+                   if f.lower().endswith(".json")), key=lambda x: x[0].lower())
+
+
+def save_profile(path: str, theme: dict) -> None:
+    t = normalize(theme)
+    ordered = {"profile": t["profile"], "font_family": t["font_family"], "font_size": t["font_size"]}
+    ordered.update({k: t[k] for k in COLOR_KEYS})
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(ordered, f, ensure_ascii=False, indent=2)       # indent -> each parameter on its own line
+        f.write("\n")
+
+
+def load_profile(path: str) -> dict:
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        raise ValueError("plik nie zawiera konfiguracji interfejsu")
+    return normalize(data)
+
+
+def _disabled(c: str) -> str:
+    col = QColor(c)
+    col.setAlpha(110)
+    return f"rgba({col.red()},{col.green()},{col.blue()},{col.alpha()})"
+
+
+def build_qss(t: dict) -> str:
+    return f"""
+QMainWindow, QDialog {{ background: {t['window_bg']}; }}
+QGroupBox {{ border: 1px solid rgba(128,128,128,90); border-radius: 3px; margin-top: 14px; padding-top: 6px;
+    background: {t['panel_bg']}; }}
+QGroupBox::title {{ subcontrol-origin: margin; left: 2px; top: -2px; color: {t['text']}; }}
+QLabel {{ color: {t['text']}; }}
+QCheckBox {{ color: {t['text']}; }}
+QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {{
+    background: {t['edit_bg']}; color: {t['edit_text']}; border: 1px solid rgba(128,128,128,110);
+    border-radius: 2px; padding: 2px 4px; selection-background-color: {t['accent']}; }}
+QLineEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled {{
+    color: {_disabled(t['edit_text'])}; }}
+QLineEdit[invalid="true"] {{ border: 1px solid #e04040; }}
+QComboBox QAbstractItemView {{ background: {t['edit_bg']}; color: {t['edit_text']};
+    selection-background-color: {t['accent']}; }}
+QPushButton {{ background: {t['button_bg']}; color: {t['button_text']}; border: 1px solid rgba(128,128,128,110);
+    border-radius: 2px; padding: 4px 12px; }}
+QPushButton:hover {{ border-color: {t['accent']}; }}
+QPushButton:pressed, QPushButton:checked {{ background: {t['accent']}; color: #ffffff; }}
+QPushButton:disabled {{ color: {_disabled(t['button_text'])}; }}
+QToolButton {{ background: {t['button_bg']}; color: {t['button_text']}; border: 1px solid rgba(128,128,128,110);
+    border-radius: 2px; padding: 2px 8px; }}
+QTableWidget, QListWidget {{ background: {t['table_bg']}; gridline-color: rgba(128,128,128,90);
+    color: {t['table_text']}; alternate-background-color: {t['table_bg']}; }}
+QHeaderView::section {{ background: {t['header_bg']}; color: {t['text']}; border: 1px solid rgba(128,128,128,90);
+    padding: 3px; }}
+QMenuBar {{ background: {t['menu_bg']}; color: {t['menu_text']}; }}
+QMenuBar::item:selected {{ background: {t['accent']}; }}
+QMenu {{ background: {t['menu_bg']}; color: {t['menu_text']}; border: 1px solid rgba(128,128,128,110); }}
+QMenu::item:selected {{ background: {t['accent']}; color: #ffffff; }}
+QMenu::item:disabled {{ color: {_disabled(t['menu_text'])}; }}
+QTabBar::tab {{ background: {t['tab_bg']}; color: {t['text']}; padding: 4px 12px;
+    border: 1px solid rgba(128,128,128,110); border-bottom: none; margin-left: 1px; }}
+QTabBar::tab:selected {{ background: {t['tab_selected']}; }}
+QTabBar::close-button {{ subcontrol-position: right; }}
+QToolTip {{ background: {t['edit_bg']}; color: {t['edit_text']}; border: 1px solid rgba(128,128,128,150); }}
+QScrollArea {{ background: transparent; }}
 """
 
 
-def apply_dark(app: QApplication) -> None:
+def apply_theme(app: QApplication, theme: dict | None) -> dict:
+    t = normalize(theme)
     app.setStyle("Fusion")
     p = QPalette()
-    p.setColor(QPalette.Window, QColor(43, 43, 43))
-    p.setColor(QPalette.WindowText, QColor(220, 220, 220))
-    p.setColor(QPalette.Base, QColor(30, 30, 30))
-    p.setColor(QPalette.AlternateBase, QColor(38, 38, 38))
-    p.setColor(QPalette.Text, QColor(235, 235, 235))
-    p.setColor(QPalette.Button, QColor(58, 58, 58))
-    p.setColor(QPalette.ButtonText, QColor(232, 232, 232))
-    p.setColor(QPalette.Highlight, QColor(42, 130, 218))
-    p.setColor(QPalette.HighlightedText, QColor(255, 255, 255))
-    p.setColor(QPalette.ToolTipBase, QColor(32, 32, 32))
-    p.setColor(QPalette.ToolTipText, QColor(235, 235, 235))
-    p.setColor(QPalette.Disabled, QPalette.Text, QColor(120, 120, 120))
-    p.setColor(QPalette.Disabled, QPalette.ButtonText, QColor(120, 120, 120))
+    c = QColor
+    p.setColor(QPalette.Window, c(t["window_bg"]))
+    p.setColor(QPalette.WindowText, c(t["text"]))
+    p.setColor(QPalette.Base, c(t["edit_bg"]))
+    p.setColor(QPalette.AlternateBase, c(t["table_bg"]))
+    p.setColor(QPalette.Text, c(t["edit_text"]))
+    p.setColor(QPalette.Button, c(t["button_bg"]))
+    p.setColor(QPalette.ButtonText, c(t["button_text"]))
+    p.setColor(QPalette.Highlight, c(t["accent"]))
+    p.setColor(QPalette.HighlightedText, c("#ffffff"))
+    p.setColor(QPalette.ToolTipBase, c(t["edit_bg"]))
+    p.setColor(QPalette.ToolTipText, c(t["edit_text"]))
+    p.setColor(QPalette.Disabled, QPalette.Text, c("#808080"))
+    p.setColor(QPalette.Disabled, QPalette.ButtonText, c("#808080"))
     app.setPalette(p)
-    app.setStyleSheet(QSS)
+    font = QFont(app.font())
+    if t["font_family"]:
+        font.setFamily(t["font_family"])
+    font.setPointSize(t["font_size"])
+    app.setFont(font)
+    app.setStyleSheet(build_qss(t))
+    return t
+
+
+def apply_dark(app: QApplication) -> None:      # backward compatible helper
+    apply_theme(app, DARK)

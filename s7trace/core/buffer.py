@@ -42,8 +42,25 @@ class TraceBuffer:
                     nv[: self._len] = self._v[: self._len]
                     self._v = nv
             self._t[self._len] = t
-            self._v[self._len, : self.n] = values
+            k = len(values)
+            if k >= self.n:
+                self._v[self._len, : self.n] = values[: self.n]
+            else:                                   # row from before columns were added -> NaN for the new ones
+                self._v[self._len, :k] = values
+                self._v[self._len, k: self.n] = np.nan
             self._len += 1
+            self.version += 1
+
+    def add_columns(self, k: int) -> None:
+        """Append k signal columns (NaN for all samples recorded so far) without losing any data."""
+        if k <= 0:
+            return
+        with self._lock:
+            nv = np.full((self._cap, self.n + k), np.nan, dtype=np.float64)
+            if self.n:
+                nv[:, : self.n] = self._v[:, : self.n]
+            self._v = nv
+            self.n += k
             self.version += 1
 
     def load(self, t: np.ndarray, v: np.ndarray) -> None:
@@ -71,6 +88,11 @@ class TraceBuffer:
             if t1 is not None:
                 hi = min(n, int(np.searchsorted(t, t1, "right")) + 1)
             return t[lo:hi].copy(), self._v[lo:hi, : self.n].copy()
+
+    def last_row(self):
+        """Copy of the newest sample's values (None when empty)."""
+        with self._lock:
+            return self._v[self._len - 1, : self.n].copy() if self._len else None
 
     def last_time(self) -> float:
         with self._lock:
