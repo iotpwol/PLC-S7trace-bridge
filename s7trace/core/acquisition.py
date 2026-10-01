@@ -35,6 +35,10 @@ class Stats:
         self.samples = 0
         self.missed = 0
         self.gui_lag_ms = 0.0
+        self.errors = 0                # failed reads / connection losses
+        self.reconnects = 0            # successful reconnections
+        self.last_error = ""
+        self.connect_ms = 0.0          # duration of the last connect()
 
     @property
     def n(self) -> int:
@@ -77,7 +81,7 @@ class Acquirer(threading.Thread):
         self.t0 = 0.0
         self._stop_evt = threading.Event()
         self._factory = client_factory or (lambda: snap7.client.Client())
-        self.plan: list[ReadBlock] = build_plan(self.signals, mode)
+        self.plan: list[ReadBlock] = self._make_plan(self.signals)
         self._new_signals: list[Signal] | None = None
 
     # ------------------------------------------------------------------ io
@@ -118,6 +122,9 @@ class Acquirer(threading.Thread):
                 return False
             time.sleep(min(rem, 0.05))
 
+    def _make_plan(self, signals: list[Signal]) -> list[ReadBlock]:
+        return build_plan(signals, self.mode)
+
     def update_signals(self, signals: list[Signal]) -> None:
         """Replace the signal list on the fly (signals may only be appended); applied before the next read."""
         self._new_signals = [Signal.from_dict(s.to_dict()) for s in signals]
@@ -125,7 +132,7 @@ class Acquirer(threading.Thread):
     def _apply_new_signals(self) -> None:
         new, self._new_signals = self._new_signals, None
         if new:
-            self.plan = build_plan(new, self.mode)
+            self.plan = self._make_plan(new)
             self.signals = new
 
     # ------------------------------------------------------------ lifecycle
@@ -135,7 +142,9 @@ class Acquirer(threading.Thread):
     def run(self) -> None:
         self.on_state("connecting", f"Łączenie z {self.host}:{self.port}…")
         try:
+            tc = time.perf_counter()
             client = self._connect()
+            self.stats.connect_ms = (time.perf_counter() - tc) * 1000.0
         except Exception as e:
             self.on_state("error", f"Nie można połączyć z {self.host}:{self.port} — {e}")
             return
@@ -182,6 +191,8 @@ class Acquirer(threading.Thread):
     def _reconnect(self, client, err):
         """Mark gap with NaN, retry every 2 s until stop. Returns new client or None."""
         self._emit(time.perf_counter() - self.t0, [float("nan")] * len(self.signals))
+        self.stats.errors += 1
+        self.stats.last_error = str(err)
         self.on_state("reconnecting", f"Utracono połączenie ({err}) — ponawiam…")
         try:
             client.disconnect()
@@ -191,9 +202,22 @@ class Acquirer(threading.Thread):
             if self._stop_evt.wait(2.0):
                 break
             try:
+                tc = time.perf_counter()
                 c = self._connect()
+                self.stats.connect_ms = (time.perf_counter() - tc) * 1000.0
+                self.stats.reconnects += 1
                 self.on_state("running", f"Połączono z {self.host} (rack={self.rack}, slot={self.slot}).")
                 return c
             except Exception as e:
                 self.on_state("reconnecting", f"Ponawiam połączenie… ({e})")
         return None
+
+
+class DriverAcquirer(Acquirer):
+    """Same cycle / reconnect / statistics logic, but reads through a non-S7 driver (OPC UA, Web API, Modbus)."""
+
+    def _make_plan(self, signals):
+        return []
+
+    def _read_all(self, client) -> list[float]:
+        return client.read(self.signals)

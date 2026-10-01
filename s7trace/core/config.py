@@ -5,6 +5,7 @@ import json
 import os
 from dataclasses import asdict, dataclass, field
 
+from .drivers import conn_defaults
 from .planner import MODE_BLOCKS
 from .trigger import TriggerConfig
 from .types import Signal
@@ -21,6 +22,8 @@ def app_dir() -> str:
 class TabConfig:
     name: str = ""                 # tab title; empty = use the IP
     conf_name: str = ""            # name of the saved configuration ({confname} in file names)
+    conn_type: str = "auto"        # auto / s7 / opcua / webapi / modbus
+    conn: dict = field(default_factory=conn_defaults)    # login, ports, security ... of the non-S7 drivers
     ip: str = "192.168.0.1"
     rack: int = 0
     slot: int = 2
@@ -41,12 +44,16 @@ class TabConfig:
     def to_dict(self) -> dict:
         d = asdict(self)
         d["signals"] = [s.to_dict() for s in self.signals]
+        if not self.conn.get("remember_password"):
+            d["conn"] = {**self.conn, "password": ""}      # the password is stored only when asked for
         return d
 
     @classmethod
     def from_dict(cls, d: dict) -> "TabConfig":
         c = cls()
-        for k in ("name", "conf_name", "ip", "rack", "slot", "cycle_ms", "mode", "window_s", "auto_y",
+        if isinstance(d.get("conn"), dict):
+            c.conn = {**conn_defaults(), **d["conn"]}
+        for k in ("name", "conf_name", "conn_type", "ip", "rack", "slot", "cycle_ms", "mode", "window_s", "auto_y",
                   "y_min", "y_max", "show_points", "autonumber", "name_mode", "own_name", "offset_step"):
             if k in d:
                 setattr(c, k, d[k])

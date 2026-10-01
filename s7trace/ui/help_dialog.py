@@ -93,11 +93,21 @@ i przywracane po ponownym uruchomieniu (<tt>%APPDATA%\\S7Trace\\config.json</tt>
 """ + _img("zal08") + _table([
         ("Dopasuj widok do całości (Ctrl+0)", "Pokazuje całą nagraną historię na wykresie."),
         ("Legenda / Siatka", "Włącza lub wyłącza legendę i siatkę wykresu."),
-        ("Interfejs…", "Okno kolorów i czcionek (patrz rozdział „Interfejs”)."),
-        ("Zapisane konfiguracje interfejsu", "Lista konfiguracji wyglądu zapisanych w plikach .json – kliknięcie wczytuje wybraną; "
-         "„Zapisz bieżącą jako…” i „Wczytaj z pliku…” działają na dowolnym pliku."),
-        ("Profil kolorów", "Ciemny / Jasny / Systemowy (zgodny z trybem aplikacji w Windows, przełącza się też na żywo)."),
+        ("Diagnostyka połączenia… (Ctrl+D)", "Okno szczegółowej diagnostyki łącza."),
         ("Położenie legendy", "Narożnik wykresu, w którym stoi legenda (można ją też przeciągnąć myszą)."),
+    ])))
+
+    s.append(("4a. Menu Ustawienia", """
+<h2>Menu Ustawienia</h2>
+""" + _table([
+        ("Metoda połączenia i dane logowania…", "Ręczny wybór metody (Automatycznie, S7comm, OPC UA, Web API, Modbus TCP) oraz porty, "
+         "użytkownik / hasło, certyfikat klienta OPC UA, Unit ID Modbus. Przycisk „Testuj” sprawdza wybraną metodę."),
+        ("Kreator połączenia (rozpoznawanie metody)…", "Rozpoznaje, która metoda działa, i podaje zalecenia – patrz rozdział „Metody połączenia i kreator”."),
+        ("Informacje o sterowniku i czas…", "Model, numer katalogowy, firmware, numer seryjny, stan, ochrona CPU oraz czas sterownika "
+         "i jego różnica względem czasu komputera."),
+        ("Wymagania, ograniczenia i blokady…", "Opis ograniczeń każdej metody oraz ograniczeń systemowych i sieciowych."),
+        ("Interfejs…, Zapisane konfiguracje interfejsu, Profil kolorów", "Kolory, czcionki, profile ciemny / jasny / systemowy i zapisane konfiguracje wyglądu."),
+        ("Zapisz / Wczytaj konfigurację karty…", "To samo co w menu Plik."),
     ])))
 
     s.append(("5. Menu Pomoc", """
@@ -231,7 +241,8 @@ aby zmienić okno czasu.</li>
     s.append(("13. Sygnały / Eksport / Import", """
 <h2>Przyciski: Sygnały…, Eksport okna → CSV, Import CSV → wykres</h2>
 """ + _img("zal14") + _table([
-        ("Sygnały…", "Otwiera okno konfiguracji sygnałów (patrz następny rozdział). Działa także podczas pracy."),
+        ("Sygnały…", "Otwiera okno konfiguracji sygnałów (patrz rozdział „Okno Sygnały do śledzenia”). Działa także podczas pracy."),
+        ("Diagnostyka…", "Otwiera okno szczegółowej diagnostyki połączenia (rozdział „Diagnostyka połączenia”). Skrót: Ctrl+D."),
         ("Eksport okna → CSV", "Zapisuje <b>widoczny</b> fragment wykresu do pliku CSV (nazwa wg szablonu z panelu Trigger). "
          "Plik zawiera definicje sygnałów w komentarzach <tt># signal:</tt>, więc można go później zaimportować."),
         ("Import CSV → wykres", "Wczytuje plik CSV na wykres wraz z definicjami sygnałów. Dostępne tylko przy zatrzymanym połączeniu."),
@@ -247,7 +258,56 @@ aby zmienić okno czasu.</li>
         ("Komunikat", "Bieżący stan: łączenie, utrata połączenia, ścieżka pliku REC / triggera, wynik eksportu."),
     ], ("Pole", "Znaczenie"))))
 
-    s.append(("15. Okno „Sygnały do śledzenia”", """
+    s.append(("15. Diagnostyka połączenia", """
+<h2>Diagnostyka połączenia (przycisk „Diagnostyka…”, Widok → Diagnostyka połączenia…, Ctrl+D)</h2>
+<p>Okno pokazuje na żywo (odświeżanie co 0,5 s) pełne statystyki łącza z bieżącą kartą i można je trzymać otwarte obok wykresu.
+Na górze jest <b>ocena łącza</b> (Bardzo dobre / Dobre / Przeciętne / Słabe / Brak połączenia) wraz z listą konkretnych spostrzeżeń
+i zaleceń, np. „zwiększ cykl do ≥ 41 ms”. Statystyki zerują się przy każdym Start; po Stop zostają widoczne do następnego Start.</p>
+<h3>Zakładka „Opóźnienia”</h3>
+""" + _table([
+        ("Czas odczytu PLC", "Ile trwa jeden pełny cykl odczytu (wysłanie żądań i odebranie odpowiedzi) w ms: wartość <b>chwilowa</b>, "
+         "średnia z ostatnich 10 s i 60 s, średnia od startu, min, max, odchylenie standardowe oraz percentyle P95 i P99."),
+        ("Okres próbkowania", "Odstęp czasu między kolejnymi próbkami – powinien być równy ustawionemu cyklowi. "
+         "Odchylenia to jitter (nierówność próbkowania)."),
+        ("Ping ICMP (RTT)", "Czas odpowiedzi samej sieci na ping do adresu sterownika (rozdzielczość 1 ms), bez udziału protokołu S7."),
+        ("Histogram", "Procent odczytów w przedziałach czasu (0–2, 2–5, 5–10 … ≥1000 ms) – pokazuje, czy opóźnienia są stałe, czy zdarzają się rzadkie piki."),
+    ], ("Wielkość", "Znaczenie")) + """
+<h3>Zakładka „Pakiety i niezawodność”</h3>
+""" + _table([
+        ("Odebrane próbki / pominięte cykle [%]", "Pominięty cykl to taki, który minął, zanim skończył się poprzedni odczyt (łącze lub sterownik są wolniejsze niż cykl)."),
+        ("Odczyty dłuższe niż cykl", "Liczba i procent odczytów, które trwały dłużej niż ustawiony cykl."),
+        ("Błędy odczytu / ponowne połączenia", "Liczba utraconych połączeń lub nieudanych odczytów i udanych powrotów, wraz z treścią ostatniego błędu."),
+        ("Czas przerw / dostępność [%]", "Łączny czas bez połączenia i procent czasu, w którym łącze działało."),
+        ("Czas nawiązania połączenia", "Jak długo trwało ostatnie połączenie z PLC (TCP + negocjacja S7)."),
+        ("Ping: wysłane / odebrane / utracone / utrata [%]", "Liczba pakietów ICMP i procent utraconych – wskaźnik <b>utraty pakietów w sieci</b>. "
+         "Wraz z „kolejno utracone” i jitterem pingu pomaga odróżnić problem sieci od problemu sterownika."),
+    ], ("Wielkość", "Znaczenie")) + """
+<p><b>Uwaga:</b> program nie widzi pojedynczych pakietów TCP – utratę na poziomie S7 pokazują błędy odczytu i zerwania połączenia,
+a utratę pakietów w sieci – ping ICMP (jeśli zapora lub router nie blokuje ICMP, ping pokaże 100% utraty mimo działającego S7).</p>
+<h3>Zakładka „Przepustowość”</h3>
+""" + _table([
+        ("Częstotliwość oczekiwana / rzeczywista / maksymalna", "1000 / cykl, faktycznie osiągane próbkowanie (z ostatnich 10 s i od startu) "
+         "oraz teoretyczny limit przy średnim czasie odczytu."),
+        ("Zalecany najkrótszy cykl", "P99 czasu odczytu + 25% zapasu – poniżej tego cykl będzie często pomijany."),
+        ("Dane na cykl / żądań na cykl", "Liczba bajtów i żądań S7 w jednym cyklu (zależy od sygnałów i trybu komunikacji)."),
+        ("Przepustowość danych [B/s], żądania/s", "Faktyczny przepływ danych użytkowych ze sterownika."),
+        ("Ruch w sieci – szacunek [kb/s]", "Dane plus ok. 150 B nagłówków na parę żądanie/odpowiedź – wartość orientacyjna."),
+    ], ("Wielkość", "Znaczenie")) + """
+<h3>Zakładka „Wykresy w czasie”</h3>
+<p>Czas odczytu PLC i ping ICMP w funkcji czasu (ostatnie 30 s / 2 min / 10 min) z zaznaczonym ustawionym cyklem (czerwona linia).
+Piki powyżej linii cyklu oznaczają pomijane próbki.</p>
+<h3>Przyciski</h3>
+""" + _table([
+        ("Ping ICMP do sterownika", "Włącza wysyłanie jednego pingu na sekundę (nie zajmuje połączenia S7, więc nie obciąża sterownika). "
+         "Działa także bez Start – możesz sprawdzić sieć przed uruchomieniem połączenia."),
+        ("Test portu TCP…", "Jednorazowo łączy się z portem S7 (102 lub podanym po „:”) i mierzy czas – sprawdza routing i zaporę."),
+        ("Resetuj statystyki", "Zeruje liczniki bez przerywania połączenia."),
+        ("Kopiuj raport / Zapisz raport…", "Pełny raport tekstowy (ocena, wszystkie wartości) do schowka lub pliku – do dołączenia do zgłoszenia serwisowego."),
+    ], ("Przycisk", "Działanie")) + """
+<p>W pasku statusu, obok opóźnienia odczytu i pominiętych cykli, widać też bieżący ping i procent utraty pakietów (gdy ping jest włączony).</p>
+"""))
+
+    s.append(("16. Okno „Sygnały do śledzenia”", """
 <h2>Okno „Sygnały do śledzenia”</h2>
 """ + _img("zal16", 700) + """
 <p>Każdy wiersz to jedna zmienna. Podczas pracy połączenia można <b>dodawać nowe zmienne</b> (są pobierane od następnego cyklu,
@@ -286,7 +346,7 @@ w starszych próbkach mają przerwę); adres, pole „Pobierz”, kolejność i 
 <p>Najechanie kursorem na wiersz pokazuje wszystkie dane zmiennej: adres, opis i aktualną wartość.</p>
 """))
 
-    s.append(("16. Interfejs (kolory i czcionki)", """
+    s.append(("17. Interfejs (kolory i czcionki)", """
 <h2>Widok → Interfejs</h2>
 <ul>
 <li><b>Profil kolorów</b>: Ciemny, Jasny, Systemowy (zgodny z trybem Windows, przełącza się na żywo) lub Własny
@@ -301,7 +361,61 @@ wykres oraz <b>przyciski sterujące</b> (Start, Stop, Pauza, REC, znaczniki – 
 </ul>
 """))
 
-    s.append(("17. Pliki CSV i skróty", """
+    s.append(("19. Metody połączenia i kreator", """
+<h2>Metody połączenia i kreator połączenia</h2>
+<p>Program potrafi czytać sterowniki Siemensa czterema metodami. Metodę wybierasz w <b>Ustawienia → Metoda połączenia…</b>
+(per karta) albo zostawiasz <b>Automatycznie</b> – przy każdym Start program sam rozpoznaje, co działa.</p>
+""" + _table([
+        ("S7comm (snap7)", "Najszybsza. Adres bezwzględny (I, Q, M, DB + bajt/bit). S7-1200/1500 wymagają PUT/GET i DB bez „Optimized block access”."),
+        ("OPC UA", "Zmienne po nazwie (także zoptymalizowane). Źródło sygnału „OPC”, w polu „Węzeł” NodeId, np. <tt>ns=3;s=\"DB_Piec\".\"Temp\"</tt>. "
+         "Przycisk „Z OPC UA…” w oknie Sygnały otwiera przeglądarkę drzewa zmiennych serwera."),
+        ("Web API", "JSON-RPC po HTTP(S). Źródło „WEB”, w polu „Węzeł” nazwa zmiennej. Eksperymentalne – nietestowane na prawdziwym sterowniku."),
+        ("Modbus TCP", "Rejestry i cewki udostępnione przez program PLC. Źródła MBH (rejestry holding), MBI (rejestry wejściowe), MBC (cewki), "
+         "MBD (wejścia dyskretne); „Bajt” = numer rejestru / cewki, „DB” = Unit ID (0 = domyślny z ustawień)."),
+    ], ("Metoda", "Opis")) + """
+<h3>Tryb automatyczny – kolejność rozpoznawania</h3>
+<ol><li>Ping ICMP (informacyjnie) i sprawdzenie portów TCP: 102, 4840, 443, 502 (równolegle).</li>
+<li><b>S7comm</b>: połączenie (próby rack/slot 0/1, 0/2, 0/0, 1/2, 0/3), identyfikacja CPU, odczyt testowy pamięci M i kilku DB.</li>
+<li><b>OPC UA</b>: pobranie listy zabezpieczeń i trybów logowania serwera, próba sesji, odczyt informacji o serwerze i jego czasu.</li>
+<li><b>Web API</b>: zapytanie <tt>Api.Version</tt> (JSON-RPC).</li><li><b>Modbus TCP</b>: odczyt rejestru 0.</li></ol>
+<p>Używana jest <b>pierwsza działająca</b> metoda zgodna ze źródłami sygnałów w karcie. Jeśli sygnały są S7, a działa tylko OPC UA, program
+informuje, że trzeba zmienić źródło sygnałów (OPC UA) albo włączyć PUT/GET. Gdy nic nie działa – kreator pokazuje raport z zaleceniem,
+<b>jaka metoda jest sugerowana</b> i co zmienić w TIA Portal.</p>
+<h3>Kreator połączenia i dane o sterowniku</h3>
+<p>Ustawienia → Kreator połączenia… pokazuje wynik każdego testu (✔ / ▲ / ✖), a zakładka „Sterownik i czas” – <b>rodzinę, model CPU, numer katalogowy (MLFB),
+wersję firmware, numer seryjny, nazwę stacji, stan CPU (Run/Stop), poziom ochrony</b>, dane serwera OPC UA oraz <b>czas sterownika i różnicę względem czasu komputera</b>
+(osobno do czasu lokalnego i do UTC – sterowniki często pracują w UTC). Raport można skopiować do schowka.</p>
+<h3>Dane logowania</h3>
+<p>OPC UA: dostęp anonimowy lub użytkownik/hasło; tryby zabezpieczone wymagają certyfikatu klienta (przycisk „Generuj certyfikat klienta…”
+tworzy parę plików w <tt>%APPDATA%\\S7Trace\\certyfikaty</tt>; certyfikat trzeba zatwierdzić w sterowniku). Web API: użytkownik i hasło.
+Hasło jest zapisywane w pliku konfiguracji <b>tylko</b>, gdy zaznaczysz „Zapamiętaj hasło” (jawnym tekstem).</p>
+"""))
+
+    s.append(("20. Ograniczenia, blokady i wymagania", """
+<h2>Ograniczenia, blokady i wymagania</h2>
+<h3>Czego program nie zrobi</h3>
+<ul>
+<li>Nie włączy PUT/GET ani serwera OPC UA w sterowniku i nie obejdzie zabezpieczeń – to ustawienia w TIA Portal.</li>
+<li>Nie łamie haseł i nie odczyta licencji CPU: brak odpowiedzi serwera OPC UA może oznaczać wyłączony serwer albo brak licencji.</li>
+<li>Rozpoznawanie jest <b>tylko do odczytu</b> – nic nie zmienia w sterowniku (identyfikacja, stan, zegar, odczyty testowe).</li>
+<li>Rozróżnienie „PUT/GET wyłączony” i „blok zoptymalizowany” jest wnioskiem z odpowiedzi CPU – bywa niejednoznaczne (podawane jako „prawdopodobnie”).</li>
+</ul>
+<h3>Blokady po stronie sterownika</h3>
+<ul>
+<li><b>S7comm:</b> """ + "</li><li>".join(__import__("s7trace.core.detect", fromlist=["LIMITS"]).LIMITS["s7"]) + """</li>
+<li><b>OPC UA:</b> """ + "</li><li>".join(__import__("s7trace.core.detect", fromlist=["LIMITS"]).LIMITS["opcua"]) + """</li>
+<li><b>Web API:</b> """ + "</li><li>".join(__import__("s7trace.core.detect", fromlist=["LIMITS"]).LIMITS["webapi"]) + """</li>
+<li><b>Modbus TCP:</b> """ + "</li><li>".join(__import__("s7trace.core.detect", fromlist=["LIMITS"]).LIMITS["modbus"]) + """</li>
+</ul>
+<h3>Ograniczenia systemowe i sieciowe</h3>
+<ul><li>""" + "</li><li>".join(__import__("s7trace.core.detect", fromlist=["SYSTEM_LIMITS"]).SYSTEM_LIMITS) + """</li>
+<li>Windows Server 2016 / pakiet przenośny: biblioteki OPC UA (asyncua, cryptography) są dołączone; brak połączenia z internetem nie przeszkadza.</li>
+<li>W jednej karcie wszystkie pobierane sygnały muszą używać jednej metody (np. tylko OPC); do łączenia kilku metod użyj osobnych kart.</li>
+<li>Gdy pierwsze sprawdzenie portów trwa długo, zapora lub router „gubi” pakiety zamiast je odrzucać – test czeka do 1,5 s na port.</li>
+</ul>
+"""))
+
+    s.append(("18. Pliki CSV i skróty", """
 <h2>Pliki CSV</h2>
 <p>Pliki zawierają kolumny <tt>time_s</tt> (sekundy od startu), <tt>timestamp</tt> (data i godzina) i po jednej kolumnie na sygnał;
 w komentarzach <tt># signal:</tt> zapisane są definicje sygnałów. Puste pole = brak danych (przerwa w połączeniu lub zmienna dodana później).</p>
@@ -309,13 +423,13 @@ w komentarzach <tt># signal:</tt> zapisane są definicje sygnałów. Puste pole 
 <h2>Skróty klawiszowe</h2>
 """ + _table([
         ("Ctrl+T", "Nowa karta"), ("Ctrl+W", "Zamknij kartę"), ("F2", "Zmień nazwę karty"),
-        ("Ctrl+0", "Dopasuj widok do całości"), ("F1", "Pomoc"), ("Ctrl+Q", "Wyjście"),
+        ("Ctrl+0", "Dopasuj widok do całości"), ("Ctrl+D", "Diagnostyka połączenia"), ("F1", "Pomoc"), ("Ctrl+Q", "Wyjście"),
     ], ("Skrót", "Działanie"))))
     return s
 
 
 class HelpDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, topic: str = ""):
         super().__init__(parent)
         self.setWindowTitle("Pomoc – S7Trace")
         self.resize(1100, 760)
@@ -350,6 +464,9 @@ class HelpDialog(QDialog):
         lay.addLayout(row)
         self.toc.currentRowChanged.connect(self._show)
         self.toc.setCurrentRow(0)
+        for i, (title, _) in enumerate(self._sections):
+            if topic and topic.lower() in title.lower():
+                self.toc.setCurrentRow(i)
 
     def _show(self, i: int) -> None:
         if 0 <= i < len(self._sections):

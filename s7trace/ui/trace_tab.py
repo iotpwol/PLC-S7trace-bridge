@@ -15,6 +15,8 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog
 
 from ..core import trigger as trg
 from ..core.acq_process import ProcAcquirer
+from ..core.acquisition import parse_host
+from ..core.diagnostics import PingProbe
 from ..core.buffer import TraceBuffer
 from ..core.config import TabConfig
 from ..core.csvio import CsvRecorder, read_csv, write_csv
@@ -22,6 +24,8 @@ from ..core.planner import MODES
 from ..core.symbols import Symbol
 from ..core.netaddr import ACCEPTABLE, ipv4_state
 from ..core.types import Signal
+from ..core.drivers import CONN_LABEL, SOURCE_OF, family_of
+from .diag_dialog import DiagDialog
 from .plotview import PlotView
 from .signals_dialog import SignalsDialog
 from .validators import Ipv4Validator
@@ -103,6 +107,8 @@ class TraceTab(QWidget):
         self._stat_tick = 0
         self._loading = False
         self._noname_asked = False
+        self.ping_probe: PingProbe | None = None
+        self.diag_dlg: DiagDialog | None = None
         self._want_left: int | None = None
         self._rec_dot, self._rec_phase = "#ff2020", True
         self._build()
@@ -158,10 +164,14 @@ class TraceTab(QWidget):
         self.sp_cycle = _spin(1, 60000, 25)
         self.cb_mode = QComboBox()
         self.cb_mode.addItems(MODES)
+        self.lbl_method = QLabel()
+        self.lbl_method.setWordWrap(True)
+        self.lbl_method.setToolTip("Metoda komunikacji – zmiana: Ustawienia → Metoda połączenia…")
         f.addRow("IP:", self.ed_ip)
         f.addRow("Rack / Slot:", rs)
         f.addRow("Cykle [ms]:", self.sp_cycle)
         f.addRow("Tryb komunik.:", self.cb_mode)
+        f.addRow("Metoda:", self.lbl_method)
         self._conn_widgets = [self.ed_ip, self.sp_rack, self.sp_slot, self.sp_cycle, self.cb_mode]
 
         f = group("Zakres")
@@ -231,13 +241,15 @@ class TraceTab(QWidget):
         self.btn_h = QPushButton("H znacznik")
         self.btn_h.setCheckable(True)
         self.btn_sig = QPushButton("Sygnały...")
+        self.btn_diag = QPushButton("Diagnostyka…")
+        self.btn_diag.setToolTip("Szczegółowa diagnostyka połączenia: opóźnienia, utracone cykle, ping, przepustowość")
         self.btn_exp = QPushButton("Eksport okna → CSV")
         self.btn_imp = QPushButton("Import CSV → wykres")
         for b in (self.btn_start, self.btn_stop, self.btn_pause, self.btn_rec, self.btn_pts,
                   self.btn_v, self.btn_h):
             bar.addWidget(b)
         bar.addStretch()
-        for b in (self.btn_sig, self.btn_exp, self.btn_imp):
+        for b in (self.btn_sig, self.btn_diag, self.btn_exp, self.btn_imp):
             bar.addWidget(b)
         right.addLayout(bar)
         self.lbl_status = QLabel()
@@ -274,6 +286,7 @@ class TraceTab(QWidget):
         self.btn_v.toggled.connect(self.plot.set_v_mode)
         self.btn_h.toggled.connect(self.plot.set_h_mode)
         self.btn_sig.clicked.connect(self.edit_signals)
+        self.btn_diag.clicked.connect(self.open_diag)
         self.btn_exp.clicked.connect(self.export_window)
         self.btn_imp.clicked.connect(self.import_csv)
         self.sp_window.valueChanged.connect(self.plot.set_window)
@@ -383,7 +396,17 @@ class TraceTab(QWidget):
     def apply_plot_theme(self, bg: str, fg: str) -> None:
         self.plot.apply_theme(bg, fg)
 
+    def update_method_label(self) -> None:
+        t = self.cfg.conn_type
+        self.lbl_method.setText(CONN_LABEL[t] if t in CONN_LABEL else t)
+
+    def set_conn_type(self, kind: str) -> None:
+        """Chosen manually or by the wizard ('Użyj zalecanej metody')."""
+        self.cfg.conn_type = kind
+        self.update_method_label()
+
     def _load_cfg(self):
+        self.update_method_label()
         self._loading = True
         c = self.cfg
         self.ed_ip.setText(c.ip)
@@ -529,6 +552,9 @@ class TraceTab(QWidget):
         if "{confname}" in c.trigger.filename:
             self._confname_for_file()
         run = self.display_signals()
+        method = self._resolve_method(run)
+        if method is None:
+            return
         if not run:
             QMessageBox.information(self, "S7Trace", "Brak sygnałów do pobierania. Dodaj sygnały albo zaznacz "
                                     "„Pobierz” w oknie 'Sygnały...'.")
@@ -541,10 +567,13 @@ class TraceTab(QWidget):
         self.engine = trg.TriggerEngine(c.trigger)
         self.trig_state = "armed" if c.trigger.enabled else "idle"
         self.btn_pause.setChecked(False)
+        if self.ui_state.get("diag_ping", True):
+            self.set_ping(True)
         self.acq = acq = ProcAcquirer(
             c.ip, c.rack, c.slot, c.cycle_ms, run, c.mode, self.buffer,
             on_state=lambda s, m: self._stateRaw.emit(s, m),
-            on_sample=lambda t, v: self._pending.append((t, list(v))))
+            on_sample=lambda t, v: self._pending.append((t, list(v))),
+            driver={"type": method, "opts": dict(c.conn)} if method != "s7" else None)
         self.plot.time_source = lambda a=acq: (time.perf_counter() - a.t0) if a.t0 else self.buffer.last_time()
         self.state = "connecting"
         self.status_msg = f"Łączenie z {c.ip}…"
@@ -557,7 +586,82 @@ class TraceTab(QWidget):
             self.acq.stop()
             self.status_msg = "Zatrzymywanie…"
 
+    # ------------------------------------------------- connection method
+    def _resolve_method(self, run: list[Signal]) -> str | None:
+        """Method for this Start: the manual choice, or the wizard's pick in automatic mode. None = do not start."""
+        from .wizard_dialog import WizardDialog
+        if not run:
+            return self.cfg.conn_type if self.cfg.conn_type != "auto" else "s7"     # start() reports "no signals"
+        fam = family_of(run)
+        if fam is None:
+            QMessageBox.warning(self, "S7Trace", "Pobierane sygnały używają różnych metod (np. S7 i OPC UA). "
+                                "W jednej karcie wszystkie pobierane sygnały muszą mieć źródło z jednej rodziny "
+                                "(I/Q/M/DB, OPC, WEB albo MBx).")
+            return None
+        kind = self.cfg.conn_type
+        if kind == "auto":
+            order = [fam] + [m for m in ("s7", "opcua", "webapi", "modbus") if m != fam] if fam else None
+            dlg = WizardDialog(self, auto=True, methods=order, parent=self)   # signals' own family is probed first
+            dlg.exec()
+            res = dlg.result
+            if res is None:
+                return None
+            ok = [m for m in ("s7", "opcua", "webapi", "modbus") if res.methods.get(m, {}).get("ok")]
+            if fam in ok:
+                if fam == "s7":                                  # the rack/slot that actually worked
+                    self.sp_rack.setValue(res.rack)
+                    self.sp_slot.setValue(res.slot)
+                self.status_msg = f"Automatycznie wybrano: {CONN_LABEL[fam]}."
+                return fam
+            if ok and fam:
+                QMessageBox.warning(self, "S7Trace", f"Sygnały używają metody „{CONN_LABEL[fam]}”, która nie działa, "
+                                    f"ale działa „{CONN_LABEL[ok[0]]}”. Zmień źródło sygnałów (np. OPC UA – przycisk "
+                                    "„Z OPC UA…” w oknie Sygnały) lub włącz brakującą funkcję w sterowniku "
+                                    "(patrz Kreator połączenia).")
+            return None                      # nothing usable: the wizard window already showed the report
+        if fam is not None and fam != kind:
+            QMessageBox.warning(self, "S7Trace", f"Wybrana metoda to „{CONN_LABEL[kind]}”, a sygnały mają źródła "
+                                f"{', '.join(SOURCE_OF[fam])}. Zmień metodę w Ustawienia → Metoda połączenia "
+                                "albo źródła sygnałów.")
+            return None
+        return kind
+
+    # ---------------------------------------------------------- diagnostics
+    def open_diag(self) -> None:
+        if self.diag_dlg is None:
+            self.diag_dlg = DiagDialog(self, self.window())
+        self.diag_dlg.show()
+        self.diag_dlg.raise_()
+        self.diag_dlg.activateWindow()
+
+    def diag_closed(self) -> None:
+        self.diag_dlg = None
+        if self.state == "stopped":
+            self._stop_ping()
+
+    def set_ping(self, on: bool) -> None:
+        """ICMP probe to the PLC address (independent of the S7 connection)."""
+        if not on:
+            self._stop_ping()
+            return
+        if ipv4_state(self.ed_ip.text()) != ACCEPTABLE:
+            return
+        host = parse_host(self.ed_ip.text())[0]
+        p = self.ping_probe
+        if p is not None and p.is_alive() and p.host == host:
+            return
+        self._stop_ping()
+        self.ping_probe = PingProbe(host)
+        self.ping_probe.start()
+
+    def _stop_ping(self) -> None:
+        if self.ping_probe is not None:
+            self.ping_probe.stop()                  # the object stays: its statistics remain readable
+
     def shutdown(self):
+        self._stop_ping()
+        if self.diag_dlg is not None:
+            self.diag_dlg.close()
         if self.acq:
             self.acq.stop()
             self.acq.join(2.0)
@@ -582,6 +686,8 @@ class TraceTab(QWidget):
             self.status_msg = msg
             self.plot.set_follow(False)
             self._close_recorder()
+            if self.diag_dlg is None:
+                self._stop_ping()
             if self.acq is not None:
                 self._drain()
             if state == "error":
@@ -660,13 +766,21 @@ class TraceTab(QWidget):
         if note:
             self.status_msg = note
 
+    def _ping_text(self) -> str:
+        p = self.ping_probe.snapshot() if self.ping_probe is not None and self.ping_probe.is_alive() else None
+        if not p or not p["sent"]:
+            return ""
+        last = f"{p['last']:.0f} ms" if p["last"] is not None else "brak odp."
+        return f" | Ping: {last}, utrata {p['loss_pct']:.1f}%"
+
     def _update_status(self):
         if self.acq and self.state in ("running", "reconnecting"):
             st = self.acq.stats
             st.gui_lag_ms = self.plot.gui_lag_ms
             self.lbl_status.setText(
                 f"PLC comm lag Avg: {st.avg_lag:.1f} ms (n={st.n}), Last: {st.last_lag:.1f} ms | "
-                f"GUI lag: {st.gui_lag_ms:.1f} ms  Missed: {st.missed} ({st.missed_pct:.1f}%)  {self.status_msg}")
+                f"GUI lag: {st.gui_lag_ms:.1f} ms  Missed: {st.missed} ({st.missed_pct:.1f}%){self._ping_text()}  "
+                f"{self.status_msg}")
         else:
             self.lbl_status.setText(self.status_msg)
 
@@ -767,12 +881,17 @@ class TraceTab(QWidget):
         opts = {"autonumber": c.autonumber, "name_mode": c.name_mode, "own_name": c.own_name,
                 "offset_step": c.offset_step}
         dlg = SignalsDialog(self.cfg.signals, locked, self.symbols, opts, self.current_values,
-                            self.other_tabs, self.ui_state.setdefault("signals_dialog", {}), self)
+                            self.other_tabs, self.ui_state.setdefault("signals_dialog", {}), self._browse_opc, self)
         if not dlg.exec():
             return
         c.autonumber, c.name_mode = dlg.opts["autonumber"], dlg.opts["name_mode"]
         c.own_name, c.offset_step = dlg.opts["own_name"], dlg.opts["offset_step"]
         self.apply_signals(dlg.signals(), locked)
+
+    def _browse_opc(self) -> list[Signal]:
+        from .opc_browser import OpcBrowser
+        dlg = OpcBrowser(self.ed_ip.text().split(":")[0].strip(), dict(self.cfg.conn), self, len(self.cfg.signals))
+        return dlg.signals() if dlg.exec() else []
 
     def apply_signals(self, new: list[Signal], locked: bool) -> None:
         old = self.cfg.signals

@@ -78,6 +78,15 @@ Typy: BOOL, BYTE, SINT, USINT, WORD, INT, UINT, DWORD, DINT, UDINT, REAL, LREAL.
 * Przyciski sterujące mają konfigurowalne kolory stanów (Start/Stop/Pauza/REC/znaczniki), kropka REC miga (domyślnie 0,5 Hz).
 * Podziały można przeciągać: panel ustawień ↔ wykres oraz wykres główny ↔ pasek podglądu; legendę przeciągniesz myszą
   lub ustawisz w Widok → Położenie legendy. Wszystko jest zapamiętywane.
+* Diagnostyka połączenia (przycisk „Diagnostyka…”, Ctrl+D): ocena łącza, czas odczytu (chwilowy / średni 10 s, 60 s, od startu /
+  min / max / odch. std. / P95 / P99), jitter próbkowania, histogram, pominięte cykle i błędy, zerwania, dostępność, przepustowość,
+  ping ICMP z procentem utraty pakietów, test portu TCP, wykresy w czasie, raport do schowka / pliku.
+* Metody połączenia (menu Ustawienia): S7comm (snap7), OPC UA (asyncua), Web API (JSON-RPC, eksperymentalne), Modbus TCP.
+  „Automatycznie” rozpoznaje przy każdym Start kolejno S7comm → OPC UA → Web API → Modbus i używa pierwszej działającej metody
+  zgodnej ze źródłami sygnałów (I/Q/M/DB, OPC, WEB, MBH/MBI/MBC/MBD). Kreator połączenia pokazuje wynik każdego testu, sugerowaną metodę
+  i zalecenia, dane sterownika (model, MLFB, firmware, numer seryjny, stan, ochrona) oraz czas sterownika z różnicą do czasu komputera.
+  Ustawienia → Metoda połączenia: wybór ręczny, porty, login/hasło, certyfikat klienta OPC UA. Przeglądarka zmiennych OPC UA: „Z OPC UA…”
+  w oknie Sygnały. Ograniczenia i blokady: Ustawienia → Wymagania, ograniczenia i blokady… (oraz Pomoc F1).
 * Pomoc (F1): opis wszystkich paneli, menu, przycisków i okna sygnałów z rysunkami (`s7trace/help/`).
 * Widok → Interfejs…: kolory (okna, pola edycyjne, tabele, menu, wykres…) i czcionka, z podglądem na żywo.
   Profil kolorów: Ciemny / Jasny / Systemowy (podąża za trybem aplikacji w Windows, także na żywo) / Własny

@@ -10,8 +10,10 @@ import threading
 import time
 from typing import Callable
 
-from .acquisition import Acquirer
+from .acquisition import Acquirer, DriverAcquirer
+from .drivers import create_driver
 from .buffer import TraceBuffer
+from .diagnostics import LinkDiag, plan_cost
 from .types import Signal
 
 FLUSH_S = 0.02      # child sends sample batches at most every 20 ms
@@ -25,6 +27,14 @@ class RemoteStats:
         self.samples = 0
         self.missed = 0
         self.gui_lag_ms = 0.0
+        self.errors = 0
+        self.reconnects = 0
+        self.last_error = ""
+        self.connect_ms = 0.0
+
+    def apply(self, d: dict) -> None:
+        for k, v in d.items():
+            setattr(self, k, v)
 
     @property
     def missed_pct(self) -> float:
@@ -41,7 +51,9 @@ def _child_main(params: dict, conn) -> None:
         now = time.perf_counter()
         if batch and (force or now - last[0] >= FLUSH_S):
             st = acq_ref[0].stats
-            conn.send(("batch", batch[:], (st.avg_lag, st.last_lag, st.n, st.samples, st.missed)))
+            conn.send(("batch", batch[:], dict(
+                avg_lag=st.avg_lag, last_lag=st.last_lag, n=st.n, samples=st.samples, missed=st.missed,
+                errors=st.errors, reconnects=st.reconnects, last_error=st.last_error, connect_ms=st.connect_ms)))
             batch.clear()
             last[0] = now
 
@@ -50,12 +62,19 @@ def _child_main(params: dict, conn) -> None:
         conn.send(("state", state, msg, acq_ref[0].t0 if acq_ref else 0.0))
 
     def on_sample(t, vals):
-        batch.append((t, vals))
+        gap = bool(vals) and all(v != v for v in vals)            # NaN row = connection-loss marker
+        batch.append((t, vals, None if gap else acq_ref[0].stats.last_lag))
         flush()
 
-    acq = Acquirer(params["host"], params["rack"], params["slot"], params["cycle_ms"],
-                   [Signal.from_dict(d) for d in params["signals"]], params["mode"], None,
-                   on_state=on_state, on_sample=on_sample)
+    drv = params.get("driver") or {}
+    sigs = [Signal.from_dict(d) for d in params["signals"]]
+    if drv.get("type") and drv["type"] != "s7":
+        acq = DriverAcquirer(params["host"], params["rack"], params["slot"], params["cycle_ms"], sigs,
+                             params["mode"], None, on_state=on_state, on_sample=on_sample,
+                             client_factory=lambda: create_driver(drv["type"], drv.get("opts", {})))
+    else:
+        acq = Acquirer(params["host"], params["rack"], params["slot"], params["cycle_ms"], sigs,
+                       params["mode"], None, on_state=on_state, on_sample=on_sample)
     acq_ref.append(acq)
     acq.start()
     # main thread of the child: wait for a stop command (or parent death)
@@ -82,14 +101,17 @@ class ProcAcquirer:
     def __init__(self, host: str, rack: int, slot: int, cycle_ms: float,
                  signals: list[Signal], mode: str, buffer: TraceBuffer,
                  on_state: Callable[[str, str], None] | None = None,
-                 on_sample: Callable[[float, list[float]], None] | None = None):
+                 on_sample: Callable[[float, list[float]], None] | None = None,
+                 driver: dict | None = None):
         self.buffer = buffer
         self.on_state = on_state or (lambda *_: None)
         self.on_sample = on_sample
         self.stats = RemoteStats()
+        self.mode = mode
+        self.diag = LinkDiag(cycle_ms, *plan_cost(signals, mode), stats=self.stats)
         self.t0 = 0.0
         self._params = dict(host=host, rack=rack, slot=slot, cycle_ms=cycle_ms,
-                            signals=[s.to_dict() for s in signals], mode=mode)
+                            signals=[s.to_dict() for s in signals], mode=mode, driver=driver)
         ctx = mp.get_context("spawn")
         self._conn, child = ctx.Pipe(duplex=True)
         self._proc = ctx.Process(target=_child_main, args=(self._params, child), daemon=True)
@@ -110,6 +132,7 @@ class ProcAcquirer:
 
     def update_signals(self, signals: list[Signal]) -> None:
         """Hand a longer signal list (old ones first, new ones appended) to the running child process."""
+        self.diag.set_plan(*plan_cost(signals, self.mode))
         try:
             self._conn.send(("signals", [s.to_dict() for s in signals]))
         except (OSError, ValueError):
@@ -130,16 +153,18 @@ class ProcAcquirer:
                 msg = self._conn.recv()
                 if msg[0] == "batch":
                     _, rows, st = msg
-                    s = self.stats
-                    s.avg_lag, s.last_lag, s.n, s.samples, s.missed = st
-                    for t, vals in rows:
+                    self.stats.apply(st)
+                    for row in rows:
+                        t, vals = row[0], row[1]
                         self.buffer.append(t, vals)
+                        self.diag.add_sample(t, row[2] if len(row) > 2 else None)
                         if self.on_sample:
                             self.on_sample(t, vals)
                 else:
                     _, state, text, t0 = msg
                     if t0:
                         self.t0 = t0
+                    self.diag.note_state(state)
                     self.on_state(state, text)
                     if state in ("stopped", "error"):
                         self._final = True

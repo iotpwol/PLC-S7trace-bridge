@@ -14,18 +14,20 @@ from PySide6.QtGui import QActionGroup
 
 from ..core.naming import NAME_OWN, NAME_PREV, new_signal_name
 from ..core.symbols import Symbol
-from ..core.types import (DEFAULT_COLORS, FORMATS, SOURCES, TYPES, Signal, address_key, format_value)
+from ..core.types import (ALL_SOURCES, DEFAULT_COLORS, FORMATS, NODE_SOURCES, SOURCES, TYPES, Signal, address_key,
+                          format_value)
 
 # key, header, default width
 COLS = [
     ("fetch", "Pobierz", 62), ("plot", "Wykres", 62), ("name", "Nazwa", 130),
     ("value", "Aktualna wartość", 125), ("fmt", "Sposób wyświetlania", 135), ("source", "Źródło", 70),
     ("dtype", "Typ", 85), ("db", "DB", 70), ("byte", "Bajt", 75), ("bit", "Bit", 55),
-    ("offset", "Offset Y", 85), ("gain", "Gain", 85), ("color", "Kolor", 80), ("comment", "Opis", 220),
+    ("node", "Węzeł OPC / nazwa (Web API)", 190), ("offset", "Offset Y", 85), ("gain", "Gain", 85),
+    ("color", "Kolor", 80), ("comment", "Opis", 220),
 ]
 CI = {k: i for i, (k, _, _) in enumerate(COLS)}
-STRUCTURAL = ("fetch", "source", "dtype", "db", "byte", "bit")   # locked while acquisition runs
-ADDRESS_CELLS = ("source", "dtype", "db", "byte", "bit")
+STRUCTURAL = ("fetch", "source", "dtype", "db", "byte", "bit", "node")   # locked while acquisition runs
+ADDRESS_CELLS = ("source", "dtype", "db", "byte", "bit", "node")
 
 RED = "background:#9a2a2a; color:#ffffff;"
 YELLOW = "background:#c9b030; color:#000000;"
@@ -162,8 +164,9 @@ class SignalsDialog(QDialog):
     def __init__(self, signals: list[Signal], locked: bool, symbols: Callable[[], list[Symbol]],
                  opts: dict | None = None, value_provider: Callable[[], list | None] | None = None,
                  other_tabs: Callable[[], list[tuple[str, list[Signal]]]] | None = None,
-                 ui_state: dict | None = None, parent=None):
+                 ui_state: dict | None = None, opc_browse: Callable[[], list[Signal]] | None = None, parent=None):
         super().__init__(parent)
+        self._opc_browse = opc_browse
         self.setWindowTitle("Sygnały do śledzenia")
         self.resize(1250, 460)
         self.locked = locked
@@ -205,8 +208,11 @@ class SignalsDialog(QDialog):
         row = QHBoxLayout()
         self.btn_add = QPushButton("Dodaj")
         self.btn_sym = QPushButton("Z symboli…")
+        self.btn_opc = QPushButton("Z OPC UA…")
+        self.btn_opc.setToolTip("Przeglądarka zmiennych serwera OPC UA (także bloków zoptymalizowanych)")
+        self.btn_opc.setEnabled(opc_browse is not None)
         self.btn_del = QPushButton("Usuń")
-        for b in (self.btn_add, self.btn_sym, self.btn_del):
+        for b in (self.btn_add, self.btn_sym, self.btn_opc, self.btn_del):
             row.addWidget(b)
         row.addSpacing(20)
         self.btn_save = QPushButton("Zapisz listę…")
@@ -227,6 +233,7 @@ class SignalsDialog(QDialog):
         self.btn_add.clicked.connect(self._add)
         self.btn_del.clicked.connect(self._remove)
         self.btn_sym.clicked.connect(self._from_symbols)
+        self.btn_opc.clicked.connect(self._from_opc)
         self.btn_save.clicked.connect(self._save_list)
         self.btn_load.clicked.connect(self._load_list)
         self.btn_copy.clicked.connect(self._copy_from_tab)
@@ -296,7 +303,7 @@ class SignalsDialog(QDialog):
         w["fmt"].addItems(FORMATS)
         w["fmt"].setCurrentText(s.fmt if s.fmt in FORMATS else FORMATS[0])
         w["source"] = QComboBox()
-        w["source"].addItems(SOURCES)
+        w["source"].addItems(ALL_SOURCES)
         w["source"].setCurrentText(s.source)
         w["dtype"] = QComboBox()
         w["dtype"].addItems(list(TYPES))
@@ -310,6 +317,8 @@ class SignalsDialog(QDialog):
         w["bit"] = QSpinBox()
         w["bit"].setRange(0, 7)
         w["bit"].setValue(s.bit)
+        w["node"] = QLineEdit(s.node)
+        w["node"].setPlaceholderText("tylko OPC / WEB")
         w["offset"] = QDoubleSpinBox()
         w["offset"].setRange(-1e9, 1e9)
         w["offset"].setDecimals(3)
@@ -330,6 +339,7 @@ class SignalsDialog(QDialog):
                 widget.setEnabled(False)
         w["_locked"] = row_locked
         w["name"].textChanged.connect(self._update_marks)
+        w["node"].textChanged.connect(self._update_marks)
         for k in ("source", "dtype"):
             w[k].currentTextChanged.connect(self._update_marks)
         for k in ("db", "byte", "bit"):
@@ -341,8 +351,12 @@ class SignalsDialog(QDialog):
 
     def _enable_fields(self, w: dict) -> None:
         lk = w.get("_locked", False)
-        w["db"].setEnabled(w["source"].currentText() == "DB" and not lk)
-        w["bit"].setEnabled(w["dtype"].currentText() == "BOOL" and not lk)
+        src = w["source"].currentText()
+        ext = src in NODE_SOURCES
+        w["db"].setEnabled((src == "DB" or src.startswith("MB")) and not lk)
+        w["byte"].setEnabled(not ext and not lk)
+        w["bit"].setEnabled(w["dtype"].currentText() == "BOOL" and not ext and not lk and src not in ("MBC", "MBD"))
+        w["node"].setEnabled(ext and not lk)
         self._update_marks()
 
     def _install(self, widget: QWidget) -> None:
@@ -374,7 +388,7 @@ class SignalsDialog(QDialog):
             dtype=c("dtype").currentText(), db=c("db").value(), byte=c("byte").value(), bit=c("bit").value(),
             offset_y=c("offset").value(), gain=c("gain").value(), color=c("color").property("color"),
             comment=c("comment").text(), enabled=c("fetch")._cb.isChecked(), plot=c("plot")._cb.isChecked(),
-            fmt=c("fmt").currentText())
+            fmt=c("fmt").currentText(), node=c("node").text().strip())
 
     def signals(self) -> list[Signal]:
         return [self._row_signal(r) for r in range(self.table.rowCount())]
@@ -392,11 +406,14 @@ class SignalsDialog(QDialog):
             self._cell(r, "name").setStyleSheet(
                 f"QLineEdit {{ {RED} }}" if names[s.name] > 1 else "")
             dup = addrs[address_key(s)] > 1
-            used = {"source", "dtype", "byte"} | ({"db"} if s.source == "DB" else set()) | \
-                   ({"bit"} if s.dtype == "BOOL" else set())
+            if s.source in NODE_SOURCES:
+                used = {"source", "dtype", "node"}
+            else:
+                used = {"source", "dtype", "byte"} | ({"db"} if s.source == "DB" or s.source.startswith("MB") else set()) | \
+                       ({"bit"} if s.dtype == "BOOL" and s.source not in ("MBC", "MBD") else set())
             for key in ADDRESS_CELLS:
                 widget = self._cell(r, key)
-                cls = "QComboBox" if key in ("source", "dtype") else "QSpinBox"
+                cls = "QComboBox" if key in ("source", "dtype") else "QLineEdit" if key == "node" else "QSpinBox"
                 widget.setStyleSheet(f"{cls} {{ {YELLOW} }}" if dup and key in used else "")
 
     # ---------------------------------------------------------- values
@@ -462,6 +479,12 @@ class SignalsDialog(QDialog):
         self._last_row = dst
         self._update_marks()
         self._refresh_values()
+
+    def _from_opc(self) -> None:
+        for sig in (self._opc_browse() or []):
+            cur = self.signals()
+            sig.offset_y = round(cur[-1].offset_y + self.opts["offset_step"], 3) if cur else 0.0
+            self._append(sig)
 
     def _remove(self) -> None:
         rows = sorted({i.row() for i in self.table.selectedIndexes()}, reverse=True)

@@ -5,6 +5,10 @@ import struct
 from dataclasses import asdict, dataclass, field
 
 SOURCES = ["I", "Q", "M", "DB"]
+# other drivers: OPC UA / Web API node (Signal.node), Modbus holding / input registers / coils / discrete inputs
+EXT_SOURCES = ["OPC", "WEB", "MBH", "MBI", "MBC", "MBD"]
+ALL_SOURCES = SOURCES + EXT_SOURCES
+NODE_SOURCES = ("OPC", "WEB")
 
 # type -> (size in bytes, struct format or None for BOOL)
 TYPES: dict[str, tuple[int, str | None]] = {
@@ -43,6 +47,7 @@ class Signal:
     enabled: bool = True        # "Pobieraj" - read from the PLC
     plot: bool = True           # "Wykres" - draw on the chart
     fmt: str = "Domyślnie"      # "Sposób wyświetlania" of the current value
+    node: str = ""              # OPC UA NodeId / Web API variable name (sources OPC, WEB)
 
     @property
     def size(self) -> int:
@@ -57,6 +62,10 @@ class Signal:
         else:
             letter = {1: "B", 2: "W", 4: "D", 8: "D"}[self.size]
             suffix, n = letter, str(self.byte)
+        if self.source in NODE_SOURCES:
+            return self.node or "—"
+        if self.source.startswith("MB"):
+            return f"{self.source}{self.byte}" + (f".{self.bit}" if t == "BOOL" and self.source in ("MBH", "MBI") else "")
         if self.source == "DB":
             return f"DB{self.db}.DB{suffix}{n}"
         return f"{self.source}{suffix}{n}" if t != "BOOL" else f"{self.source}{n}"
@@ -75,7 +84,7 @@ class Signal:
     def from_dict(cls, d: dict) -> "Signal":
         known = {k: d[k] for k in cls.__dataclass_fields__ if k in d}
         s = cls(**known)
-        if s.source not in SOURCES:
+        if s.source not in ALL_SOURCES:
             s.source = "DB"
         if s.dtype not in TYPES:
             s.dtype = "BOOL"
@@ -87,6 +96,10 @@ FORMATS = ["Domyślnie", "Dziesiętnie", "HEX", "BIN", "TRUE/FALSE", "Naukowo"]
 
 def address_key(s: "Signal") -> tuple:
     """Identity of the PLC address: source, type, DB (only for DB), byte, bit (only for BOOL)."""
+    if s.source in NODE_SOURCES:
+        return (s.source, s.dtype, s.node, None, None)
+    if s.source.startswith("MB"):
+        return (s.source, s.dtype, s.db, s.byte, s.bit if s.dtype == "BOOL" and s.source in ("MBH", "MBI") else None)
     return (s.source, s.dtype, s.db if s.source == "DB" else None, s.byte,
             s.bit if s.dtype == "BOOL" else None)
 

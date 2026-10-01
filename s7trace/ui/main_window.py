@@ -14,7 +14,9 @@ from ..core.config import TabConfig, app_dir, load_app_config, save_app_config, 
 from ..core.naming import suggest_config_name
 from . import theme as th
 from .help_dialog import HelpDialog
+from .conn_dialog import ConnectionDialog
 from .interface_dialog import InterfaceDialog
+from .wizard_dialog import WizardDialog
 from .trace_tab import RACK_SLOT_HELP, TraceTab, dot_icon
 
 APP_TITLE = "PLC Trace - narzędzie do rysowania wykresów z danych z PLC Siemens"
@@ -160,12 +162,7 @@ class MainWindow(QMainWindow):
         self.act_legend = self._act(v, "Legenda", self._set_legend, checked=self.ui.get("legend", True))
         self.act_grid = self._act(v, "Siatka", self._set_grid, checked=self.ui.get("grid", True))
         v.addSeparator()
-        self._act(v, "Interfejs…", self.edit_interface)
-        self.menu_saved = v.addMenu("Zapisane konfiguracje interfejsu")
-        self.menu_saved.aboutToShow.connect(self._fill_saved_menu)
-        self.menu_profile = v.addMenu("Profil kolorów")
-        self.menu_profile.aboutToShow.connect(self._fill_profile_menu)
-        v.addSeparator()
+        self._act(v, "Diagnostyka połączenia…", lambda: self._cur(lambda t: t.open_diag()), "Ctrl+D")
         self.menu_legend = v.addMenu("Położenie legendy")
         for label, pos in (("Lewy górny róg", (0, 0)), ("Prawy górny róg", (1, 0)),
                            ("Lewy dolny róg", (0, 1)), ("Prawy dolny róg", (1, 1))):
@@ -174,8 +171,23 @@ class MainWindow(QMainWindow):
         hint = self.menu_legend.addAction("…albo przeciągnij legendę myszą na wykresie")
         hint.setEnabled(False)
 
+        st = mb.addMenu("&Ustawienia")
+        self._act(st, "Metoda połączenia i dane logowania…", lambda: self._cur(self.edit_connection))
+        self._act(st, "Kreator połączenia (rozpoznawanie metody)…", lambda: self._cur(self.run_wizard))
+        self._act(st, "Informacje o sterowniku i czas…", lambda: self._cur(lambda t: self.run_wizard(t, 1)))
+        self._act(st, "Wymagania, ograniczenia i blokady…", lambda: self.show_help("Ograniczenia"))
+        st.addSeparator()
+        self._act(st, "Interfejs (kolory, czcionki)…", self.edit_interface)
+        self.menu_saved = st.addMenu("Zapisane konfiguracje interfejsu")
+        self.menu_saved.aboutToShow.connect(self._fill_saved_menu)
+        self.menu_profile = st.addMenu("Profil kolorów")
+        self.menu_profile.aboutToShow.connect(self._fill_profile_menu)
+        st.addSeparator()
+        self._act(st, "Zapisz konfigurację karty…", self.save_config_as)
+        self._act(st, "Wczytaj konfigurację do karty…", self.load_config_from)
+
         h = mb.addMenu("&Pomoc")
-        self._act(h, "Pomoc – opis programu…", self.show_help, "F1")
+        self._act(h, "Pomoc – opis programu…", lambda: self.show_help(), "F1")
         h.addSeparator()
         self._act(h, "Adresowanie, rack/slot, S7-1200/1500",
                   lambda: QMessageBox.information(self, "Pomoc", RACK_SLOT_HELP))
@@ -257,8 +269,14 @@ class MainWindow(QMainWindow):
         self.ui["legend_pos"] = [fx, fy]
         self._apply_layouts()
 
-    def show_help(self) -> None:
-        HelpDialog(self).exec()
+    def show_help(self, topic: str = "") -> None:
+        HelpDialog(self, topic).exec()
+
+    def edit_connection(self, tab) -> None:
+        ConnectionDialog(tab, self).exec()
+
+    def run_wizard(self, tab, page: int = 0) -> None:
+        WizardDialog(tab, show_tab=page, parent=self).exec()
 
     def _commit_theme(self, theme: dict) -> None:
         self.ui["theme"] = th.normalize(theme)
