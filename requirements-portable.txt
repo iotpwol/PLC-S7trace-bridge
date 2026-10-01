@@ -1,0 +1,13 @@
+# Pakiety wersji przenosnej (Python 3.12 embeddable), instalowane przez build-portable.ps1.
+#
+# PySide6 jest przypiety do 6.7.x, bo program ma dzialac na Windows Server 2016 (build 14393):
+#   * od Qt 6.9 Qt6Core wymaga systemowego icuuc.dll (Windows 10 1703+),
+#   * od Qt 6.8 Qt6Core importuje kernel32!SetThreadDescription (Windows 10 1703+).
+# 6.7.3 to najnowsza wersja bez tych zaleznosci i z obsluga Pythona 3.12.
+# tools\check_deps.py pilnuje tego przy budowaniu.
+PySide6-Essentials==6.7.3
+shiboken6==6.7.3
+pyqtgraph>=0.13.7
+python-snap7>=3.0
+numpy>=1.26
+openpyxl>=3.1

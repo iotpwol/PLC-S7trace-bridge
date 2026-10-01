@@ -1,3 +1,4 @@
+# Wariant deweloperski (run.bat, dowolny Python 3.9+). Wersja przenosna: requirements-portable.txt
 PySide6-Essentials>=6.6
 pyqtgraph>=0.13.7
 python-snap7>=3.0

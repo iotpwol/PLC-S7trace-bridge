@@ -40,9 +40,11 @@ $pth = Get-ChildItem "$Out\python" -Filter 'python*._pth' | Select-Object -First
 New-Item -ItemType Directory -Force "$Out\python\Lib\site-packages" | Out-Null
 
 Write-Host '== 3/6 Instalacja pakietow (kola dla Windows / Python ' $pyMajorMinor ')'
-$req = if ($WithTests) { 'requirements-dev.txt' } else { 'requirements.txt' }
+$pipArgs = @('-r', 'requirements-portable.txt')
+if ($WithTests) { $pipArgs += 'pytest' }
 & $hostPy -m pip install --target "$Out\python\Lib\site-packages" --python-version $pyMajorMinor `
-    --platform win_amd64 --implementation cp --only-binary=:all: --no-warn-script-location --disable-pip-version-check -r $req
+    --platform win_amd64 --implementation cp --only-binary=:all: --no-warn-script-location --disable-pip-version-check `
+    @pipArgs
 if ($LASTEXITCODE -ne 0) { throw "pip zakonczyl sie bledem ($LASTEXITCODE)" }
 
 Write-Host '== 4/6 Odchudzanie PySide6 (nieuzywane moduly Qt)'
@@ -57,18 +59,37 @@ Get-ChildItem $ps -File | Where-Object { $_.Name -match '^(designer|assistant|li
 $drop = 'Quick|Qml|WebEngine|WebChannel|3D|Pdf|Designer|Test|Help|Sql|Multimedia|Bluetooth|Nfc|Sensors|SerialPort|Location|Positioning|Charts|DataVisualization|RemoteObjects|Scxml|StateMachine|TextToSpeech|VirtualKeyboard|WebSockets|Concurrent|Xml|ShaderTools|Graphs|SpatialAudio|HttpServer|Labs|LanguageServer|Lottie|Protobuf|Grpc|UiTools'
 Get-ChildItem $ps -File -Filter '*.dll' | Where-Object { $_.Name -match "^Qt6($drop)" } | Remove-Item -Force
 Get-ChildItem $ps -Filter 'Qt*.pyd' | Where-Object { $_.Name -notmatch '^Qt(Core|Gui|Widgets|Svg|OpenGL|OpenGLWidgets|Network|PrintSupport)\.' } | Remove-Item -Force
+# python312.dll laduje vcruntime140 z katalogu python\ - ma byc nie starszy niz msvcp140 z PySide6
+foreach ($f in 'vcruntime140.dll', 'vcruntime140_1.dll') {
+    if (Test-Path "$ps\$f") { Copy-Item "$ps\$f" "$Out\python\$f" -Force }
+}
 $after = (Get-ChildItem $ps -Recurse -File | Measure-Object Length -Sum).Sum
 Write-Host ("   PySide6: {0:N0} MB -> {1:N0} MB" -f ($before / 1MB), ($after / 1MB))
+
+& $hostPy -c "import pefile" 2>$null
+if ($LASTEXITCODE -eq 0) {
+    & $hostPy tools\check_deps.py "$Out\python"
+    if ($LASTEXITCODE -ne 0) { throw 'Qt w paczce wymaga funkcji niedostepnych na starszych Windowsach (patrz requirements-portable.txt).' }
+    & $hostPy tools\imports_list.py "$Out\python" "$Out\imports.csv"
+} else {
+    Write-Host '   (pominieto check_deps: pip install pefile)'
+}
 
 Write-Host '== 5/6 Aplikacja i skrypty startowe'
 Copy-Item main.py "$Out\app\main.py"
 Copy-Item s7trace "$Out\app\s7trace" -Recurse
 Get-ChildItem "$Out\app" -Recurse -Directory -Filter '__pycache__' | Remove-Item -Recurse -Force
 Copy-Item README.md "$Out\app\README.md"
+Copy-Item tools\diagnoza.py "$Out\app\diagnoza.py"
 Copy-Item portable\* $Out
 
 Write-Host '== 6/6 Kompilacja .pyc (szybszy pierwszy start)'
 & "$Out\python\python.exe" -m compileall -q "$Out\python\Lib\site-packages" "$Out\app" | Out-Null
+
+# manifest (sciezka,rozmiar) - Diagnoza.bat wykrywa pliki usuniete / uszkodzone przy kopiowaniu
+$rows = Get-ChildItem "$Out\python", "$Out\app" -Recurse -File | Where-Object { $_.Extension -ne '.pyc' } |
+    ForEach-Object { $_.FullName.Substring($Out.Length + 1) + ',' + $_.Length }
+Set-Content -LiteralPath "$Out\MANIFEST.csv" -Value $rows -Encoding utf8
 
 $size = (Get-ChildItem $Out -Recurse -File | Measure-Object Length -Sum).Sum
 Write-Host ("Gotowe: {0}  ({1:N0} MB)" -f $Out, ($size / 1MB))
