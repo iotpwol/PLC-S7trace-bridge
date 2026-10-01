@@ -7,7 +7,7 @@ import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import QObject, Qt, Signal as QtSignal
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QLabel, QSplitter, QVBoxLayout, QWidget
 
 from ..core import render
 from ..core.buffer import TraceBuffer
@@ -29,9 +29,30 @@ class TimeAxis(pg.AxisItem):
         return out
 
 
+LEGEND_MARGIN = 12
+
+
+class DraggableLegend(pg.LegendItem):
+    """Legend that can be dragged with the mouse; `on_moved(fx, fy)` reports the drop position
+    as fractions (0..1) of the free room inside the chart."""
+
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.on_moved = None
+
+    def mouseDragEvent(self, ev):
+        super().mouseDragEvent(ev)
+        if ev.isFinish() and self.on_moved and self.parentItem() is not None:
+            r = self.parentItem().boundingRect()
+            w, h = max(r.width() - self.boundingRect().width(), 1), max(r.height() - self.boundingRect().height(), 1)
+            self.on_moved(min(max(self.pos().x() / w, 0.0), 1.0), min(max(self.pos().y() / h, 0.0), 1.0))
+
+
 class PlotView(QWidget):
     windowChanged = QtSignal(float)    # user zoomed -> new visible width [s]
     userMoved = QtSignal()             # user panned/zoomed (tab pauses the live view)
+    legendMoved = QtSignal(float, float)    # legend dropped at (fx, fy)
+    splitChanged = QtSignal(int)       # height of the overview strip changed (pixels)
 
     def __init__(self, buffer: TraceBuffer, parent=None):
         super().__init__(parent)
@@ -55,11 +76,24 @@ class PlotView(QWidget):
         self.hmarks: list[pg.InfiniteLine] = []
         self.v_mode = False
         self.h_mode = False
+        self.legend_pos = (0.0, 0.0)
+        self._ov_want: int | None = None
 
-        self.glw = pg.GraphicsLayoutWidget()
+        self.glw = pg.GraphicsLayoutWidget()          # main chart
+        self.glw_ov = pg.GraphicsLayoutWidget()       # overview strip (own widget -> draggable splitter)
+        self.glw_ov.setMinimumHeight(48)
+        self.split = QSplitter(Qt.Vertical)
+        self.split.setChildrenCollapsible(False)
+        self.split.setHandleWidth(6)
+        self.split.addWidget(self.glw)
+        self.split.addWidget(self.glw_ov)
+        self.split.setStretchFactor(0, 1)
+        self.split.setStretchFactor(1, 0)
+        self.split.setSizes([10000, 100])
+        self.split.splitterMoved.connect(lambda *_: self.splitChanged.emit(self.overview_height()))
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.addWidget(self.glw)
+        lay.addWidget(self.split)
 
         self.plot = self.glw.addPlot(row=0, col=0, axisItems={"bottom": TimeAxis("bottom")})
         self.plot.setMenuEnabled(False)
@@ -74,9 +108,8 @@ class PlotView(QWidget):
         self.vb.disableAutoRange()
         self.vb.sigRangeChangedManually.connect(self._on_manual_range)
 
-        self.ov = self.glw.addPlot(row=1, col=0, axisItems={"bottom": TimeAxis("bottom")})
+        self.ov = self.glw_ov.addPlot(row=0, col=0, axisItems={"bottom": TimeAxis("bottom")})
         self.ov.setMenuEnabled(False)
-        self.ov.setFixedHeight(70)
         self.ov.getAxis("left").setWidth(48)
         self.ov.getAxis("left").setStyle(showValues=False)
         self.ov.hideButtons()
@@ -89,7 +122,9 @@ class PlotView(QWidget):
         self.ov.addItem(self.region)
         self.region.sigRegionChanged.connect(self._on_region)
 
-        self.legend = self.plot.addLegend(offset=(12, 12), labelTextColor="#e8e8e8")
+        self.legend = DraggableLegend(offset=(LEGEND_MARGIN, LEGEND_MARGIN), labelTextColor="#e8e8e8")
+        self.legend.setParentItem(self.vb)
+        self.legend.on_moved = self._legend_dropped
         self.legend.setBrush(pg.mkBrush(0, 0, 0, 170))
         self.legend.setPen(pg.mkPen("#b0b0b0"))
         self.curves: list[pg.PlotDataItem] = []
@@ -132,9 +167,39 @@ class PlotView(QWidget):
             if s.plot:
                 self.legend.addItem(c, s.name)
 
+    # ------------------------------------------------ layout (saved in the UI settings)
+    def overview_height(self) -> int:
+        return self.split.sizes()[1]
+
+    def set_overview_height(self, px: int) -> None:
+        self._ov_want = int(px)
+        self._fit_overview()
+
+    def _fit_overview(self) -> None:
+        total = self.height()
+        if self._ov_want is None or total < 200:          # not laid out yet -> apply on the first resize
+            return
+        px = max(48, min(self._ov_want, total - 100))
+        self.split.blockSignals(True)
+        self.split.setSizes([total - px, px])
+        self.split.blockSignals(False)
+        self._ov_want = None
+
+    def set_legend_pos(self, fx: float, fy: float) -> None:
+        """(0,0) top-left ... (1,1) bottom-right; anything in between = freely dragged."""
+        fx, fy = min(max(fx, 0.0), 1.0), min(max(fy, 0.0), 1.0)
+        self.legend_pos = (fx, fy)
+        m = LEGEND_MARGIN
+        self.legend.anchor(itemPos=(fx, fy), parentPos=(fx, fy), offset=(m * (1 - 2 * fx), m * (1 - 2 * fy)))
+
+    def _legend_dropped(self, fx: float, fy: float) -> None:
+        self.set_legend_pos(fx, fy)
+        self.legendMoved.emit(fx, fy)
+
     def apply_theme(self, bg: str, fg: str) -> None:
         """Chart colours from the 'Interfejs' settings."""
         self.glw.setBackground(bg)
+        self.glw_ov.setBackground(bg)
         pen = pg.mkPen(fg)
         for pl in (self.plot, self.ov):
             for ax in ("left", "bottom"):
@@ -315,6 +380,7 @@ class PlotView(QWidget):
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
+        self._fit_overview()
         if self.readout.isVisible():
             self._place_readout()
 

@@ -69,7 +69,16 @@ Typy: BOOL, BYTE, SINT, USINT, WORD, INT, UINT, DWORD, DINT, UDINT, REAL, LREAL.
   Podczas trwającego połączenia można DODAWAĆ nowe zmienne (Dodaj / Z symboli…) — po OK są pobierane od następnego
   cyklu, w starszych próbkach mają przerwę; istniejących wierszy (adres, kolejność, usuwanie) nie zmienisz do Stop.
   Jeśli trwa REC, po dodaniu zmiennej zapis przechodzi do nowego pliku (z nową kolumną).
-* Karty są na górze po prawej (w wierszu menu): dwuklik / F2 = zmiana nazwy, prawy przycisk = duplikuj, zamknij.
+* Karty są na górze po prawej (w wierszu menu), tak szerokie, by pokazać pełne nazwy (aż do końca menu „Pomoc”);
+  kropka-ikona = stan połączenia, aktywna karta: niebieskie tło i żółta czcionka (kolory w Widok → Interfejs).
+  Dwuklik / F2 = zmiana nazwy, prawy przycisk = duplikuj, zamknij.
+* Plik → Zapisz / Wczytaj konfigurację dotyczy BIEŻĄCEJ karty; wczytanie sprawdza tylko jej połączenie
+  (inne karty pracują dalej). Domyślna nazwa `s7trace_signals`, istniejąca → `_001`, `_002`…
+  W nazwach plików (trigger) znacznik `{confname}` = nazwa konfiguracji (brak → program pyta, potem `no_name`).
+* Przyciski sterujące mają konfigurowalne kolory stanów (Start/Stop/Pauza/REC/znaczniki), kropka REC miga (domyślnie 0,5 Hz).
+* Podziały można przeciągać: panel ustawień ↔ wykres oraz wykres główny ↔ pasek podglądu; legendę przeciągniesz myszą
+  lub ustawisz w Widok → Położenie legendy. Wszystko jest zapamiętywane.
+* Pomoc (F1): opis wszystkich paneli, menu, przycisków i okna sygnałów z rysunkami (`s7trace/help/`).
 * Widok → Interfejs…: kolory (okna, pola edycyjne, tabele, menu, wykres…) i czcionka, z podglądem na żywo.
   Profil kolorów: Ciemny / Jasny / Systemowy (podąża za trybem aplikacji w Windows, także na żywo) / Własny
   (ustawia się sam po ręcznej zmianie koloru; też w Widok → Profil kolorów).

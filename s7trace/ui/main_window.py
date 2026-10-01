@@ -4,19 +4,23 @@ from __future__ import annotations
 import json
 import os
 
-from PySide6.QtCore import QByteArray, QTimer, Qt
-from PySide6.QtGui import QAction, QColor, QKeySequence
+from PySide6.QtCore import QByteArray, QSize, QTimer, Qt
+from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QInputDialog, QMainWindow, QMenu,
                                QMessageBox, QStackedWidget, QTabBar, QToolButton, QWidget)
 
 from ..core import symbols as sym
-from ..core.config import TabConfig, load_app_config, save_app_config, symbols_path
+from ..core.config import TabConfig, app_dir, load_app_config, save_app_config, symbols_path
+from ..core.naming import suggest_config_name
 from . import theme as th
+from .help_dialog import HelpDialog
 from .interface_dialog import InterfaceDialog
-from .trace_tab import RACK_SLOT_HELP, TraceTab
+from .trace_tab import RACK_SLOT_HELP, TraceTab, dot_icon
 
 APP_TITLE = "PLC Trace - narzędzie do rysowania wykresów z danych z PLC Siemens"
 
+STATE_PL = {"running": "praca", "connecting": "łączenie", "reconnecting": "ponawianie połączenia",
+            "stopped": "zatrzymana", "error": "błąd"}
 DOT = {"running": "#4cd964", "connecting": "#ffcc00", "reconnecting": "#ff9500",
        "stopped": "#8a8a8a", "error": "#ff453a"}
 
@@ -90,6 +94,7 @@ class MainWindow(QMainWindow):
         bar.setExpanding(False)
         bar.setDrawBase(False)
         bar.setElideMode(Qt.ElideRight)
+        bar.setIconSize(QSize(12, 12))
         bar.setContextMenuPolicy(Qt.CustomContextMenu)
         bar.customContextMenuRequested.connect(self._tab_menu)
         bar.tabCloseRequested.connect(self.close_tab)
@@ -120,6 +125,7 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
         self._apply_theme(self.theme)
+        self._apply_layouts()
         try:
             QApplication.styleHints().colorSchemeChanged.connect(self._on_os_scheme)
         except Exception:
@@ -159,8 +165,18 @@ class MainWindow(QMainWindow):
         self.menu_saved.aboutToShow.connect(self._fill_saved_menu)
         self.menu_profile = v.addMenu("Profil kolorów")
         self.menu_profile.aboutToShow.connect(self._fill_profile_menu)
+        v.addSeparator()
+        self.menu_legend = v.addMenu("Położenie legendy")
+        for label, pos in (("Lewy górny róg", (0, 0)), ("Prawy górny róg", (1, 0)),
+                           ("Lewy dolny róg", (0, 1)), ("Prawy dolny róg", (1, 1))):
+            self._act(self.menu_legend, label, lambda p=pos: self.set_legend_pos(*p))
+        self.menu_legend.addSeparator()
+        hint = self.menu_legend.addAction("…albo przeciągnij legendę myszą na wykresie")
+        hint.setEnabled(False)
 
         h = mb.addMenu("&Pomoc")
+        self._act(h, "Pomoc – opis programu…", self.show_help, "F1")
+        h.addSeparator()
         self._act(h, "Adresowanie, rack/slot, S7-1200/1500",
                   lambda: QMessageBox.information(self, "Pomoc", RACK_SLOT_HELP))
         self._act(h, "O programie", lambda: QMessageBox.about(
@@ -206,6 +222,43 @@ class MainWindow(QMainWindow):
         self.theme = th.apply_theme(QApplication.instance(), theme)
         for i in range(self.tabs.count()):
             self.tabs.widget(i).apply_plot_theme(self.theme["plot_bg"], self.theme["plot_fg"])
+            self.tabs.widget(i).apply_ctl_theme(self.theme)
+        self._relayout_tabs()
+
+    # ------------------------------------------------- tab bar sizing / layout sync
+    def _relayout_tabs(self) -> None:
+        """The tab bar is as wide as its tabs need (full names), at most up to the end of the menu items."""
+        bar, mb = self.tabs.bar, self.menuBar()
+        acts = mb.actions()
+        left = mb.actionGeometry(acts[-1]).right() + 16 if acts else 160
+        plus = self._plus.sizeHint().width() + 10
+        avail = mb.width() - left - plus
+        want = sum(bar.tabSizeHint(i).width() for i in range(bar.count())) + 8
+        w = int(max(min(want, avail), 140))
+        bar.setFixedWidth(w)
+        self._corner.setFixedWidth(w + plus)
+        self._corner.updateGeometry()
+        mb.updateGeometry()
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._relayout_tabs()
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        self._relayout_tabs()
+
+    def _apply_layouts(self, source: TraceTab | None = None) -> None:
+        for i in range(self.tabs.count()):
+            if self.tabs.widget(i) is not source:
+                self.tabs.widget(i).apply_layout()
+
+    def set_legend_pos(self, fx: float, fy: float) -> None:
+        self.ui["legend_pos"] = [fx, fy]
+        self._apply_layouts()
+
+    def show_help(self) -> None:
+        HelpDialog(self).exec()
 
     def _commit_theme(self, theme: dict) -> None:
         self.ui["theme"] = th.normalize(theme)
@@ -275,9 +328,12 @@ class MainWindow(QMainWindow):
         i = self.tabs.addTab(tab, tab.title())
         tab.stateChanged.connect(lambda s, t=tab: self._tab_state(t, s))
         tab.titleChanged.connect(lambda title, t=tab: self._tab_state(t, t.state))
+        tab.layoutChanged.connect(lambda t=tab: self._apply_layouts(t))
         tab.plot.set_legend_visible(self.ui.get("legend", True))
         tab.plot.set_grid(self.ui.get("grid", True))
         tab.apply_plot_theme(self.theme["plot_bg"], self.theme["plot_fg"])
+        tab.apply_ctl_theme(self.theme)
+        tab.apply_layout()
         self._tab_state(tab, "stopped")
         self.tabs.setCurrentIndex(i)
         return tab
@@ -286,8 +342,11 @@ class MainWindow(QMainWindow):
         i = self.tabs.indexOf(tab)
         if i < 0:
             return
-        self.tabs.setTabText(i, f"{tab.title()} ●")
-        self.tabs.tabBar().setTabTextColor(i, QColor(DOT.get(state, "#8a8a8a")))
+        bar = self.tabs.tabBar()
+        bar.setTabText(i, tab.title())
+        bar.setTabIcon(i, dot_icon(DOT.get(state, "#8a8a8a")))        # state dot: green running, grey stopped...
+        bar.setTabToolTip(i, f"{tab.title()} — {STATE_PL.get(state, state)}")
+        self._relayout_tabs()
 
     def rename_tab(self, i: int):
         tab = self.tabs.widget(i)
@@ -330,6 +389,7 @@ class MainWindow(QMainWindow):
         tab.deleteLater()
         if self.tabs.count() == 0:
             self.new_tab()
+        self._relayout_tabs()
 
     # --------------------------------------------------------- config
     def _config_dict(self) -> dict:
@@ -344,31 +404,59 @@ class MainWindow(QMainWindow):
         except OSError:
             pass
 
-    def save_config_as(self):
-        path, _ = QFileDialog.getSaveFileName(self, "Zapisz konfigurację", "s7trace_config.json", "JSON (*.json)")
-        if path:
-            save_app_config(self._config_dict(), path)
+    def _config_dir(self) -> str:
+        d = self.ui.get("config_dir") or os.path.join(app_dir(), "konfiguracje")
+        os.makedirs(d, exist_ok=True)
+        return d
 
-    def load_config_from(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Wczytaj konfigurację", "", "JSON (*.json)")
+    def save_config_as(self):
+        """Saves the configuration of the CURRENT tab (connection, signals, trigger, ranges)."""
+        tab = self.tabs.currentWidget()
+        if tab is None:
+            return
+        folder = self._config_dir()
+        stem = suggest_config_name(folder, tab.cfg.conf_name)
+        path, _ = QFileDialog.getSaveFileName(self, "Zapisz konfigurację", os.path.join(folder, stem + ".json"),
+                                              "JSON (*.json)")
         if not path:
             return
+        tab.cfg.conf_name = os.path.splitext(os.path.basename(path))[0]
+        self.ui["config_dir"] = os.path.dirname(path)
+        save_app_config({"tabs": [tab.to_config().to_dict()], "current": 0}, path)
+        tab.status_msg = f"Zapisano konfigurację: {path}"
+
+    def load_config_from(self):
+        """Loads a configuration into the CURRENT tab; other tabs keep running."""
+        tab = self.tabs.currentWidget()
+        if tab is None:
+            return
+        if tab.state != "stopped":
+            QMessageBox.information(self, "S7Trace", "Zatrzymaj połączenie na bieżącej karcie przed wczytaniem "
+                                    "konfiguracji (połączenia na innych kartach mogą pracować dalej).")
+            return
+        path, _ = QFileDialog.getOpenFileName(self, "Wczytaj konfigurację", self._config_dir(), "JSON (*.json)")
+        if path:
+            self.load_config_file(path, tab)
+
+    def load_config_file(self, path: str, tab: TraceTab | None = None) -> bool:
+        tab = tab or self.tabs.currentWidget()
         try:
             with open(path, encoding="utf-8") as f:
                 data = json.load(f)
             cfgs = [TabConfig.from_dict(d) for d in data.get("tabs", [])]
         except Exception as e:
             QMessageBox.warning(self, "S7Trace", f"Nie można wczytać konfiguracji: {e}")
-            return
-        if any(self.tabs.widget(i).state != "stopped" for i in range(self.tabs.count())):
-            QMessageBox.information(self, "S7Trace", "Zatrzymaj aktywne połączenia przed wczytaniem konfiguracji.")
-            return
-        while self.tabs.count():
-            t = self.tabs.widget(0)
-            t.shutdown()
-            self.tabs.removeTab(0)
-        for c in cfgs or [TabConfig()]:
+            return False
+        if not cfgs or tab.state != "stopped":
+            return False
+        stem = os.path.splitext(os.path.basename(path))[0]
+        self.ui["config_dir"] = os.path.dirname(path)
+        cfgs[0].conf_name = stem
+        tab.load_config(cfgs[0])                        # first configuration -> this tab
+        for c in cfgs[1:]:                              # a multi-tab file adds the rest as new tabs
             self.new_tab(c)
+        self.tabs.setCurrentIndex(self.tabs.indexOf(tab))
+        return True
 
     # -------------------------------------------------------- symbols
     def import_symbols(self):

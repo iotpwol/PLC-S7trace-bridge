@@ -60,3 +60,17 @@ def new_signal_name(ref_name: str | None, existing: list[str], autonumber: bool,
             return name
         name = next_name(name)
     return name
+
+
+def suggest_config_name(folder: str, base: str = "", default: str = "s7trace_signals") -> str:
+    """File stem for a saved configuration: `base` (or the default) and, if that file already exists
+    in `folder`, the first free `_001`, `_002`, ... ('L1_Oven' -> 'L1_Oven_001'; 'L1_Oven_001' -> 'L1_Oven_002')."""
+    import os
+    stem = re.sub(r"_\d{3}$", "", (base or "").strip()) or default
+    taken = lambda n: os.path.exists(os.path.join(folder, n + ".json"))
+    if not taken(stem) and not (base and taken(base.strip())):
+        return stem
+    n = 1
+    while os.path.exists(os.path.join(folder, f"{stem}_{n:03d}.json")):
+        n += 1
+    return f"{stem}_{n:03d}"

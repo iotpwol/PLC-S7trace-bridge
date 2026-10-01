@@ -25,21 +25,40 @@ COLOR_KEYS: dict[str, tuple[str, str]] = {
     "menu_bg": ("Tło menu", "#2b2b2b"),
     "menu_text": ("Tekst menu", "#e0e0e0"),
     "tab_bg": ("Tło kart (zakładek)", "#333333"),
-    "tab_selected": ("Aktywna karta", "#444444"),
+    "tab_selected": ("Aktywna karta: tło", "#1e66c8"),
+    "tab_selected_text": ("Aktywna karta: tekst", "#ffe600"),
     "accent": ("Kolor zaznaczenia", "#2a82da"),
     "plot_bg": ("Tło wykresu", "#000000"),
     "plot_fg": ("Osie i opisy wykresu", "#d0d0d0"),
+    # control buttons under the chart
+    "ctl_bg": ("Przyciski sterujące (wyłączone): tło", "#3a3a3a"),
+    "ctl_text": ("Przyciski sterujące (wyłączone): tekst", "#e8e8e8"),
+    "start_on_bg": ("Start załączony: tło", "#3a3a3a"),
+    "start_on_text": ("Start załączony: tekst", "#ffe600"),
+    "stop_on_bg": ("Stop załączony: tło", "#3a3a3a"),
+    "stop_on_text": ("Stop załączony: tekst", "#b01818"),
+    "pause_on_bg": ("Pauza załączona: tło", "#f2d600"),
+    "pause_on_text": ("Pauza załączona: tekst", "#000000"),
+    "rec_on_bg": ("REC załączony: tło", "#ff8c1a"),
+    "rec_on_text": ("REC załączony: tekst", "#ffffff"),
+    "rec_dot": ("REC: migająca kropka", "#ff2020"),
+    "mark_on_bg": ("V / H znacznik, Punkty załączone: tło", "#2a82da"),
+    "mark_on_text": ("V / H znacznik, Punkty załączone: tekst", "#000000"),
 }
 
 DARK = {k: v[1] for k, v in COLOR_KEYS.items()}
-DARK.update(profile="dark", font_family="", font_size=9)
+DARK.update(profile="dark", font_family="", font_size=9, rec_blink_hz=0.5)
 
 LIGHT = dict(DARK)
 LIGHT.update(
     window_bg="#f0f0f0", panel_bg="#e6e6e6", text="#202020", edit_bg="#ffffff", edit_text="#101010",
     button_bg="#e1e1e1", button_text="#101010", table_bg="#ffffff", table_text="#101010",
     header_bg="#dcdcdc", menu_bg="#f0f0f0", menu_text="#101010", tab_bg="#dcdcdc",
-    tab_selected="#ffffff", accent="#2a82da", plot_bg="#ffffff", plot_fg="#303030", profile="light")
+    tab_selected="#2a82da", tab_selected_text="#ffe600", accent="#2a82da", plot_bg="#ffffff", plot_fg="#303030",
+    ctl_bg="#e1e1e1", ctl_text="#101010", start_on_bg="#e1e1e1", start_on_text="#8a6d00",
+    stop_on_bg="#e1e1e1", stop_on_text="#a01010", pause_on_bg="#f2d600", pause_on_text="#000000",
+    rec_on_bg="#ff8c1a", rec_on_text="#ffffff", rec_dot="#e01010", mark_on_bg="#2a82da", mark_on_text="#000000",
+    profile="light")
 
 PRESETS = {"Ciemny (domyślny)": DARK, "Jasny": LIGHT}
 
@@ -79,6 +98,10 @@ def normalize(theme: dict | None) -> dict:
             out["font_size"] = max(6, min(32, int(theme.get("font_size", 9))))
         except (TypeError, ValueError):
             pass
+        try:
+            out["rec_blink_hz"] = max(0.1, min(5.0, float(theme.get("rec_blink_hz", 0.5))))
+        except (TypeError, ValueError):
+            pass
     return out
 
 
@@ -98,7 +121,8 @@ def list_profiles() -> list[tuple[str, str]]:
 
 def save_profile(path: str, theme: dict) -> None:
     t = normalize(theme)
-    ordered = {"profile": t["profile"], "font_family": t["font_family"], "font_size": t["font_size"]}
+    ordered = {"profile": t["profile"], "font_family": t["font_family"], "font_size": t["font_size"],
+               "rec_blink_hz": t["rec_blink_hz"]}
     ordered.update({k: t[k] for k in COLOR_KEYS})
     with open(path, "w", encoding="utf-8") as f:
         json.dump(ordered, f, ensure_ascii=False, indent=2)       # indent -> each parameter on its own line
@@ -153,8 +177,20 @@ QMenu::item:selected {{ background: {t['accent']}; color: #ffffff; }}
 QMenu::item:disabled {{ color: {_disabled(t['menu_text'])}; }}
 QTabBar::tab {{ background: {t['tab_bg']}; color: {t['text']}; padding: 4px 12px;
     border: 1px solid rgba(128,128,128,110); border-bottom: none; margin-left: 1px; }}
-QTabBar::tab:selected {{ background: {t['tab_selected']}; }}
+QTabBar::tab {{ min-width: 70px; }}
+QTabBar::tab:selected {{ background: {t['tab_selected']}; color: {t['tab_selected_text']}; font-weight: bold; }}
 QTabBar::close-button {{ subcontrol-position: right; }}
+QPushButton[ctl="true"] {{ background: {t['ctl_bg']}; color: {t['ctl_text']}; }}
+QPushButton[ctl="true"]:disabled {{ color: {_disabled(t['ctl_text'])}; }}
+QPushButton[role="start"][on="true"], QPushButton[role="start"][on="true"]:disabled
+    {{ background: {t['start_on_bg']}; color: {t['start_on_text']}; font-weight: bold; }}
+QPushButton[role="stop"][on="true"], QPushButton[role="stop"][on="true"]:disabled
+    {{ background: {t['stop_on_bg']}; color: {t['stop_on_text']}; font-weight: bold; }}
+QPushButton[role="pause"][on="true"] {{ background: {t['pause_on_bg']}; color: {t['pause_on_text']}; }}
+QPushButton[role="rec"][on="true"] {{ background: {t['rec_on_bg']}; color: {t['rec_on_text']}; }}
+QPushButton[role="mark"][on="true"] {{ background: {t['mark_on_bg']}; color: {t['mark_on_text']}; }}
+QSplitter::handle {{ background: rgba(128,128,128,70); }}
+QSplitter::handle:hover {{ background: {t['accent']}; }}
 QToolTip {{ background: {t['edit_bg']}; color: {t['edit_text']}; border: 1px solid rgba(128,128,128,150); }}
 QScrollArea {{ background: transparent; }}
 """

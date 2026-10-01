@@ -20,6 +20,7 @@ def app_dir() -> str:
 @dataclass
 class TabConfig:
     name: str = ""                 # tab title; empty = use the IP
+    conf_name: str = ""            # name of the saved configuration ({confname} in file names)
     ip: str = "192.168.0.1"
     rack: int = 0
     slot: int = 2
@@ -45,7 +46,7 @@ class TabConfig:
     @classmethod
     def from_dict(cls, d: dict) -> "TabConfig":
         c = cls()
-        for k in ("name", "ip", "rack", "slot", "cycle_ms", "mode", "window_s", "auto_y",
+        for k in ("name", "conf_name", "ip", "rack", "slot", "cycle_ms", "mode", "window_s", "auto_y",
                   "y_min", "y_max", "show_points", "autonumber", "name_mode", "own_name", "offset_step"):
             if k in d:
                 setattr(c, k, d[k])

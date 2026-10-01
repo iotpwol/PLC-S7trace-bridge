@@ -8,9 +8,10 @@ from collections import deque
 from datetime import datetime, timedelta
 
 from PySide6.QtCore import QTimer, Qt, Signal as QtSignal
+from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
-                               QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
-                               QScrollArea, QSpinBox, QVBoxLayout, QWidget)
+                               QGroupBox, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMessageBox,
+                               QPushButton, QScrollArea, QSpinBox, QSplitter, QVBoxLayout, QWidget)
 
 from ..core import trigger as trg
 from ..core.acq_process import ProcAcquirer
@@ -37,6 +38,25 @@ RACK_SLOT_HELP = (
 )
 
 
+class _Names(dict):
+    def __missing__(self, key):          # unknown {placeholder} stays as typed instead of raising KeyError
+        return "{" + key + "}"
+
+
+def dot_icon(color: str | None, size: int = 12) -> QIcon:
+    """Filled circle (None = transparent, keeps the button width constant)."""
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    if color:
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setBrush(QColor(color))
+        p.setPen(Qt.NoPen)
+        p.drawEllipse(1, 1, size - 2, size - 2)
+        p.end()
+    return QIcon(pm)
+
+
 def _sanitize(s: str) -> str:
     return re.sub(r"[^\w.-]+", "_", s).strip("_") or "tab"
 
@@ -57,6 +77,7 @@ class TraceTab(QWidget):
     stateChanged = QtSignal(str)       # stopped / connecting / running / reconnecting / error
     titleChanged = QtSignal(str)
     _stateRaw = QtSignal(str, str)     # from worker thread
+    layoutChanged = QtSignal()         # splitters / legend moved -> main window syncs the other tabs
 
     def __init__(self, cfg: TabConfig, symbols: callable, ui_state: dict | None = None,
                  other_tabs: callable = None, parent=None):
@@ -81,6 +102,9 @@ class TraceTab(QWidget):
         self.trig_post_end = 0.0
         self._stat_tick = 0
         self._loading = False
+        self._noname_asked = False
+        self._want_left: int | None = None
+        self._rec_dot, self._rec_phase = "#ff2020", True
         self._build()
         self._load_cfg()
         self._stateRaw.connect(self._on_state)
@@ -88,7 +112,11 @@ class TraceTab(QWidget):
         self.timer.setInterval(33)
         self.timer.timeout.connect(self._tick)
         self.timer.start()
+        self.blink = QTimer(self)                    # REC dot
+        self.blink.timeout.connect(self._blink_tick)
+        self.apply_ctl_theme({"rec_dot": self._rec_dot, "rec_blink_hz": 0.5})
         self._set_buttons()
+        self.apply_layout()
 
     # ================================================================== UI
     def _build(self):
@@ -98,7 +126,7 @@ class TraceTab(QWidget):
 
         # ---- left panel
         left = QWidget()
-        left.setFixedWidth(262)
+        left.setMinimumWidth(230)
         lv = QVBoxLayout(left)
         lv.setContentsMargins(14, 10, 8, 6)
 
@@ -164,6 +192,8 @@ class TraceTab(QWidget):
         fr.addWidget(self.ed_tfolder)
         fr.addWidget(btn_folder)
         self.ed_tname = QLineEdit()
+        self.ed_tname.setToolTip("Znaczniki w nazwie pliku:\n{tab} – nazwa karty\n{confname} – nazwa konfiguracji "
+                                 "(gdy jej brak, program zapyta; bez odpowiedzi: no_name)\n{date} – data, {time} – godzina")
         f.addRow(self.chk_trig)
         f.addRow("Sygnał:", self.cb_tsig)
         f.addRow("Tryb:", self.cb_tmode)
@@ -178,11 +208,12 @@ class TraceTab(QWidget):
         scroll = QScrollArea()
         scroll.setWidget(left)
         scroll.setWidgetResizable(True)
-        scroll.setFixedWidth(280)
+        scroll.setMinimumWidth(200)
         scroll.setFrameShape(QScrollArea.NoFrame)
 
         # ---- right side
-        right = QVBoxLayout()
+        right_w = QWidget()
+        right = QVBoxLayout(right_w)
         right.setContentsMargins(4, 4, 4, 4)
         self.plot = PlotView(self.buffer)
         right.addWidget(self.plot, 1)
@@ -191,7 +222,7 @@ class TraceTab(QWidget):
         self.btn_stop = QPushButton("Stop")
         self.btn_pause = QPushButton("Pauza")
         self.btn_pause.setCheckable(True)
-        self.btn_rec = QPushButton("● REC")
+        self.btn_rec = QPushButton("REC")
         self.btn_rec.setCheckable(True)
         self.btn_pts = QPushButton("Punkty")
         self.btn_pts.setCheckable(True)
@@ -213,8 +244,26 @@ class TraceTab(QWidget):
         self.lbl_status.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         right.addWidget(self.lbl_status)
 
-        root.addWidget(scroll)
-        root.addLayout(right, 1)
+        self.split_h = QSplitter(Qt.Horizontal)         # drag the bar to resize the settings panel
+        self.split_h.setChildrenCollapsible(False)
+        self.split_h.setHandleWidth(6)
+        self.split_h.addWidget(scroll)
+        self.split_h.addWidget(right_w)
+        self.split_h.setStretchFactor(0, 0)
+        self.split_h.setStretchFactor(1, 1)
+        self.split_h.setSizes([290, 1000])
+        root.addWidget(self.split_h)
+        self.split_h.splitterMoved.connect(self._layout_moved)
+        self.plot.splitChanged.connect(self._layout_moved)
+        self.plot.legendMoved.connect(self._legend_moved)
+
+        for b, role in ((self.btn_start, "start"), (self.btn_stop, "stop"), (self.btn_pause, "pause"),
+                        (self.btn_rec, "rec"), (self.btn_pts, "mark"), (self.btn_v, "mark"), (self.btn_h, "mark")):
+            b.setProperty("ctl", True)
+            b.setProperty("role", role)
+            b.setProperty("on", False)
+        for b in (self.btn_pause, self.btn_rec, self.btn_pts, self.btn_v, self.btn_h):
+            b.toggled.connect(lambda on, w=b: self._set_on(w, on))
 
         # ---- wiring
         self.btn_start.clicked.connect(self.start)
@@ -240,6 +289,61 @@ class TraceTab(QWidget):
             w.valueChanged.connect(self._trigger_changed)
         for w in (self.ed_tfolder, self.ed_tname):
             w.editingFinished.connect(self._trigger_changed)
+
+    # ======================================================= buttons / layout
+    @staticmethod
+    def _set_on(btn: QPushButton, on: bool) -> None:
+        if bool(btn.property("on")) != bool(on):
+            btn.setProperty("on", bool(on))
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+            btn.update()
+
+    def apply_ctl_theme(self, theme: dict) -> None:
+        """REC dot colour and blink frequency from the 'Interfejs' settings."""
+        self._rec_dot = theme.get("rec_dot", self._rec_dot)
+        hz = max(0.1, float(theme.get("rec_blink_hz", 0.5)))
+        self._icon_on, self._icon_off = dot_icon(self._rec_dot), dot_icon(None)
+        self.blink.start(int(1000 / (2 * hz)))          # half period = dot on / dot off
+        self._blink_tick(reset=True)
+
+    def _blink_tick(self, reset: bool = False) -> None:
+        self._rec_phase = True if reset else not self._rec_phase
+        self.btn_rec.setIcon(self._icon_on if (self.btn_rec.isChecked() and self._rec_phase) else self._icon_off)
+
+    def _layout_moved(self, *_) -> None:
+        self.ui_state["left_width"] = self.split_h.sizes()[0]
+        self.ui_state["overview_h"] = self.plot.overview_height()
+        self.layoutChanged.emit()
+
+    def _legend_moved(self, fx: float, fy: float) -> None:
+        self.ui_state["legend_pos"] = [round(fx, 4), round(fy, 4)]
+        self.layoutChanged.emit()
+
+    def apply_layout(self) -> None:
+        """Splitter sizes + legend position from the shared UI settings (applied once the widget has a size)."""
+        st = self.ui_state
+        if isinstance(st.get("left_width"), int):
+            self._want_left = st["left_width"]
+        if isinstance(st.get("overview_h"), int):
+            self.plot.set_overview_height(st["overview_h"])
+        lp = st.get("legend_pos")
+        if isinstance(lp, (list, tuple)) and len(lp) == 2:
+            self.plot.set_legend_pos(float(lp[0]), float(lp[1]))
+        self._fit_layout()
+
+    def _fit_layout(self) -> None:
+        total = self.width()
+        if self._want_left and total > 400:
+            w = max(200, min(self._want_left, total - 300))
+            self.split_h.blockSignals(True)
+            self.split_h.setSizes([w, total - w])
+            self.split_h.blockSignals(False)
+            self._want_left = None
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._fit_layout()
 
     # ============================================================= config
     def title(self) -> str:
@@ -334,6 +438,20 @@ class TraceTab(QWidget):
     def to_config(self) -> TabConfig:
         return self._collect()
 
+    def load_config(self, cfg: TabConfig) -> bool:
+        """Replace this tab's configuration (signals, trigger, ranges) in place; only while stopped."""
+        if self.state != "stopped":
+            return False
+        cfg.name = self.cfg.name                       # the tab keeps its own title
+        self.cfg = cfg
+        self.buffer.reset(len(self.display_signals()))
+        self._run_signals = []
+        self.plot.clear_trigger_marks()
+        self._noname_asked = False
+        self._load_cfg()
+        self.titleChanged.emit(self.title())
+        return True
+
     def _refresh_signal_widgets(self, select: str | None = None):
         keep = select if select is not None else self.cb_tsig.currentText()
         self.cb_tsig.blockSignals(True)
@@ -408,6 +526,8 @@ class TraceTab(QWidget):
                                 "(opcjonalnie z portem: 127.0.0.1:1102).")
             self.ed_ip.setFocus()
             return
+        if "{confname}" in c.trigger.filename:
+            self._confname_for_file()
         run = self.display_signals()
         if not run:
             QMessageBox.information(self, "S7Trace", "Brak sygnałów do pobierania. Dodaj sygnały albo zaznacz "
@@ -478,6 +598,8 @@ class TraceTab(QWidget):
         stopped = self.state == "stopped"
         self.btn_start.setEnabled(stopped)
         self.btn_stop.setEnabled(not stopped)
+        self._set_on(self.btn_start, not stopped)       # "on" = connection is active
+        self._set_on(self.btn_stop, stopped)            # "on" = connection is stopped
         self.btn_pause.setEnabled(not stopped)
         self.btn_imp.setEnabled(stopped)
         for w in self._conn_widgets:
@@ -553,10 +675,29 @@ class TraceTab(QWidget):
         f = self.cfg.trigger.folder or "snapshots"
         return f if os.path.isabs(f) else os.path.join(os.getcwd(), f)
 
+    def _confname_for_file(self) -> str:
+        """{confname}: the configuration's name; without one the user is asked (fallback 'no_name')."""
+        n = self.cfg.conf_name.strip()
+        if n:
+            return _sanitize(n)
+        if not self._noname_asked:
+            self._noname_asked = True
+            name, ok = QInputDialog.getText(
+                self, "Nazwa konfiguracji",
+                "Ta konfiguracja nie ma jeszcze nazwy, a jest użyta w nazwie pliku ({confname}).\n"
+                "Podaj nazwę konfiguracji (puste = no_name):")
+            if ok and name.strip():
+                self.cfg.conf_name = name.strip()
+                return _sanitize(self.cfg.conf_name)
+        return "no_name"
+
     def _file_name(self, template: str, prefix: str) -> str:
         now = datetime.now()
-        name = (template or f"{prefix}_{{tab}}_{{date}}_{{time}}.csv").format(
-            tab=_sanitize(self.title()), date=now.strftime("%Y-%m-%d"), time=now.strftime("%H-%M-%S"))
+        tpl = template or f"{prefix}_{{tab}}_{{date}}_{{time}}.csv"
+        conf = self._confname_for_file() if "{confname}" in tpl else ""
+        name = tpl.format_map(_Names(
+            tab=_sanitize(self.title()), date=now.strftime("%Y-%m-%d"), time=now.strftime("%H-%M-%S"),
+            confname=conf))
         if not name.lower().endswith(".csv"):
             name += ".csv"
         folder = self._abs_folder()

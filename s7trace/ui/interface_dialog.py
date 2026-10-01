@@ -6,7 +6,8 @@ from typing import Callable
 
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (QApplication, QColorDialog, QComboBox, QDialog, QFileDialog, QFontComboBox,
-                               QFormLayout, QHBoxLayout, QLabel, QMessageBox, QPushButton, QSpinBox,
+                               QDoubleSpinBox, QFormLayout, QHBoxLayout, QLabel, QMessageBox, QPushButton,
+                               QScrollArea, QSpinBox,
                                QVBoxLayout, QWidget)
 
 from . import theme as th
@@ -18,7 +19,7 @@ class InterfaceDialog(QDialog):
     def __init__(self, theme: dict, apply: Callable[[dict], None], parent=None):
         super().__init__(parent)
         self.setWindowTitle("Interfejs")
-        self.resize(460, 620)
+        self.resize(500, 700)
         self._apply = apply
         self._original = th.normalize(theme)
         self.theme = dict(self._original)
@@ -56,15 +57,23 @@ class InterfaceDialog(QDialog):
         self.font_size.setRange(6, 32)
         form.addRow("Czcionka:", self.font_family)
         form.addRow("Rozmiar czcionki:", self.font_size)
+        self.rec_hz = QDoubleSpinBox()
+        self.rec_hz.setRange(0.1, 5.0)
+        self.rec_hz.setSingleStep(0.1)
+        self.rec_hz.setDecimals(2)
+        self.rec_hz.setSuffix(" Hz")
+        form.addRow("REC: częstotliwość migania:", self.rec_hz)
         host = QWidget()
         host.setLayout(form)
-        lay.addWidget(host)
+        scroll = QScrollArea()
+        scroll.setWidget(host)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        lay.addWidget(scroll, 1)
         hint = QLabel("Czcionka „systemowa” = domyślna Windows. Zmiany widać od razu; "
                       "„Anuluj” przywraca poprzedni wygląd.")
         hint.setWordWrap(True)
         lay.addWidget(hint)
-        lay.addStretch()
-
         row = QHBoxLayout()
         row.addStretch()
         self.btn_default = QPushButton("Domyślne")
@@ -81,6 +90,7 @@ class InterfaceDialog(QDialog):
         self.cb_profile.activated.connect(lambda _=0: self._set_profile(self.cb_profile.currentData()))
         self.font_family.currentFontChanged.connect(self._font_changed)
         self.font_size.valueChanged.connect(self._font_changed)
+        self.rec_hz.valueChanged.connect(self._font_changed)
 
     # ------------------------------------------------------------------
     def _sync_widgets(self) -> None:
@@ -92,10 +102,13 @@ class InterfaceDialog(QDialog):
             b.setStyleSheet(f"background:{c}; color:{fg}; border:1px solid #777;")
         self.font_family.blockSignals(True)
         self.font_size.blockSignals(True)
+        self.rec_hz.blockSignals(True)
         fam = self.theme["font_family"]
         self.font_family.setCurrentFont(QFont(fam) if fam else QApplication.font())
         self.font_size.setValue(self.theme["font_size"])
         self.font_family.blockSignals(False)
+        self.rec_hz.setValue(float(self.theme.get("rec_blink_hz", 0.5)))
+        self.rec_hz.blockSignals(False)
         self.font_size.blockSignals(False)
 
     def _pick(self, key: str) -> None:
@@ -109,10 +122,11 @@ class InterfaceDialog(QDialog):
     def _font_changed(self, *_):
         self.theme["font_family"] = self.font_family.currentFont().family()
         self.theme["font_size"] = self.font_size.value()
+        self.theme["rec_blink_hz"] = self.rec_hz.value()
         self._apply(self.theme)
 
     def _load(self, preset: dict, keep_font: bool = True) -> None:
-        font = {k: self.theme[k] for k in ("font_family", "font_size")}
+        font = {k: self.theme[k] for k in ("font_family", "font_size", "rec_blink_hz")}
         self.theme = th.normalize(preset)
         if keep_font:
             self.theme.update(font)
