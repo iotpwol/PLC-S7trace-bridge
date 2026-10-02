@@ -43,7 +43,8 @@ class DetectWorker(QThread):
 class WizardDialog(QDialog):
     """auto=True: used by Start in automatic mode – closes itself when a working method is found."""
 
-    def __init__(self, tab, auto: bool = False, show_tab: int = 0, methods: list[str] | None = None, parent=None):
+    def __init__(self, tab, auto: bool = False, show_tab: int = 0, methods: list[str] | None = None, parent=None,
+                 stored: "detect.DetectResult | None" = None):
         super().__init__(parent or tab)
         self.tab, self.auto, self.methods = tab, auto, methods
         self.result: detect.DetectResult | None = None
@@ -104,7 +105,19 @@ class WizardDialog(QDialog):
         self.btn_copy.clicked.connect(lambda: QApplication.clipboard().setText(detect.format_result(self.result)
                                                                                if self.result else ""))
         self.worker: DetectWorker | None = None
-        self.run()
+        if stored is not None:                                    # data from the last connection: no new probing
+            self._show_stored(stored)
+        else:
+            self.run()
+
+    def _show_stored(self, res: detect.DetectResult) -> None:
+        self.result = res
+        self.btn_again.setEnabled(True)
+        self.btn_use.setEnabled(False)
+        self.lbl.setText(f"Dane sterownika {res.host} pobrane przy ostatnim połączeniu. "
+                         "„Uruchom ponownie” wykonuje pełne rozpoznawanie (nowy odczyt).")
+        self._fill_info(res, stored=True)
+        self._fill_limits()
 
     # ------------------------------------------------------------------
     def run(self) -> None:
@@ -149,14 +162,17 @@ class WizardDialog(QDialog):
             head = "Nie wykryto działającej metody komunikacji."
         self.lbl.setText(head + "\n" + "\n".join("• " + a for a in res.advice if not a.startswith("Zalecana")))
         self._fill_info(res)
+        self._fill_limits()
+        if self.auto and res.recommended:
+            self.accept()
+
+    def _fill_limits(self) -> None:
         lim = ["OGRANICZENIA SYSTEMOWE I SIECIOWE", ""] + ["• " + s for s in detect.SYSTEM_LIMITS]
         for m in detect.ORDER:
             lim += ["", CONN_LABEL[m].upper()] + ["• " + s for s in detect.LIMITS[m]]
         self.txt_limits.setPlainText("\n".join(lim))
-        if self.auto and res.recommended:
-            self.accept()
 
-    def _fill_info(self, res: detect.DetectResult) -> None:
+    def _fill_info(self, res: detect.DetectResult, stored: bool = False) -> None:
         rows = [(lbl, ", ".join(v) if isinstance(v := res.info.get(k), list) else str(v))
                 for k, lbl in INFO_LABELS if res.info.get(k) not in (None, "", [])]
         if res.info.get("s7_access"):
@@ -173,7 +189,8 @@ class WizardDialog(QDialog):
             self.t_info.setItem(r, 1, it)
         if res.plc_time:
             self.lbl_time.setText(
-                f"Czas sterownika: <b>{res.plc_time:%Y-%m-%d %H:%M:%S}{' (UTC)' if res.plc_time_utc else ''}</b>   |   "
+                f"Czas sterownika{' w chwili połączenia' if stored else ''}: "
+                f"<b>{res.plc_time:%Y-%m-%d %H:%M:%S}{' (UTC)' if res.plc_time_utc else ''}</b>   |   "
                 f"różnica do czasu lokalnego komputera: <b>{res.time_diff_local:+.1f} s</b>   |   "
                 f"do UTC: <b>{res.time_diff_utc:+.1f} s</b><br>"
                 "Sterowniki Siemensa często pracują w UTC – właściwa jest ta różnica, która jest bliższa zera.")

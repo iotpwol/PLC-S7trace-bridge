@@ -400,10 +400,24 @@ class PlotView(QWidget):
             self.set_view(a, b if b > a else a + 1)
 
     # ----------------------------------------------------------- events
+    def clamp_view(self, x0: float, x1: float) -> tuple[float, float]:
+        """The view dragged / zoomed by the user stays inside the collected data: it cannot go past the newest
+        sample, before the oldest one, or become wider than everything that was collected."""
+        if len(self.buffer) == 0:
+            return x0, x1
+        a, b = self.buffer.first_time(), self.buffer.last_time()
+        w = min(max(x1 - x0, MIN_WINDOW), max(b - a, MIN_WINDOW))
+        if x1 > b:
+            x0, x1 = b - w, b
+        if x0 < a:
+            x0, x1 = a, a + w
+        return x0, x0 + w
+
     def _on_manual_range(self, *_):
         if self._busy:
             return
         (x0, x1), (y0, y1) = self.vb.viewRange()
+        x0, x1 = self.clamp_view(x0, x1)
         self._x = (x0, x1)
         self.window = x1 - x0
         if not self.auto_y and self.y_layout == "offset":
@@ -418,6 +432,7 @@ class PlotView(QWidget):
         x0, x1 = self.region.getRegion()
         if x1 - x0 < MIN_WINDOW:
             return
+        x0, x1 = self.clamp_view(x0, x1)
         self._x = (x0, x1)
         self.window = x1 - x0
         self.userMoved.emit()

@@ -67,8 +67,10 @@ class Acquirer(threading.Thread):
                  signals: list[Signal], mode: str, buffer: TraceBuffer | None,
                  on_state: Callable[[str, str], None] | None = None,
                  on_sample: Callable[[float, list[float]], None] | None = None,
-                 client_factory: Callable[[], object] | None = None):
+                 client_factory: Callable[[], object] | None = None,
+                 on_info: Callable[[dict], None] | None = None):
         super().__init__(daemon=True, name="S7Acquirer")
+        self.on_info = on_info                  # device data of the PLC, sent after every successful connect
         self.host, self.port = parse_host(host)
         self.rack, self.slot = rack, slot
         self.cycle = max(cycle_ms, 1.0) / 1000.0
@@ -89,6 +91,26 @@ class Acquirer(threading.Thread):
         c = self._factory()
         c.connect(self.host, self.rack, self.slot, self.port)
         return c
+
+    def _identify(self, client) -> dict | None:
+        """Device data (model, firmware, station name ...) read over the connection that was just opened."""
+        from .detect import DetectResult, identify_s7
+        res = DetectResult(host=self.host)
+        res.rack, res.slot = self.rack, self.slot
+        identify_s7(client, res)
+        return {"method": "s7", "info": res.info, "plc_time": res.plc_time, "plc_time_utc": res.plc_time_utc,
+                "time_diff_local": res.time_diff_local, "time_diff_utc": res.time_diff_utc,
+                "rack": self.rack, "slot": self.slot}
+
+    def _announce(self, client) -> None:
+        if self.on_info is None:
+            return
+        try:
+            d = self._identify(client)
+            if d:
+                self.on_info(d)
+        except Exception:                                       # identification is a bonus, never a reason to fail
+            pass
 
     def _read_all(self, client) -> list[float]:
         if self.mode == MODE_MULTI and len(self.plan) > 1:
@@ -148,6 +170,7 @@ class Acquirer(threading.Thread):
         except Exception as e:
             self.on_state("error", f"Nie można połączyć z {self.host}:{self.port} — {e}")
             return
+        self._announce(client)
         self.t0 = time.perf_counter()
         self.on_state("running", f"Połączono z {self.host} (rack={self.rack}, slot={self.slot}).")
         k = 0
@@ -206,6 +229,7 @@ class Acquirer(threading.Thread):
                 c = self._connect()
                 self.stats.connect_ms = (time.perf_counter() - tc) * 1000.0
                 self.stats.reconnects += 1
+                self._announce(c)
                 self.on_state("running", f"Połączono z {self.host} (rack={self.rack}, slot={self.slot}).")
                 return c
             except Exception as e:
@@ -218,6 +242,9 @@ class DriverAcquirer(Acquirer):
 
     def _make_plan(self, signals):
         return []
+
+    def _identify(self, client) -> dict | None:
+        return {"method": "other", "info": {}}                  # OPC UA / Web API / Modbus: no S7 identity data
 
     def _read_all(self, client) -> list[float]:
         return client.read(self.signals)

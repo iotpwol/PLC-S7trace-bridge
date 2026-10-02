@@ -52,7 +52,7 @@ S7-1200/1500 wymagają w CPU: „Permit access with PUT/GET communication” ora
 <h2>Układ okna</h2>
 <ul>
 <li><b>Pasek menu</b> (Plik / Widok / Pomoc) i – po jego prawej stronie – <b>karty</b> (każda karta to osobne połączenie).</li>
-<li><b>Panel ustawień</b> po lewej: Połączenie, Zakres, Trigger, Nagrywanie REC.</li>
+<li><b>Panel ustawień</b> po lewej: Połączenie, Zakres okna wykresu, Trigger, Nagrywanie REC.</li>
 <li><b>Wykres główny</b> i pod nim <b>pasek podglądu</b> całej historii.</li>
 <li><b>Przyciski sterujące</b> pod wykresem, przyciski <b>Sygnały… / Eksport / Import</b> po prawej, na dole <b>pasek statusu</b>.</li>
 </ul>
@@ -93,7 +93,6 @@ i przywracane po ponownym uruchomieniu (<tt>%APPDATA%\\S7Trace\\config.json</tt>
 """ + _img("zal08") + _table([
         ("Dopasuj widok do całości (Ctrl+0)", "Pokazuje całą nagraną historię na wykresie."),
         ("Legenda / Siatka", "Włącza lub wyłącza legendę i siatkę wykresu."),
-        ("Diagnostyka połączenia… (Ctrl+D)", "Okno szczegółowej diagnostyki łącza."),
         ("Położenie legendy (ta karta)", "Narożnik wykresu bieżącej karty, w którym stoi legenda (można ją też przeciągnąć myszą). Położenie jest zapisywane osobno dla każdej karty, w jej konfiguracji."),
     ])))
 
@@ -105,6 +104,7 @@ i przywracane po ponownym uruchomieniu (<tt>%APPDATA%\\S7Trace\\config.json</tt>
         ("Kreator połączenia (rozpoznawanie metody)…", "Rozpoznaje, która metoda działa, i podaje zalecenia – patrz rozdział „Metody połączenia i kreator”."),
         ("Informacje o sterowniku i czas…", "Model, numer katalogowy, firmware, numer seryjny, stan, ochrona CPU oraz czas sterownika "
          "i jego różnica względem czasu komputera."),
+        ("Diagnostyka połączenia… (Ctrl+D)", "Okno szczegółowej diagnostyki łącza bieżącej karty (opóźnienia, utracone cykle, ping, przepustowość)."),
         ("Wymagania, ograniczenia i blokady…", "Opis ograniczeń każdej metody oraz ograniczeń systemowych i sieciowych."),
         ("Interfejs…, Zapisane konfiguracje interfejsu, Profil kolorów", "Kolory, czcionki, profile ciemny / jasny / systemowy i zapisane konfiguracje wyglądu."),
         ("Zapisz / Wczytaj konfigurację karty…", "To samo co w menu Plik."),
@@ -155,14 +155,16 @@ Pełna nazwa i stan pokazują się w podpowiedzi po najechaniu.</li>
 dlatego rysowanie wykresu nie opóźnia cykli. Po utracie połączenia program ponawia próby co 2 s, a w danych zostaje przerwa.</p>
 """))
 
-    s.append(("8. Panel „Zakres”", """
-<h2>Panel „Zakres”</h2>
+    s.append(("8. Panel „Zakres okna wykresu”", """
+<h2>Panel „Zakres okna wykresu”</h2>
 """ + _table([
-        ("Okno czasu [s]", "Szerokość widocznego fragmentu wykresu (0,05–86400 s). Przy pracy na żywo wykres pokazuje ostatnie N sekund."),
+        ("Okno czasu [s]", "Szerokość widocznego fragmentu wykresu (0,1–86400 s). Wartość można <b>wpisać</b> (w sekundach, Enter zatwierdza) albo "
+         "<b>wybrać z listy rozwijanej</b>: 5, 10, 15, 30, 60, 90 s; 2, 3, 5, 10, 15, 30, 60, 90 min; 2, 3, 4, 6, 8, 12, 16, 24 godz. "
+         "Przy pracy na żywo wykres pokazuje ostatnie N sekund."),
         ("Auto Y", "Oś Y dopasowuje się do danych. Po wyłączeniu zakres wpisujesz w polach Y min / Y max (lub ustawiasz myszą)."),
         ("Y min / Y max", "Ręczny zakres osi pionowej (aktywne tylko przy wyłączonym Auto Y)."),
     ]) + """
-<p>Wartości w „Zakres” aktualizują się też, gdy powiększasz lub przesuwasz wykres myszą.</p>
+<p>Wartości w „Zakres okna wykresu” aktualizują się też, gdy powiększasz lub przesuwasz wykres myszą.</p>
 """))
 
     s.append(("9. Panel „Trigger”", """
@@ -180,7 +182,8 @@ Porównywana jest <b>wartość surowa</b> sygnału (bez gain i offsetu Y).</p>
         ("Pretrigger [s]", "Ile sekund <b>przed</b> wyzwoleniem ma znaleźć się w zapisie / widoku. Reszta okna czasu to dane po wyzwoleniu."),
         ("Akcja", "<b>Pauza</b> – wstrzymuje widok na zdarzeniu (Wznów = ponowne uzbrojenie); <b>Zapis CSV</b> – zapisuje okno do pliku "
          "i uzbraja się ponownie; <b>Pauza + zapis CSV</b> – jedno i drugie."),
-        ("Folder", "Katalog zapisu (względny liczony od katalogu uruchomienia). Przycisk „…” otwiera wybór folderu."),
+        ("Folder", "Katalog zapisu. Nazwa względna (domyślnie <tt>snapshots</tt>) oznacza folder w Dokumentach bieżącego użytkownika Windows: "
+         "<tt>Dokumenty\\S7Trace\\snapshots</tt> – każde konto ma więc własne pliki. Przycisk „…” otwiera wybór folderu."),
         ("Nazwa pliku", "Szablon nazwy, domyślnie <tt>snapshot_{confname}_{ip}_{tab}_{date}_{time}.csv</tt>. Znaczniki: "
          "<tt>{confname}</tt> – nazwa konfiguracji (gdy jej brak, program zapyta o nazwę; bez odpowiedzi użyje <tt>no_name</tt>), "
          "<tt>{ip}</tt> – adres IP sterownika, <tt>{tab}</tt> – nazwa karty, "
@@ -192,7 +195,7 @@ Porównywana jest <b>wartość surowa</b> sygnału (bez gain i offsetu Y).</p>
 """ + _img("zal11", 640) + """
 <ul>
 <li><b>Krzywe</b> rysowane są schodkowo (wartość utrzymuje się do następnej próbki). Każdy sygnał ma własny kolor, <b>Gain</b> (mnożnik), <b>Share</b> (udział w wysokości osi) i <b>Offset Y</b> – ustawiane w oknie Sygnały.</li>
-<li><b>Układ osi Y</b> (panel Zakres): <b>Pasma wg Share</b> (domyślnie) – każdy sygnał dostaje własne pasmo na osi pionowej, od góry w kolejności
+<li><b>Układ osi Y</b> (panel Zakres okna wykresu): <b>Pasma wg Share</b> (domyślnie) – każdy sygnał dostaje własne pasmo na osi pionowej, od góry w kolejności
 wierszy w oknie Sygnały; wysokość pasma jest proporcjonalna do Share (trzy sygnały ze Share 1, 1 i 2 mają pasma 25%, 25% i 50% wysokości),
 a sygnał jest skalowany do swojego MIN…MAX w widocznym oknie czasu (BOOL: 0…1). Oś pionowa pokazuje, kolorem sygnału, wartość
 MIN i MAX, a w wyższych pasmach także wartości pośrednie. <b>Offset + Gain</b> – jedna wspólna skala (oś „Offset”), sygnały przesunięte
@@ -268,7 +271,7 @@ aby zmienić okno czasu.</li>
     ], ("Pole", "Znaczenie"))))
 
     s.append(("15. Diagnostyka połączenia", """
-<h2>Diagnostyka połączenia (przycisk „Diagnostyka…”, Widok → Diagnostyka połączenia…, Ctrl+D)</h2>
+<h2>Diagnostyka połączenia (przycisk „Diagnostyka…”, Ustawienia → Diagnostyka połączenia…, Ctrl+D)</h2>
 <p>Okno pokazuje na żywo (odświeżanie co 0,5 s) pełne statystyki łącza z bieżącą kartą i można je trzymać otwarte obok wykresu.
 Na górze jest <b>ocena łącza</b> (Bardzo dobre / Dobre / Przeciętne / Słabe / Brak połączenia) oraz <b>poziomym paskiem (bargrafem)</b> o 10 segmentach, wraz z listą konkretnych spostrzeżeń
 i zaleceń, np. „zwiększ cykl do ≥ 41 ms”. Statystyki zerują się przy każdym Start; po Stop zostają widoczne do następnego Start.</p>

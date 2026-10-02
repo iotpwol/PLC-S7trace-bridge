@@ -166,7 +166,6 @@ class MainWindow(QMainWindow):
         self.act_legend = self._act(v, "Legenda", self._set_legend, checked=self.ui.get("legend", True))
         self.act_grid = self._act(v, "Siatka", self._set_grid, checked=self.ui.get("grid", True))
         v.addSeparator()
-        self._act(v, "Diagnostyka połączenia…", lambda: self._cur(lambda t: t.open_diag()), "Ctrl+D")
         self.menu_legend = v.addMenu("Położenie legendy (ta karta)")
         for label, pos in (("Lewy górny róg", (0, 0)), ("Prawy górny róg", (1, 0)),
                            ("Lewy dolny róg", (0, 1)), ("Prawy dolny róg", (1, 1))):
@@ -179,6 +178,7 @@ class MainWindow(QMainWindow):
         self._act(st, "Metoda połączenia i dane logowania…", lambda: self._cur(self.edit_connection))
         self._act(st, "Kreator połączenia (rozpoznawanie metody)…", lambda: self._cur(self.run_wizard))
         self._act(st, "Informacje o sterowniku i czas…", lambda: self._cur(lambda t: self.run_wizard(t, 1)))
+        self._act(st, "Diagnostyka połączenia…", lambda: self._cur(lambda t: t.open_diag()), "Ctrl+D")
         self._act(st, "Wymagania, ograniczenia i blokady…", lambda: self.show_help("Ograniczenia"))
         st.addSeparator()
         self._act(st, "Interfejs (kolory, czcionki)…", self.edit_interface)
@@ -255,6 +255,13 @@ class MainWindow(QMainWindow):
         self._corner.setFixedWidth(w + plus)
         self._corner.updateGeometry()
         mb.updateGeometry()
+        self._place_corner()
+
+    def _place_corner(self) -> None:
+        """QMenuBar keeps the corner widget where it was laid out for the old width: after the tab bar grew, the
+        new tab stuck out to the right of the window. Re-seat the corner so it ends exactly at the window edge."""
+        mb, c = self.menuBar(), self._corner
+        c.setGeometry(max(mb.width() - c.width(), 0), 0, c.width(), mb.height())
 
     def resizeEvent(self, e):
         super().resizeEvent(e)

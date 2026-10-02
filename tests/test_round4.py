@@ -349,7 +349,7 @@ def test_qss_paddings_and_bold_labels():
     assert "QLabel[val=\"true\"]" in qss and "font-weight: bold" in qss
     assert "QTableWidget::item { padding-left: 12px; }" in qss                   # values: twice the label padding
     assert "padding: 3px 3px 3px 6px" in qss                                     # header (labels) 6 px
-    assert "QSpinBox, QDoubleSpinBox { padding-left: 10px; }" in qss
+    assert "padding: 2px 4px 2px 10px" in qss                                    # numbers, text and drop-downs alike
 
 
 def test_wizard_values_bold(app):
@@ -369,3 +369,292 @@ def test_wizard_values_bold(app):
     assert dlg.t_info.rowCount() >= 1 and dlg.t_info.item(0, 1).font().bold() and not dlg.t_info.item(0, 0).font().bold()
     assert "<b>2026-01-02 03:04:05</b>" in dlg.lbl_time.text() and "<b>+1.5 s</b>" in dlg.lbl_time.text()
     tab.shutdown()
+
+
+# ------------------------------------------------- per-user data folder (many Windows accounts)
+def test_relative_folders_go_to_user_documents(app, tmp_path, monkeypatch):
+    from s7trace.core import config as cfgmod
+    monkeypatch.setattr(cfgmod, "_known_documents", lambda: str(tmp_path / "Docs"))
+    assert cfgmod.data_dir() == str(tmp_path / "Docs" / "S7Trace")
+    tab = TraceTab(cfg_with(), lambda: [])
+    assert tab._abs_folder("snapshots") == str(tmp_path / "Docs" / "S7Trace" / "snapshots")
+    assert tab._abs_folder("rec") == str(tmp_path / "Docs" / "S7Trace" / "rec")
+    assert tab._abs_folder(str(tmp_path / "abs")) == str(tmp_path / "abs")          # absolute stays as it is
+    p = tab._file_name("a_{ip}.csv", "x", "rec")
+    assert os.path.dirname(p) == str(tmp_path / "Docs" / "S7Trace" / "rec") and os.path.isdir(os.path.dirname(p))
+    tab.shutdown()
+
+
+def test_data_dir_is_real_documents_folder():
+    from s7trace.core import config as cfgmod
+    d = cfgmod.data_dir()
+    assert d.endswith(os.path.join("", "S7Trace")) and os.path.isabs(d)
+    if os.name == "nt":
+        assert cfgmod._known_documents() and os.path.isdir(cfgmod._known_documents())
+
+
+# ------------------------------------------------------------------- tab bar / group names
+def test_tab_bar_stays_inside_window_when_tabs_are_added(app, tmp_path, monkeypatch):
+    from s7trace.ui.main_window import MainWindow
+    monkeypatch.setattr("s7trace.ui.main_window.save_app_config", lambda *a, **k: None)
+    w = MainWindow(config_file=str(tmp_path / "c.json"))
+    w.resize(1250, 600)
+    w.show()
+    bar = w.tabs.bar
+    for ip in ("10.12.91.1", "192.168.0.1", "192.168.100.200", "10.1.1.1", "10.1.1.2", "172.16.0.10"):
+        w.new_tab(TabConfig(ip=ip))
+        QApplication.processEvents()
+        assert bar.mapTo(w, bar.rect().topRight()).x() <= w.width()              # the tab bar ends inside the window
+        assert w._plus.mapTo(w, w._plus.rect().topRight()).x() <= w.width()      # '+' stays visible
+        assert bar.mapTo(w, bar.rect().topLeft()).x() >= w.menuBar().actionGeometry(w.menuBar().actions()[-1]).right()
+    w.close()
+
+
+def test_range_group_renamed(app):
+    from PySide6.QtWidgets import QGroupBox
+    tab = TraceTab(cfg_with(), lambda: [])
+    titles = [g.title() for g in tab.findChildren(QGroupBox)]
+    assert "Zakres okna wykresu" in titles and "Zakres" not in titles
+    tab.shutdown()
+
+
+def test_stop_releases_pause_button(app):
+    tab = TraceTab(cfg_with(), lambda: [])
+    tab.state = "running"
+    tab._set_buttons()
+    tab.btn_pause.setChecked(True)
+    assert tab.btn_pause.text() == "Wznów" and tab.paused
+    tab._on_state("stopped", "Zatrzymano.")                                     # Stop pressed
+    assert not tab.btn_pause.isChecked() and tab.btn_pause.text() == "Pauza" and not tab.paused
+    assert not tab.btn_pause.isEnabled() and not bool(tab.btn_pause.property("on"))
+    assert tab.state == "stopped"
+    tab.shutdown()
+
+
+# ------------------------------------------------------- the view stays inside the collected data
+def test_view_cannot_leave_collected_data(app):
+    tab, _ = _loaded_tab()                                           # data 0 ... 19.95 s
+    p = tab.plot
+    a, b = p.buffer.first_time(), p.buffer.last_time()
+    p.set_follow(False)
+    p.vb.setRange(xRange=(15.0, 25.0), padding=0)                    # drag the chart to the right, past the data
+    p._on_manual_range()
+    assert p.view_range()[1] == pytest.approx(b) and p.view_range()[0] == pytest.approx(b - 10.0)
+    p.vb.setRange(xRange=(-8.0, 2.0), padding=0)                     # ... and to the left
+    p._on_manual_range()
+    assert p.view_range()[0] == pytest.approx(a) and p.view_range()[1] == pytest.approx(a + 10.0)
+    p.vb.setRange(xRange=(-50.0, 90.0), padding=0)                   # zoom out: not wider than the collected data
+    p._on_manual_range()
+    x0, x1 = p.view_range()
+    assert x0 == pytest.approx(a) and x1 == pytest.approx(b)
+    p.refresh(force=True)
+    assert p.vb.viewRange()[0][1] == pytest.approx(b)                # the chart itself follows the clamped view
+    tab.shutdown()
+
+
+def test_overview_region_cannot_leave_collected_data(app):
+    tab, _ = _loaded_tab()
+    p = tab.plot
+    b = p.buffer.last_time()
+    p.set_view(5, 10)
+    p.refresh(force=True)
+    p.region.setRegion((18.0, 30.0))                                  # dragging the yellow window past the end
+    x0, x1 = p.view_range()
+    assert x1 == pytest.approx(b) and x1 - x0 == pytest.approx(12.0)   # shifted back, the width is kept
+    p.refresh(force=True)
+    assert p.region.getRegion()[1] <= b + 1e-9                        # the region is put back inside the data
+    tab.shutdown()
+
+
+def test_clamp_view_without_data_and_min_window(app):
+    tab = TraceTab(cfg_with(), lambda: [])
+    assert tab.plot.clamp_view(100.0, 200.0) == (100.0, 200.0)       # nothing collected yet: nothing to clamp to
+    tab, _ = _loaded_tab()
+    x0, x1 = tab.plot.clamp_view(5.0, 5.01)
+    assert x1 - x0 >= MIN_WINDOW - 1e-9
+    tab.shutdown()
+
+
+def test_diagnostics_entry_lives_in_settings_menu(app, tmp_path, monkeypatch):
+    from s7trace.ui.main_window import MainWindow
+    monkeypatch.setattr("s7trace.ui.main_window.save_app_config", lambda *a, **k: None)
+    w = MainWindow(config_file=str(tmp_path / "c.json"))
+    menus = {a.text().replace("&", ""): a.menu() for a in w.menuBar().actions() if a.menu()}
+    names = lambda m: [x.text() for x in m.actions()]
+    assert "Diagnostyka połączenia…" in names(menus["Ustawienia"])
+    assert "Diagnostyka połączenia…" not in names(menus["Widok"])
+    act = next(x for x in menus["Ustawienia"].actions() if x.text() == "Diagnostyka połączenia…")
+    assert act.shortcut().toString() == "Ctrl+D"
+    w.close()
+
+
+# ------------------------------------------------------------ 'Okno czasu [s]': typed value or a list
+def test_window_field_list_and_typing(app):
+    from s7trace.ui.duration_combo import PRESETS
+    tab = TraceTab(cfg_with(), lambda: [])
+    f = tab.sp_window
+    assert f.isEditable()
+    secs = [f.itemData(i) for i in range(f.count())]
+    assert secs == [5, 10, 15, 30, 60, 90, 120, 180, 300, 600, 900, 1800, 3600, 5400, 7200, 10800, 14400,
+                    21600, 28800, 43200, 57600, 86400] == [s for s, _ in PRESETS]
+    assert [f.itemText(i) for i in (0, 6, 12, 15, 21)] == ["5 sekund", "2 minuty  (120 s)", "60 minut  (3600 s)",
+                                                           "3 godziny  (10800 s)", "24 godziny  (86400 s)"]
+    got = []
+    f.valueChanged.connect(got.append)
+    f.activated.emit(8)                                              # a pick: 5 minutes
+    assert got == [300.0] and tab.plot.window == pytest.approx(300.0)
+    assert f.lineEdit().text() in ("300,0", "300.0")                  # the field shows seconds
+    f.lineEdit().setText("12,5")                                     # typing, as before
+    f.lineEdit().editingFinished.emit()
+    assert f.value() == pytest.approx(12.5) and tab.plot.window == pytest.approx(12.5)
+    f.lineEdit().setText("0.01")                                      # below the minimum -> 0.1 s
+    f.lineEdit().editingFinished.emit()
+    assert f.value() == pytest.approx(0.1)
+    f.lineEdit().setText("abc")                                       # garbage: the previous value comes back
+    f.lineEdit().editingFinished.emit()
+    assert f.value() == pytest.approx(0.1)
+    f.setValue(10 ** 7)
+    assert f.value() == 86400.0
+    assert tab.to_config().window_s == 86400.0
+    tab.shutdown()
+
+
+def test_window_field_follows_zoom_and_config(app):
+    tab = TraceTab(TabConfig(ip="1.2.3.4", window_s=45.0), lambda: [])
+    assert tab.sp_window.value() == pytest.approx(45.0)
+    tab._on_zoomed(7.5)                                               # the wheel changed the window -> the field follows
+    assert tab.sp_window.value() == pytest.approx(7.5)
+    assert tab.to_config().window_s == pytest.approx(7.5)
+    tab.shutdown()
+
+
+def test_form_labels_visible_in_narrowest_panel(app):
+    from PySide6.QtWidgets import QFormLayout, QLabel
+    tab = TraceTab(cfg_with(), lambda: [])
+    tab.resize(1200, 700)
+    tab.show()
+    QApplication.processEvents()
+    assert tab.split_h.sizes()[0] <= 205                                       # the narrowest allowed panel
+    for field in (tab.sp_window, tab.cb_ylayout, tab.sp_ymin, tab.ed_ip):
+        lay = field.parentWidget().layout()
+        lab = lay.labelForField(field)
+        assert lab is not None and lab.width() >= 40, lab.text()               # long fields never squeeze the labels away
+    tab.shutdown()
+
+
+# ----------------------------------------------------------------- IP field with spaced dots
+def test_ip_edit_shows_spaced_dots_but_text_is_plain(app):
+    from s7trace.ui.ip_edit import IpEdit
+    e = IpEdit()
+    e.setText("10.12.91.1")
+    assert e.text() == "10.12.91.1" and e.displayText() == "10 . 12 . 91 . 1"
+    e.setText("192.168.0.10:1102")
+    assert e.text() == "192.168.0.10:1102" and e.displayText() == "192 . 168 . 0 . 10:1102"
+    e.clear()
+    e.show()
+    e.setFocus()
+    QTest.keyClicks(e, "10.12.91.1")                                   # typing the dots adds the spaces by itself
+    assert e.text() == "10.12.91.1" and e.displayText() == "10 . 12 . 91 . 1"
+    for _ in range(2):                                                 # Backspace over the spaces takes the dot too
+        QTest.keyClick(e, Qt.Key_Backspace)
+    assert e.text() == "10.12.91"
+    QTest.keyClicks(e, "x")                                            # wrong characters are still blocked
+    assert e.text() == "10.12.91"
+    e.setText("10.4.5")
+    assert e.validator().validate(e.displayText(), 0)[0].name == "Intermediate"
+    e.hide()
+
+
+def test_ip_field_in_tab_uses_plain_text_everywhere(app):
+    tab = TraceTab(TabConfig(ip="10.12.91.1"), lambda: [])
+    assert tab.ed_ip.displayText() == "10 . 12 . 91 . 1" and tab.ed_ip.text() == "10.12.91.1"
+    assert tab.to_config().ip == "10.12.91.1" and tab.title() == "10.12.91.1"
+    assert not tab.ed_ip.property("invalid")
+    tab.ed_ip.setText("10.1.1")
+    assert tab.ed_ip.property("invalid") is True
+    tab.shutdown()
+
+
+def test_values_in_fields_are_bold_with_one_left_margin():
+    qss = th.build_qss(th.DARK)
+    assert "QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QComboBox QAbstractItemView { font-weight: bold; }" in qss
+    assert qss.count("padding: 2px 4px 2px 10px") == 1                  # one margin for edit fields and drop-downs
+
+
+# --------------------------------------------------------------- device data box under 'Połączenie'
+DEV = {"method": "s7", "info": {"family": "S7-1500", "model": "CPU 1515-2 PN", "firmware": "V2.9.4",
+                                "plc_name": "PIEC_1", "module_name": "CPU_1515", "serial": "S C-X1", "pdu": 960},
+       "plc_time": __import__("datetime").datetime(2026, 5, 6, 7, 8, 9), "plc_time_utc": False,
+       "time_diff_local": 2.5, "time_diff_utc": -7197.5, "rack": 0, "slot": 1}
+
+
+def test_device_box_empty_until_connection_and_cleared_by_ip_change(app):
+    tab = TraceTab(TabConfig(ip="10.1.1.1"), lambda: [])
+    assert tab.lbl_dev.text() == "" and tab.device is None
+    from PySide6.QtWidgets import QGroupBox
+    titles = [g.title() for g in tab.findChildren(QGroupBox)]
+    assert titles.index("Sterownik") == titles.index("Połączenie") + 1             # right under 'Połączenie'
+    tab._infoRaw.emit(DEV)
+    QApplication.processEvents()
+    t = tab.lbl_dev.text()
+    for label, val in (("Rodzina", "S7-1500"), ("Model", "CPU 1515-2 PN"), ("Firmware", "V2.9.4"),
+                       ("Nazwa stacji", "PIEC_1"), ("Nazwa modułu", "CPU_1515")):
+        assert f"{label}: <b>{val}</b>" in t
+    assert "Numer seryjny" not in t and "S C-X1" not in t                           # only the five requested fields
+    tab.ed_ip.setText("10.1.1.1")                                                   # same address: data stays
+    assert tab.lbl_dev.text() == t
+    tab.ed_ip.setText("10.1.1.2")                                                   # another device: empty again
+    assert tab.lbl_dev.text() == "" and tab.device is None
+    tab._infoRaw.emit({"method": "s7", "info": {"family": "S7-300"}})               # new connection: updated
+    assert "S7-300" in tab.lbl_dev.text() and "Model: <b>—</b>" in tab.lbl_dev.text()
+    tab._infoRaw.emit({"method": "other", "info": {}})
+    assert "Brak danych sterownika" in tab.lbl_dev.text()
+    tab.shutdown()
+
+
+def test_click_on_device_box_opens_full_info_without_new_probe(app, monkeypatch):
+    from s7trace.ui import wizard_dialog as wd
+    tab = TraceTab(TabConfig(ip="10.1.1.1"), lambda: [])
+    seen = []
+    monkeypatch.setattr(wd.WizardDialog, "exec", lambda self: seen.append(self) or 0)
+    started = []
+    monkeypatch.setattr(wd.DetectWorker, "start", lambda self: started.append(1))
+    QTest.mouseClick(tab.lbl_dev, Qt.LeftButton)                                    # nothing to show yet
+    assert not seen
+    tab._infoRaw.emit(DEV)
+    QApplication.processEvents()
+    tab.lbl_dev.clicked.emit()
+    assert len(seen) == 1 and not started                                           # stored data, no new detection
+    dlg = seen[0]
+    assert dlg.tabs.currentIndex() == 1 and dlg.tabs.tabText(1) == "Sterownik i czas"
+    rows = {dlg.t_info.item(r, 0).text(): dlg.t_info.item(r, 1).text() for r in range(dlg.t_info.rowCount())}
+    assert rows["Rodzina"] == "S7-1500" and rows["Wersja firmware"] == "V2.9.4" and rows["Numer seryjny"] == "S C-X1"
+    assert "w chwili połączenia" in dlg.lbl_time.text() and "<b>+2.5 s</b>" in dlg.lbl_time.text()
+    assert dlg.btn_again.isEnabled() and not dlg.btn_use.isEnabled()
+    tab.shutdown()
+
+
+def test_device_data_arrives_from_simulator_after_start(app):
+    from s7trace.sim import Simulator
+    sim = Simulator(11131)
+    sim.start()
+    time.sleep(0.6)
+    tab = TraceTab(TabConfig(ip="127.0.0.1:11131", conn_type="s7", cycle_ms=50), lambda: [])
+    try:
+        tab.start()
+        t0 = time.time()
+        while time.time() - t0 < 15 and tab.device is None:
+            QApplication.processEvents()
+            time.sleep(0.05)
+        assert tab.device is not None and tab.device["method"] == "s7"
+        t = tab.lbl_dev.text()
+        assert "S7-300" in t and "CPU 315-2 PN/DP" in t and "V3.3.0" in t and "SNAP7-SERVER" in t
+        tab.stop()
+        t0 = time.time()
+        while time.time() - t0 < 10 and tab.state != "stopped":
+            QApplication.processEvents()
+            time.sleep(0.05)
+        assert tab.lbl_dev.text() == t                                              # stays after Stop
+    finally:
+        tab.shutdown()
+        sim.stop()

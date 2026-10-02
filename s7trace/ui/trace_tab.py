@@ -20,7 +20,7 @@ from ..core.acq_process import ProcAcquirer
 from ..core.acquisition import parse_host
 from ..core.diagnostics import PingProbe
 from ..core.buffer import TraceBuffer
-from ..core.config import TabConfig
+from ..core.config import TabConfig, data_dir
 from ..core.csvio import CsvRecorder, read_csv, write_csv
 from ..core.planner import MODES
 from ..core.symbols import Symbol
@@ -28,9 +28,10 @@ from ..core.netaddr import ACCEPTABLE, ipv4_state
 from ..core.types import Signal
 from ..core.drivers import CONN_LABEL, SOURCE_OF, family_of
 from .diag_dialog import DiagDialog
+from .duration_combo import DurationCombo
 from .plotview import PlotView
 from .signals_dialog import SignalsDialog
-from .validators import Ipv4Validator
+from .ip_edit import IpEdit
 
 RACK_SLOT_HELP = (
     "Rack / Slot:\n\n"
@@ -47,6 +48,20 @@ RACK_SLOT_HELP = (
 PLACEHOLDERS_HELP = ("Znaczniki w nazwie pliku:\n{confname} – nazwa konfiguracji (gdy jej brak, program zapyta; "
                      "bez odpowiedzi: no_name)\n{ip} – adres IP sterownika\n{tab} – nazwa karty\n"
                      "{date} – data, {time} – godzina")
+
+
+class ClickLabel(QLabel):
+    """Label that reports a left click."""
+    clicked = QtSignal()
+
+    def mouseReleaseEvent(self, e):
+        if e.button() == Qt.LeftButton and self.rect().contains(e.position().toPoint()):
+            self.clicked.emit()
+        super().mouseReleaseEvent(e)
+
+
+DEVICE_ROWS = (("Rodzina", "family"), ("Model", "model"), ("Firmware", "firmware"), ("Nazwa stacji", "plc_name"),
+               ("Nazwa modułu", "module_name"))
 
 
 class _Names(dict):
@@ -81,6 +96,7 @@ def _spin(lo, hi, val, dec=None, step=None):
     w.setKeyboardTracking(False)
     w.setFocusPolicy(Qt.StrongFocus)
     w.wheelEvent = lambda e: e.ignore()
+    w.setMinimumWidth(70)               # wide ranges (±1e9) must not squeeze the form labels in a narrow panel
     return w
 
 
@@ -89,6 +105,7 @@ class TraceTab(QWidget):
     titleChanged = QtSignal(str)
     _stateRaw = QtSignal(str, str)     # from worker thread
     layoutChanged = QtSignal()         # splitters / legend moved -> main window syncs the other tabs
+    _infoRaw = QtSignal(object)        # device data from the acquisition process (worker thread)
 
     def __init__(self, cfg: TabConfig, symbols: callable, ui_state: dict | None = None,
                  other_tabs: callable = None, parent=None):
@@ -117,10 +134,14 @@ class TraceTab(QWidget):
         self.ping_probe: PingProbe | None = None
         self.diag_dlg: DiagDialog | None = None
         self._want_left: int | None = None
+        self.device: dict | None = None            # PLC data read at the last connection (valid for _device_ip only)
+        self._device_ip = ""
         self._rec_dot, self._rec_idle, self._rec_phase = "#ff2020", "#c0c0c0", True
         self._build()
         self._load_cfg()
         self._stateRaw.connect(self._on_state)
+        self._infoRaw.connect(self._on_info)
+        self.ed_ip.textChanged.connect(self._ip_changed_device)
         self.timer = QTimer(self)
         self.timer.setInterval(33)
         self.timer.timeout.connect(self._tick)
@@ -152,9 +173,7 @@ class TraceTab(QWidget):
             return f
 
         f = group("Połączenie")
-        self.ed_ip = QLineEdit()
-        self.ed_ip.setValidator(Ipv4Validator(self.ed_ip))
-        self.ed_ip.setMaxLength(21)
+        self.ed_ip = IpEdit()                       # shows "10 . 12 . 91 . 1"; text() is the plain address
         self.ed_ip.setPlaceholderText("np. 192.168.0.1")
         self.ed_ip.setToolTip("Adres IPv4 sterownika (opcjonalnie :port). IPv6 i nazwy hostów nie są obsługiwane.")
         self.ed_ip.textChanged.connect(self._ip_check)
@@ -182,11 +201,24 @@ class TraceTab(QWidget):
         f.addRow("Metoda:", self.lbl_method)
         self._conn_widgets = [self.ed_ip, self.sp_rack, self.sp_slot, self.sp_cycle, self.cb_mode]
 
-        f = group("Zakres")
-        self.sp_window = _spin(0.1, 86400, 200, dec=1)
+        f = group("Sterownik")
+        self.lbl_dev = ClickLabel()
+        self.lbl_dev.setTextFormat(Qt.RichText)
+        self.lbl_dev.setMinimumHeight(self.lbl_dev.fontMetrics().lineSpacing() * len(DEVICE_ROWS) + 8)
+        self.lbl_dev.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self.lbl_dev.clicked.connect(self.open_device_info)
+        f.addRow(self.lbl_dev)
+        self._show_device()
+
+        f = group("Zakres okna wykresu")
+        self.sp_window = DurationCombo(200.0)      # typed seconds or a pick from the list (5 s ... 24 h)
+        self.sp_window.setMinimumWidth(70)
         self.cb_ylayout = QComboBox()
         self.cb_ylayout.addItem("Pasma wg Share", "lanes")
         self.cb_ylayout.addItem("Offset + Gain", "offset")
+        self.cb_ylayout.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)   # do not squeeze the labels
+        self.cb_ylayout.setMinimumContentsLength(8)                                           # in a narrow panel
+        self.cb_ylayout.setMinimumWidth(70)
         self.cb_ylayout.setToolTip(
             "Pasma wg Share: każdy sygnał ma własne pasmo na osi pionowej (wysokość ~ kolumna „Share” w oknie Sygnały), "
             "skalowane do MIN…MAX widocznego fragmentu; oś pokazuje wartości MIN / pośrednie / MAX.\n"
@@ -637,7 +669,8 @@ class TraceTab(QWidget):
             c.ip, c.rack, c.slot, c.cycle_ms, run, c.mode, self.buffer,
             on_state=lambda s, m: self._stateRaw.emit(s, m),
             on_sample=lambda t, v: self._pending.append((t, list(v))),
-            driver={"type": method, "opts": dict(c.conn)} if method != "s7" else None)
+            driver={"type": method, "opts": dict(c.conn)} if method != "s7" else None,
+            on_info=lambda d: self._infoRaw.emit(d))
         self.plot.time_source = lambda a=acq: (time.perf_counter() - a.t0) if a.t0 else self.buffer.last_time()
         self.state = "connecting"
         self.status_msg = f"Łączenie z {c.ip}…"
@@ -689,6 +722,51 @@ class TraceTab(QWidget):
                                 "albo źródła sygnałów.")
             return None
         return kind
+
+    # ------------------------------------------------------- device data
+    def _on_info(self, d: dict) -> None:
+        """Data of the PLC read right after a (re)connection: replaces the previous data of this address."""
+        self.device, self._device_ip = d, self.ed_ip.text()
+        self._show_device()
+
+    def _ip_changed_device(self, *_) -> None:
+        if self.device is not None and self.ed_ip.text() != self._device_ip:      # another device: the data is stale
+            self.device = None
+            self._show_device()
+
+    def _show_device(self) -> None:
+        d = self.device
+        if d is None:
+            self.lbl_dev.setText("")
+            self.lbl_dev.setCursor(Qt.ArrowCursor)
+            self.lbl_dev.setToolTip("Dane sterownika pojawią się po pierwszym połączeniu.")
+            return
+        info = d.get("info") or {}
+        if d.get("method") == "other" or not info:
+            self.lbl_dev.setText("<i>Brak danych sterownika dla tej metody połączenia.</i>")
+        else:
+            self.lbl_dev.setText("<br>".join(f"{label}: <b>{html.escape(str(info.get(key) or '—'))}</b>"
+                                             for label, key in DEVICE_ROWS))
+        self.lbl_dev.setCursor(Qt.PointingHandCursor)
+        self.lbl_dev.setToolTip("Kliknij, aby zobaczyć pełne informacje o sterowniku (zakładka „Sterownik i czas”).")
+
+    def device_result(self):
+        """The stored device data as a detect.DetectResult (for the 'Sterownik i czas' window)."""
+        from ..core.detect import DetectResult
+        d = self.device or {}
+        res = DetectResult(host=self._device_ip)
+        res.info = dict(d.get("info") or {})
+        for k in ("plc_time", "plc_time_utc", "time_diff_local", "time_diff_utc"):
+            if k in d:
+                setattr(res, k, d[k])
+        res.rack, res.slot = d.get("rack", 0), d.get("slot", 2)
+        return res
+
+    def open_device_info(self) -> None:
+        if self.device is None:
+            return
+        from .wizard_dialog import WizardDialog
+        WizardDialog(self, show_tab=1, stored=self.device_result(), parent=self.window()).exec()
 
     # ---------------------------------------------------------- diagnostics
     def open_diag(self) -> None:
@@ -749,6 +827,8 @@ class TraceTab(QWidget):
             self.state = "stopped"
             self.status_msg = msg
             self.plot.set_follow(False)
+            if self.btn_pause.isChecked():              # Pauza / Wznów only makes sense while a connection is active
+                self.btn_pause.setChecked(False)
             self._close_recorder()
             if self.diag_dlg is None:
                 self._stop_ping()
@@ -851,7 +931,7 @@ class TraceTab(QWidget):
     # ================================================================ IO
     def _abs_folder(self, folder: str | None = None) -> str:
         f = (self.cfg.trigger.folder if folder is None else folder) or "snapshots"
-        return f if os.path.isabs(f) else os.path.join(os.getcwd(), f)
+        return f if os.path.isabs(f) else os.path.join(data_dir(), f)       # relative: in the user's Documents\\S7Trace
 
     def _confname_for_file(self) -> str:
         """{confname}: the configuration's name; without one the user is asked (fallback 'no_name')."""

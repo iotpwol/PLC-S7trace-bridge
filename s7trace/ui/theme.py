@@ -154,11 +154,12 @@ QLabel[val="true"] {{ font-weight: bold; }}
 QCheckBox {{ color: {t['text']}; }}
 QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {{
     background: {t['edit_bg']}; color: {t['edit_text']}; border: 1px solid rgba(128,128,128,110);
-    border-radius: 2px; padding: 2px 4px 2px 6px; selection-background-color: {t['accent']}; }}
-QSpinBox, QDoubleSpinBox {{ padding-left: 10px; }}
+    border-radius: 2px; padding: 2px 4px 2px 10px; selection-background-color: {t['accent']}; }}    /* one left margin for all edit fields and drop-downs */
 QLineEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled {{
     color: {_disabled(t['edit_text'])}; }}
+QComboBox {{ padding-left: 11px; }}                      /* optically level with the spin boxes */
 QLineEdit[invalid="true"] {{ border: 1px solid #e04040; }}
+QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QComboBox QAbstractItemView {{ font-weight: bold; }}    /* values are bold */
 QComboBox QAbstractItemView {{ background: {t['edit_bg']}; color: {t['edit_text']};
     selection-background-color: {t['accent']}; }}
 QPushButton {{ background: {t['button_bg']}; color: {t['button_text']}; border: 1px solid rgba(128,128,128,110);

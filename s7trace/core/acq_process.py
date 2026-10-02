@@ -66,15 +66,21 @@ def _child_main(params: dict, conn) -> None:
         batch.append((t, vals, None if gap else acq_ref[0].stats.last_lag))
         flush()
 
+    def on_info(d):
+        try:
+            conn.send(("info", d))
+        except (OSError, ValueError):
+            pass
+
     drv = params.get("driver") or {}
     sigs = [Signal.from_dict(d) for d in params["signals"]]
     if drv.get("type") and drv["type"] != "s7":
         acq = DriverAcquirer(params["host"], params["rack"], params["slot"], params["cycle_ms"], sigs,
                              params["mode"], None, on_state=on_state, on_sample=on_sample,
-                             client_factory=lambda: create_driver(drv["type"], drv.get("opts", {})))
+                             client_factory=lambda: create_driver(drv["type"], drv.get("opts", {})), on_info=on_info)
     else:
         acq = Acquirer(params["host"], params["rack"], params["slot"], params["cycle_ms"], sigs,
-                       params["mode"], None, on_state=on_state, on_sample=on_sample)
+                       params["mode"], None, on_state=on_state, on_sample=on_sample, on_info=on_info)
     acq_ref.append(acq)
     acq.start()
     # main thread of the child: wait for a stop command (or parent death)
@@ -102,8 +108,10 @@ class ProcAcquirer:
                  signals: list[Signal], mode: str, buffer: TraceBuffer,
                  on_state: Callable[[str, str], None] | None = None,
                  on_sample: Callable[[float, list[float]], None] | None = None,
-                 driver: dict | None = None):
+                 driver: dict | None = None,
+                 on_info: Callable[[dict], None] | None = None):
         self.buffer = buffer
+        self.on_info = on_info
         self.on_state = on_state or (lambda *_: None)
         self.on_sample = on_sample
         self.stats = RemoteStats()
@@ -160,6 +168,9 @@ class ProcAcquirer:
                         self.diag.add_sample(t, row[2] if len(row) > 2 else None)
                         if self.on_sample:
                             self.on_sample(t, vals)
+                elif msg[0] == "info":
+                    if self.on_info:
+                        self.on_info(msg[1])
                 else:
                     _, state, text, t0 = msg
                     if t0:

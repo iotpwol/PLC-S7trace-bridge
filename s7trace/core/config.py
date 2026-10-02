@@ -11,6 +11,30 @@ from .trigger import DEFAULT_REC_NAME, OLD_SNAPSHOT_NAME, DEFAULT_SNAPSHOT_NAME,
 from .types import Signal
 
 
+def _known_documents() -> str:
+    """Windows 'Documents' folder, also when it is redirected (OneDrive, network share); '' when unavailable."""
+    if os.name != "nt":
+        return ""
+    try:
+        import ctypes
+        from uuid import UUID
+        guid = (ctypes.c_ubyte * 16).from_buffer_copy(UUID("FDD39AD0-238F-46AF-ADB4-6C85480369C7").bytes_le)
+        buf = ctypes.c_wchar_p()
+        if ctypes.windll.shell32.SHGetKnownFolderPath(ctypes.byref(guid), 0, None, ctypes.byref(buf)) == 0:
+            val = buf.value or ""
+            ctypes.windll.ole32.CoTaskMemFree(buf)
+            return val
+    except Exception:
+        pass
+    return ""
+
+
+def data_dir() -> str:
+    """Per-user folder for the files the program writes (snapshots, REC): <Documents>\\S7Trace.
+    Relative folders from the settings are resolved against it, so every Windows account has its own place."""
+    return os.path.join(_known_documents() or os.path.join(os.path.expanduser("~"), "Documents"), "S7Trace")
+
+
 def app_dir() -> str:
     base = os.environ.get("APPDATA") or os.path.expanduser("~")
     d = os.path.join(base, "S7Trace")

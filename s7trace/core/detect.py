@@ -111,37 +111,11 @@ def _classify(err: str) -> str:
     return "other"
 
 
-def probe_s7(host: str, port: int, rack: int, slot: int, res: DetectResult) -> Step:
-    t0 = time.perf_counter()
-    st = Step("s7", "S7comm (port 102)")
-    try:
-        import snap7
-        from snap7.type import Area, Block
-    except Exception as e:
-        st.status, st.detail = "fail", f"brak biblioteki snap7: {e}"
-        res.methods["s7"] = {"ok": False, "note": st.detail}
-        return st
-    client, used, last_err = None, None, ""
-    for r, s in [(rack, slot)] + [c for c in ((0, 1), (0, 2), (0, 0), (1, 2), (0, 3)) if c != (rack, slot)]:
-        c = snap7.client.Client()
-        try:
-            c.connect(host, r, s, port)
-            client, used = c, (r, s)
-            break
-        except Exception as e:
-            last_err = str(e)
-            try:
-                c.disconnect()
-            except Exception:
-                pass
-    if client is None:
-        st.status, st.detail = "fail", f"nie można nawiązać połączenia S7 (próbowano rack/slot 0/1, 0/2, 0/0, 1/2, 0/3): {last_err}"
-        st.ms = (time.perf_counter() - t0) * 1000
-        res.methods["s7"] = {"ok": False, "note": "port 102 nie odpowiada lub CPU odrzuca połączenie"}
-        return st
-    res.rack, res.slot = used
+def identify_s7(client, res: DetectResult, notes: list | None = None) -> None:
+    """Device data of a connected snap7 client into `res` (model, MLFB, firmware, serial, station / module name,
+    state, protection, PDU, PLC clock). Every call is optional: a missing function only adds a note."""
     info = res.info
-    notes = []
+    notes = notes if notes is not None else []
 
     def attempt(label, fn):
         try:
@@ -174,6 +148,47 @@ def probe_s7(host: str, port: int, rack: int, slot: int, res: DetectResult) -> S
     family = _family(info.get("model", ""), info.get("order_code", ""))
     if family:
         info["family"] = family
+
+
+def probe_s7(host: str, port: int, rack: int, slot: int, res: DetectResult) -> Step:
+    t0 = time.perf_counter()
+    st = Step("s7", "S7comm (port 102)")
+    try:
+        import snap7
+        from snap7.type import Area, Block
+    except Exception as e:
+        st.status, st.detail = "fail", f"brak biblioteki snap7: {e}"
+        res.methods["s7"] = {"ok": False, "note": st.detail}
+        return st
+    client, used, last_err = None, None, ""
+    for r, s in [(rack, slot)] + [c for c in ((0, 1), (0, 2), (0, 0), (1, 2), (0, 3)) if c != (rack, slot)]:
+        c = snap7.client.Client()
+        try:
+            c.connect(host, r, s, port)
+            client, used = c, (r, s)
+            break
+        except Exception as e:
+            last_err = str(e)
+            try:
+                c.disconnect()
+            except Exception:
+                pass
+    if client is None:
+        st.status, st.detail = "fail", f"nie można nawiązać połączenia S7 (próbowano rack/slot 0/1, 0/2, 0/0, 1/2, 0/3): {last_err}"
+        st.ms = (time.perf_counter() - t0) * 1000
+        res.methods["s7"] = {"ok": False, "note": "port 102 nie odpowiada lub CPU odrzuca połączenie"}
+        return st
+    res.rack, res.slot = used
+    info = res.info
+    notes: list = []
+    identify_s7(client, res, notes)
+
+    def attempt(label, fn):
+        try:
+            return fn()
+        except Exception as e:
+            notes.append(f"{label}: {e}")
+            return None
 
     # data access test: one byte of the M area (never optimized) and a few DBs
     access, detail = "unknown", ""
