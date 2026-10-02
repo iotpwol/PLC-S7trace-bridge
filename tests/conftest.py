@@ -17,3 +17,14 @@ def _no_name_prompt(monkeypatch):
     except Exception:                                  # pragma: no cover
         return
     monkeypatch.setattr(QInputDialog, "getText", staticmethod(lambda *a, **k: ("", False)))
+
+
+@pytest.fixture(autouse=True)
+def _private_sessions(monkeypatch, tmp_path):
+    """The session registry lives in %ProgramData% / %PUBLIC%: tests use a private folder and no leftover registry."""
+    monkeypatch.setenv("PROGRAMDATA", str(tmp_path / "programdata"))
+    monkeypatch.setenv("PUBLIC", str(tmp_path / "public"))
+    from s7trace.core import sessions
+    monkeypatch.setattr(sessions, "REGISTRY", None)
+    monkeypatch.setattr(sessions, "_grant_everyone", lambda p: None)
+

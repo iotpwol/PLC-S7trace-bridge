@@ -105,6 +105,9 @@ i przywracane po ponownym uruchomieniu (<tt>%APPDATA%\\S7Trace\\config.json</tt>
         ("Informacje o sterowniku i czas…", "Model, numer katalogowy, firmware, numer seryjny, stan, ochrona CPU oraz czas sterownika "
          "i jego różnica względem czasu komputera."),
         ("Diagnostyka połączenia… (Ctrl+D)", "Okno szczegółowej diagnostyki łącza bieżącej karty (opóźnienia, utracone cykle, ping, przepustowość)."),
+        ("Aktywne sesje programu…", "Kto (konto Windows, sesja RDP) ma uruchomiony program na tym komputerze, od kiedy oraz które karty "
+         "skanują sterowniki (IP, stan, od kiedy). Lista odświeża się na żywo; wpis znika po zamknięciu programu. "
+         "Przy Start na sterownik, który już skanuje inny użytkownik, program tylko ostrzega (nie blokuje)."),
         ("Wymagania, ograniczenia i blokady…", "Opis ograniczeń każdej metody oraz ograniczeń systemowych i sieciowych."),
         ("Interfejs…, Zapisane konfiguracje interfejsu, Profil kolorów", "Kolory, czcionki, profile ciemny / jasny / systemowy i zapisane konfiguracje wyglądu."),
         ("Zapisz / Wczytaj konfigurację karty…", "To samo co w menu Plik."),

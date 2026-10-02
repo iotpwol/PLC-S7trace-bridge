@@ -31,7 +31,7 @@ from .diag_dialog import DiagDialog
 from .duration_combo import DurationCombo
 from .plotview import PlotView
 from .signals_dialog import SignalsDialog
-from ..core import ip_history
+from ..core import ip_history, sessions
 from .ip_edit import IpCombo
 
 RACK_SLOT_HELP = (
@@ -638,6 +638,18 @@ class TraceTab(QWidget):
             self._collect()
 
     # ========================================================== lifecycle
+    def _warn_if_scanned_elsewhere(self, ip: str) -> None:
+        """Information only: another program instance (another Windows user) already scans this PLC."""
+        others = sessions.others_scanning(ip)
+        if not others:
+            return
+        from .sessions_dialog import short_time
+        lines = "\n".join(f"• {o['user']}" + (f" (karta „{o['title']}”)" if o["title"] else "")
+                          + (f" – od {short_time(o['since'])}" if o["since"] else "") for o in others)
+        QMessageBox.warning(self, "S7Trace — sterownik jest już skanowany",
+                            f"Sterownik {ip} jest już skanowany przez:\n{lines}\n\nMożesz kontynuować, ale każdy dodatkowy "
+                            "skan obciąża sterownik i zajmuje jedno z jego połączeń.")
+
     def start(self):
         if self.state != "stopped":
             return
@@ -659,6 +671,7 @@ class TraceTab(QWidget):
             QMessageBox.information(self, "S7Trace", "Brak sygnałów do pobierania. Dodaj sygnały albo zaznacz "
                                     "„Pobierz” w oknie 'Sygnały...'.")
             return
+        self._warn_if_scanned_elsewhere(c.ip)
         self.buffer.reset(len(run))
         self._run_signals = [Signal.from_dict(s.to_dict()) for s in run]
         self.plot.set_signals(run)

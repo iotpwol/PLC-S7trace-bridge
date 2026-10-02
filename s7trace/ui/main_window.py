@@ -9,6 +9,7 @@ from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QInputDialog, QMainWindow, QMenu,
                                QMessageBox, QStackedWidget, QTabBar, QToolButton, QWidget)
 
+from ..core import sessions
 from ..core import symbols as sym
 from ..core.config import TabConfig, app_dir, load_app_config, save_app_config, symbols_path
 from ..core.naming import suggest_config_name
@@ -136,6 +137,13 @@ class MainWindow(QMainWindow):
             QApplication.styleHints().colorSchemeChanged.connect(self._on_os_scheme)
         except Exception:
             pass                                       # Qt < 6.5
+        self.registry = sessions.Registry(self._session_tabs)   # who runs the program / which scans run (this computer)
+        sessions.REGISTRY = self.registry
+        self.registry.publish()
+        self._heartbeat = QTimer(self)
+        self._heartbeat.setInterval(int(sessions.HEARTBEAT_S * 1000))
+        self._heartbeat.timeout.connect(self.registry.publish)
+        self._heartbeat.start()
         self._autosave = QTimer(self)
         self._autosave.setInterval(20000)
         self._autosave.timeout.connect(self._save_config)
@@ -179,6 +187,7 @@ class MainWindow(QMainWindow):
         self._act(st, "Kreator połączenia (rozpoznawanie metody)…", lambda: self._cur(self.run_wizard))
         self._act(st, "Informacje o sterowniku i czas…", lambda: self._cur(lambda t: self.run_wizard(t, 1)))
         self._act(st, "Diagnostyka połączenia…", lambda: self._cur(lambda t: t.open_diag()), "Ctrl+D")
+        self._act(st, "Aktywne sesje programu…", self.show_sessions)
         self._act(st, "Wymagania, ograniczenia i blokady…", lambda: self.show_help("Ograniczenia"))
         st.addSeparator()
         self._act(st, "Interfejs (kolory, czcionki)…", self.edit_interface)
@@ -518,8 +527,26 @@ class MainWindow(QMainWindow):
             self.symbols.clear()
             sym.save_symbols(symbols_path(), self.symbols)
 
+    # ---------------------------------------------------------- sessions
+    def _session_tabs(self) -> list[dict]:
+        out = []
+        for i in range(self.tabs.count()):
+            t = self.tabs.widget(i)
+            scanning = t.state in sessions.SCANNING
+            out.append({"title": t.title(), "ip": t.ed_ip.text(), "state": t.state,
+                        "since": t.start_wall.isoformat(timespec="seconds") if scanning else None})
+        return out
+
+    def show_sessions(self) -> None:
+        from .sessions_dialog import SessionsDialog
+        SessionsDialog(self.registry, self).exec()
+
     # ---------------------------------------------------------- close
     def closeEvent(self, e):
+        self._heartbeat.stop()
+        self.registry.close()                                     # the session disappears from the list at once
+        if sessions.REGISTRY is self.registry:
+            sessions.REGISTRY = None
         self._save_config()
         for i in range(self.tabs.count()):
             self.tabs.widget(i).shutdown()

@@ -84,6 +84,9 @@ Typy: BOOL, BYTE, SINT, USINT, WORD, INT, UINT, DWORD, DINT, UDINT, REAL, LREAL.
 * Układ osi Y (panel Zakres okna wykresu): „Pasma wg Share” (domyślnie) – każdy sygnał ma własne pasmo, wysokość proporcjonalna do kolumny Share,
   skalowanie do MIN…MAX widocznego okna, oś pokazuje wartości MIN / pośrednie / MAX; „Offset + Gain” – wspólna skala jak dawniej.
   Najwęższe okno czasu to 0,1 s (kółko myszy dalej nie powiększa).
+* Aktywne sesje programu (Ustawienia → Aktywne sesje programu…): kto ma program otwarty na tym komputerze i które karty skanują
+  sterowniki. Każde okno programu zapisuje co 2 s mały plik w `%ProgramData%\S7Trace\sessions` (albo `C:\Users\Public\S7Trace\sessions`);
+  nieodświeżany wpis (zamknięty / zawieszony program) znika po ok. 10 s. Start na już skanowany sterownik tylko ostrzega. Zasięg: ten komputer.
 * Diagnostyka połączenia (przycisk „Diagnostyka…”, Ustawienia → Diagnostyka połączenia…, Ctrl+D): ocena łącza, czas odczytu (chwilowy / średni 10 s, 60 s, od startu /
   min / max / odch. std. / P95 / P99), jitter próbkowania, histogram, pominięte cykle i błędy, zerwania, dostępność, przepustowość,
   ping ICMP z procentem utraty pakietów, test portu TCP, wykresy w czasie, raport do schowka / pliku.
