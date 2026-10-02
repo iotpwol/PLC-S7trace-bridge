@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass, field
 
 from .drivers import conn_defaults
 from .planner import MODE_BLOCKS
-from .trigger import TriggerConfig
+from .trigger import DEFAULT_REC_NAME, OLD_SNAPSHOT_NAME, DEFAULT_SNAPSHOT_NAME, TriggerConfig
 from .types import Signal
 
 
@@ -38,6 +38,10 @@ class TabConfig:
     name_mode: str = "prev"        # "prev" = from previous signal, "own" = SIG1, SIG2, ...
     own_name: str = "SIG"
     offset_step: float = -1.1      # Offset Y step for newly added signals
+    y_layout: str = "lanes"        # "lanes" = every signal in its own band (Share), "offset" = Offset Y + Gain
+    legend_pos: list = field(default_factory=lambda: [0.0, 0.0])    # per tab: (0,0) top-left ... (1,1) bottom-right
+    rec_folder: str = "rec"        # REC recordings
+    rec_filename: str = DEFAULT_REC_NAME
     signals: list[Signal] = field(default_factory=lambda: [Signal(name="SIG1")])
     trigger: TriggerConfig = field(default_factory=TriggerConfig)
 
@@ -54,7 +58,8 @@ class TabConfig:
         if isinstance(d.get("conn"), dict):
             c.conn = {**conn_defaults(), **d["conn"]}
         for k in ("name", "conf_name", "conn_type", "ip", "rack", "slot", "cycle_ms", "mode", "window_s", "auto_y",
-                  "y_min", "y_max", "show_points", "autonumber", "name_mode", "own_name", "offset_step"):
+                  "y_min", "y_max", "show_points", "autonumber", "name_mode", "own_name", "offset_step",
+                  "y_layout", "legend_pos", "rec_folder", "rec_filename"):
             if k in d:
                 setattr(c, k, d[k])
         if d.get("signals"):
@@ -62,6 +67,12 @@ class TabConfig:
         if isinstance(d.get("trigger"), dict):
             known = {k: v for k, v in d["trigger"].items() if k in TriggerConfig.__dataclass_fields__}
             c.trigger = TriggerConfig(**known)
+        if c.trigger.filename == OLD_SNAPSHOT_NAME:                  # the former default -> the new default
+            c.trigger.filename = DEFAULT_SNAPSHOT_NAME
+        if not (isinstance(c.legend_pos, (list, tuple)) and len(c.legend_pos) == 2):
+            c.legend_pos = [0.0, 0.0]
+        if c.y_layout not in ("lanes", "offset"):
+            c.y_layout = "lanes"
         return c
 
 

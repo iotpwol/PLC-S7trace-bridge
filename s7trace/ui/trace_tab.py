@@ -1,6 +1,7 @@
 """One connection tab: settings panel, plot, buttons, trigger handling."""
 from __future__ import annotations
 
+import html
 import os
 import re
 import time
@@ -14,6 +15,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog
                                QPushButton, QScrollArea, QSpinBox, QSplitter, QVBoxLayout, QWidget)
 
 from ..core import trigger as trg
+from ..core.trigger import DEFAULT_REC_NAME
 from ..core.acq_process import ProcAcquirer
 from ..core.acquisition import parse_host
 from ..core.diagnostics import PingProbe
@@ -40,6 +42,11 @@ RACK_SLOT_HELP = (
     "  – ochrony dostępu dopuszczającej PUT/GET (Full access).\n\n"
     "IP można podać z portem, np. 127.0.0.1:1102 (symulator)."
 )
+
+
+PLACEHOLDERS_HELP = ("Znaczniki w nazwie pliku:\n{confname} – nazwa konfiguracji (gdy jej brak, program zapyta; "
+                     "bez odpowiedzi: no_name)\n{ip} – adres IP sterownika\n{tab} – nazwa karty\n"
+                     "{date} – data, {time} – godzina")
 
 
 class _Names(dict):
@@ -110,7 +117,7 @@ class TraceTab(QWidget):
         self.ping_probe: PingProbe | None = None
         self.diag_dlg: DiagDialog | None = None
         self._want_left: int | None = None
-        self._rec_dot, self._rec_phase = "#ff2020", True
+        self._rec_dot, self._rec_idle, self._rec_phase = "#ff2020", "#c0c0c0", True
         self._build()
         self._load_cfg()
         self._stateRaw.connect(self._on_state)
@@ -165,6 +172,7 @@ class TraceTab(QWidget):
         self.cb_mode = QComboBox()
         self.cb_mode.addItems(MODES)
         self.lbl_method = QLabel()
+        self.lbl_method.setProperty("val", True)            # values are bold (QSS QLabel[val="true"])
         self.lbl_method.setWordWrap(True)
         self.lbl_method.setToolTip("Metoda komunikacji – zmiana: Ustawienia → Metoda połączenia…")
         f.addRow("IP:", self.ed_ip)
@@ -175,11 +183,19 @@ class TraceTab(QWidget):
         self._conn_widgets = [self.ed_ip, self.sp_rack, self.sp_slot, self.sp_cycle, self.cb_mode]
 
         f = group("Zakres")
-        self.sp_window = _spin(0.05, 86400, 200, dec=1)
+        self.sp_window = _spin(0.1, 86400, 200, dec=1)
+        self.cb_ylayout = QComboBox()
+        self.cb_ylayout.addItem("Pasma wg Share", "lanes")
+        self.cb_ylayout.addItem("Offset + Gain", "offset")
+        self.cb_ylayout.setToolTip(
+            "Pasma wg Share: każdy sygnał ma własne pasmo na osi pionowej (wysokość ~ kolumna „Share” w oknie Sygnały), "
+            "skalowane do MIN…MAX widocznego fragmentu; oś pokazuje wartości MIN / pośrednie / MAX.\n"
+            "Offset + Gain: jedna wspólna skala, sygnały przesunięte o „Offset Y” i pomnożone przez „Gain”.")
         self.chk_auto = QCheckBox("Auto Y")
         self.sp_ymin = _spin(-1e9, 1e9, 0, dec=3)
         self.sp_ymax = _spin(-1e9, 1e9, 10, dec=3)
         f.addRow("Okno czasu [s]:", self.sp_window)
+        f.addRow("Układ osi Y:", self.cb_ylayout)
         f.addRow(self.chk_auto)
         f.addRow("Y min:", self.sp_ymin)
         f.addRow("Y max:", self.sp_ymax)
@@ -202,8 +218,6 @@ class TraceTab(QWidget):
         fr.addWidget(self.ed_tfolder)
         fr.addWidget(btn_folder)
         self.ed_tname = QLineEdit()
-        self.ed_tname.setToolTip("Znaczniki w nazwie pliku:\n{tab} – nazwa karty\n{confname} – nazwa konfiguracji "
-                                 "(gdy jej brak, program zapyta; bez odpowiedzi: no_name)\n{date} – data, {time} – godzina")
         f.addRow(self.chk_trig)
         f.addRow("Sygnał:", self.cb_tsig)
         f.addRow("Tryb:", self.cb_tmode)
@@ -214,6 +228,19 @@ class TraceTab(QWidget):
         f.addRow("Akcja:", self.cb_tact)
         f.addRow("Folder:", fr)
         f.addRow("Nazwa pliku:", self.ed_tname)
+
+        f = group("Nagrywanie REC")
+        self.ed_rfolder = QLineEdit()
+        btn_rfolder = QPushButton("...")
+        btn_rfolder.clicked.connect(self._pick_rec_folder)
+        rr = QHBoxLayout()
+        rr.addWidget(self.ed_rfolder)
+        rr.addWidget(btn_rfolder)
+        self.ed_rname = QLineEdit()
+        self.ed_rname.setToolTip(PLACEHOLDERS_HELP)
+        self.ed_tname.setToolTip(PLACEHOLDERS_HELP)
+        f.addRow("Folder:", rr)
+        f.addRow("Nazwa pliku:", self.ed_rname)
         lv.addStretch()
         scroll = QScrollArea()
         scroll.setWidget(left)
@@ -234,6 +261,7 @@ class TraceTab(QWidget):
         self.btn_pause.setCheckable(True)
         self.btn_rec = QPushButton("REC")
         self.btn_rec.setCheckable(True)
+        self.btn_rec.toggled.connect(lambda _on: self._blink_tick(reset=True))
         self.btn_pts = QPushButton("Punkty")
         self.btn_pts.setCheckable(True)
         self.btn_v = QPushButton("V znacznik")
@@ -254,6 +282,7 @@ class TraceTab(QWidget):
         right.addLayout(bar)
         self.lbl_status = QLabel()
         self.lbl_status.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.lbl_status.setTextFormat(Qt.RichText)
         right.addWidget(self.lbl_status)
 
         self.split_h = QSplitter(Qt.Horizontal)         # drag the bar to resize the settings panel
@@ -268,6 +297,8 @@ class TraceTab(QWidget):
         self.split_h.splitterMoved.connect(self._layout_moved)
         self.plot.splitChanged.connect(self._layout_moved)
         self.plot.legendMoved.connect(self._legend_moved)
+        self.plot.legendDoubleClicked.connect(self.edit_signals)
+        self.cb_ylayout.currentIndexChanged.connect(self._on_ylayout)
 
         for b, role in ((self.btn_start, "start"), (self.btn_stop, "stop"), (self.btn_pause, "pause"),
                         (self.btn_rec, "rec"), (self.btn_pts, "mark"), (self.btn_v, "mark"), (self.btn_h, "mark")):
@@ -302,6 +333,8 @@ class TraceTab(QWidget):
             w.valueChanged.connect(self._trigger_changed)
         for w in (self.ed_tfolder, self.ed_tname):
             w.editingFinished.connect(self._trigger_changed)
+        for w in (self.ed_rfolder, self.ed_rname):
+            w.editingFinished.connect(self._collect)
 
     # ======================================================= buttons / layout
     @staticmethod
@@ -315,14 +348,19 @@ class TraceTab(QWidget):
     def apply_ctl_theme(self, theme: dict) -> None:
         """REC dot colour and blink frequency from the 'Interfejs' settings."""
         self._rec_dot = theme.get("rec_dot", self._rec_dot)
+        self._rec_idle = theme.get("ctl_text", self._rec_idle)          # REC off: the dot has the colour of the text
         hz = max(0.1, float(theme.get("rec_blink_hz", 0.5)))
         self._icon_on, self._icon_off = dot_icon(self._rec_dot), dot_icon(None)
+        self._icon_idle = dot_icon(self._rec_idle)
         self.blink.start(int(1000 / (2 * hz)))          # half period = dot on / dot off
         self._blink_tick(reset=True)
 
     def _blink_tick(self, reset: bool = False) -> None:
         self._rec_phase = True if reset else not self._rec_phase
-        self.btn_rec.setIcon(self._icon_on if (self.btn_rec.isChecked() and self._rec_phase) else self._icon_off)
+        if not self.btn_rec.isChecked():
+            self.btn_rec.setIcon(self._icon_idle)
+        else:
+            self.btn_rec.setIcon(self._icon_on if self._rec_phase else self._icon_off)
 
     def _layout_moved(self, *_) -> None:
         self.ui_state["left_width"] = self.split_h.sizes()[0]
@@ -330,8 +368,11 @@ class TraceTab(QWidget):
         self.layoutChanged.emit()
 
     def _legend_moved(self, fx: float, fy: float) -> None:
-        self.ui_state["legend_pos"] = [round(fx, 4), round(fy, 4)]
-        self.layoutChanged.emit()
+        self.cfg.legend_pos = [round(fx, 4), round(fy, 4)]          # per tab (saved in the tab's configuration)
+
+    def set_legend_pos(self, fx: float, fy: float) -> None:
+        self.cfg.legend_pos = [float(fx), float(fy)]
+        self.plot.set_legend_pos(fx, fy)
 
     def apply_layout(self) -> None:
         """Splitter sizes + legend position from the shared UI settings (applied once the widget has a size)."""
@@ -340,9 +381,6 @@ class TraceTab(QWidget):
             self._want_left = st["left_width"]
         if isinstance(st.get("overview_h"), int):
             self.plot.set_overview_height(st["overview_h"])
-        lp = st.get("legend_pos")
-        if isinstance(lp, (list, tuple)) and len(lp) == 2:
-            self.plot.set_legend_pos(float(lp[0]), float(lp[1]))
         self._fit_layout()
 
     def _fit_layout(self) -> None:
@@ -434,7 +472,13 @@ class TraceTab(QWidget):
         self.plot.set_auto_y(c.auto_y)
         self.plot.set_y_range(c.y_min, c.y_max)
         self.plot.set_points(c.show_points)
+        i = self.cb_ylayout.findData(c.y_layout)
+        self.cb_ylayout.setCurrentIndex(max(i, 0))
+        self.plot.set_y_layout(self.cb_ylayout.currentData())
         self._on_auto_y(c.auto_y)
+        self.ed_rfolder.setText(c.rec_folder)
+        self.ed_rname.setText(c.rec_filename)
+        self.plot.set_legend_pos(float(c.legend_pos[0]), float(c.legend_pos[1]))
         self._loading = False
         self._trigger_changed()
 
@@ -448,6 +492,8 @@ class TraceTab(QWidget):
         c.auto_y = self.chk_auto.isChecked()
         c.y_min, c.y_max = self.sp_ymin.value(), self.sp_ymax.value()
         c.show_points = self.btn_pts.isChecked()
+        c.y_layout = self.cb_ylayout.currentData()
+        c.rec_folder, c.rec_filename = self.ed_rfolder.text().strip(), self.ed_rname.text().strip()
         t = c.trigger
         t.enabled = self.chk_trig.isChecked()
         t.signal = self.cb_tsig.currentText()
@@ -488,16 +534,25 @@ class TraceTab(QWidget):
 
     # ============================================================ handlers
     def _on_auto_y(self, on: bool):
-        self.sp_ymin.setEnabled(not on)
-        self.sp_ymax.setEnabled(not on)
+        manual_ok = self.cb_ylayout.currentData() == "offset"          # Auto Y / Y min / Y max: only without lanes
+        self.chk_auto.setEnabled(manual_ok)
+        self.sp_ymin.setEnabled(manual_ok and not on)
+        self.sp_ymax.setEnabled(manual_ok and not on)
         self.plot.set_auto_y(on)
+
+    def _on_ylayout(self, *_):
+        if self._loading:
+            return
+        self.cfg.y_layout = self.cb_ylayout.currentData()
+        self.plot.set_y_layout(self.cfg.y_layout)
+        self._on_auto_y(self.chk_auto.isChecked())
 
     def _on_y_manual(self, *_):
         self.plot.set_y_range(self.sp_ymin.value(), self.sp_ymax.value())
 
     def _on_zoomed(self, width: float):
         self.sp_window.blockSignals(True)
-        self.sp_window.setValue(min(max(width, 0.05), 86400))
+        self.sp_window.setValue(min(max(width, 0.1), 86400))
         self.sp_window.blockSignals(False)
         if not self.chk_auto.isChecked():
             lo, hi = self.plot.y_range
@@ -539,6 +594,13 @@ class TraceTab(QWidget):
             self.ed_tfolder.setText(d)
             self._trigger_changed()
 
+    def _pick_rec_folder(self):
+        d = QFileDialog.getExistingDirectory(self, "Folder nagrań REC", self._abs_folder(self.ed_rfolder.text().strip()
+                                                                                          or "rec"))
+        if d:
+            self.ed_rfolder.setText(d)
+            self._collect()
+
     # ========================================================== lifecycle
     def start(self):
         if self.state != "stopped":
@@ -549,7 +611,9 @@ class TraceTab(QWidget):
                                 "(opcjonalnie z portem: 127.0.0.1:1102).")
             self.ed_ip.setFocus()
             return
-        if "{confname}" in c.trigger.filename:
+        writes_trigger = c.trigger.enabled and "CSV" in c.trigger.action and "{confname}" in c.trigger.filename
+        writes_rec = self.btn_rec.isChecked() and "{confname}" in c.rec_filename
+        if writes_trigger or writes_rec:                 # ask for the configuration name before the first file is written
             self._confname_for_file()
         run = self.display_signals()
         method = self._resolve_method(run)
@@ -771,22 +835,22 @@ class TraceTab(QWidget):
         if not p or not p["sent"]:
             return ""
         last = f"{p['last']:.0f} ms" if p["last"] is not None else "brak odp."
-        return f" | Ping: {last}, utrata {p['loss_pct']:.1f}%"
+        return f" | Ping: <b>{last}</b>, utrata <b>{p['loss_pct']:.1f}%</b>"
 
     def _update_status(self):
         if self.acq and self.state in ("running", "reconnecting"):
             st = self.acq.stats
             st.gui_lag_ms = self.plot.gui_lag_ms
             self.lbl_status.setText(
-                f"PLC comm lag Avg: {st.avg_lag:.1f} ms (n={st.n}), Last: {st.last_lag:.1f} ms | "
-                f"GUI lag: {st.gui_lag_ms:.1f} ms  Missed: {st.missed} ({st.missed_pct:.1f}%){self._ping_text()}  "
-                f"{self.status_msg}")
+                f"PLC comm lag Avg: <b>{st.avg_lag:.1f} ms</b> (n=<b>{st.n}</b>), Last: <b>{st.last_lag:.1f} ms</b> | "
+                f"GUI lag: <b>{st.gui_lag_ms:.1f} ms</b>  Missed: <b>{st.missed} ({st.missed_pct:.1f}%)</b>"
+                f"{self._ping_text()}  <b>{html.escape(self.status_msg)}</b>")
         else:
-            self.lbl_status.setText(self.status_msg)
+            self.lbl_status.setText(f"<b>{html.escape(self.status_msg)}</b>")
 
     # ================================================================ IO
-    def _abs_folder(self) -> str:
-        f = self.cfg.trigger.folder or "snapshots"
+    def _abs_folder(self, folder: str | None = None) -> str:
+        f = (self.cfg.trigger.folder if folder is None else folder) or "snapshots"
         return f if os.path.isabs(f) else os.path.join(os.getcwd(), f)
 
     def _confname_for_file(self) -> str:
@@ -805,16 +869,16 @@ class TraceTab(QWidget):
                 return _sanitize(self.cfg.conf_name)
         return "no_name"
 
-    def _file_name(self, template: str, prefix: str) -> str:
+    def _file_name(self, template: str, prefix: str, folder: str | None = None) -> str:
         now = datetime.now()
-        tpl = template or f"{prefix}_{{tab}}_{{date}}_{{time}}.csv"
+        tpl = template or f"{prefix}_{{confname}}_{{ip}}_{{tab}}_{{date}}_{{time}}.csv"
         conf = self._confname_for_file() if "{confname}" in tpl else ""
         name = tpl.format_map(_Names(
             tab=_sanitize(self.title()), date=now.strftime("%Y-%m-%d"), time=now.strftime("%H-%M-%S"),
-            confname=conf))
+            confname=conf, ip=_sanitize(parse_host(self.ed_ip.text())[0])))
         if not name.lower().endswith(".csv"):
             name += ".csv"
-        folder = self._abs_folder()
+        folder = self._abs_folder(folder)
         os.makedirs(folder, exist_ok=True)
         path = os.path.join(folder, _sanitize_filename(name))
         base, ext = os.path.splitext(path)
@@ -897,7 +961,7 @@ class TraceTab(QWidget):
         old = self.cfg.signals
         if locked:       # structure of existing signals is fixed while running: display attributes change,
             for o, n in zip(old, new):                      # new signals can only be appended at the end
-                o.name, o.offset_y, o.gain, o.color = n.name, n.offset_y, n.gain, n.color
+                o.name, o.offset_y, o.gain, o.share, o.color = n.name, n.offset_y, n.gain, n.share, n.color
                 o.comment, o.plot, o.fmt = n.comment, n.plot, n.fmt
             self._append_live(new[len(old):])
         else:
@@ -935,7 +999,8 @@ class TraceTab(QWidget):
 
     def _open_recorder(self):
         try:
-            path = self._file_name("rec_{tab}_{date}_{time}.csv", "rec")
+            c = self._collect()
+            path = self._file_name(c.rec_filename or DEFAULT_REC_NAME, "REC", c.rec_folder or "rec")
             self.recorder = CsvRecorder(path, self._run_signals, self.start_wall)
             self.status_msg = f"REC → {path}"
         except Exception as e:

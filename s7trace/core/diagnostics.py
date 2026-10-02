@@ -55,6 +55,8 @@ class LinkDiag:
         with self._lock:
             self.lags: deque = deque(maxlen=self.keep)        # (t, lag_ms)
             self.dts: deque = deque(maxlen=self.keep)         # (t, interval_ms between consecutive samples)
+            self.sec: deque = deque(maxlen=3700)              # (second, max lag in that second): charts up to 60 min
+            self._sec_cur: list | None = None
             self.n = 0
             self.sum = self.sumsq = 0.0
             self.min, self.max = math.inf, 0.0
@@ -93,6 +95,12 @@ class LinkDiag:
             if lag_ms > self.cycle_ms:
                 self.overruns += 1
             self.lags.append((t, lag_ms))
+            sec = math.floor(t)
+            if self._sec_cur is None or self._sec_cur[0] != sec:
+                self._sec_cur = [sec, lag_ms]
+                self.sec.append(self._sec_cur)
+            elif lag_ms > self._sec_cur[1]:
+                self._sec_cur[1] = lag_ms
             if self._last_t is not None:
                 self.dts.append((t, (t - self._last_t) * 1000.0))
             self._last_t = t
@@ -187,11 +195,11 @@ class LinkDiag:
         return out
 
     def lag_series(self, seconds: float = 120.0) -> tuple[np.ndarray, np.ndarray]:
-        """(sample times, lags) of the last `seconds` of data."""
+        """(sample times, lags) of the last `seconds` of data (spans over 2 min: the maximum lag of every second)."""
         with self._lock:
             if not self.lags or self.t_last is None:
                 return np.empty(0), np.empty(0)
-            a = np.array(self.lags)
+            a = np.array(self.sec if seconds > 120 else self.lags, dtype=float)
         m = a[:, 0] >= self.t_last - seconds
         return a[m, 0], a[m, 1]
 
@@ -244,7 +252,7 @@ class PingProbe(threading.Thread):
             self.last: float | None = None
             self.jit_sum, self.jit_n, self._prev = 0.0, 0, None
             self.consec_lost = 0
-            self.history: deque = deque(maxlen=3000)         # (perf_counter, rtt or None)
+            self.history: deque = deque(maxlen=3700)         # (perf_counter, rtt or None)
 
     def stop(self) -> None:
         self._stop_evt.set()

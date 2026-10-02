@@ -5,6 +5,9 @@ from dataclasses import dataclass
 
 MODES = ["==", ">", "<", "between", "rising edge", "falling edge"]
 ACTIONS = ["Pauza", "Zapis CSV", "Pauza + zapis CSV"]
+OLD_SNAPSHOT_NAME = "snapshot_{tab}_{date}_{time}.csv"
+DEFAULT_SNAPSHOT_NAME = "snapshot_{confname}_{ip}_{tab}_{date}_{time}.csv"
+DEFAULT_REC_NAME = "REC_{confname}_{ip}_{tab}_{date}_{time}.csv"
 
 
 @dataclass
@@ -18,7 +21,7 @@ class TriggerConfig:
     pretrigger: float = 0.0
     action: str = "Pauza"
     folder: str = "snapshots"
-    filename: str = "snapshot_{tab}_{date}_{time}.csv"
+    filename: str = DEFAULT_SNAPSHOT_NAME
 
 
 class TriggerEngine:

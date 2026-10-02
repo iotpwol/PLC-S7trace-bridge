@@ -126,7 +126,7 @@ def test_control_buttons_state_colours_and_rec_blink(app):
     assert tab.btn_rec.icon().cacheKey() != a                        # the dot blinks
     tab.btn_rec.setChecked(False)
     tab._blink_tick(reset=True)
-    assert tab.btn_rec.icon().cacheKey() == tab._icon_off.cacheKey()
+    assert tab.btn_rec.icon().cacheKey() == tab._icon_idle.cacheKey()           # REC off: dot in the text colour
     qss = th.build_qss(th.DARK)
     assert 'QPushButton[role="rec"][on="true"]' in qss and th.DARK["rec_on_bg"] in qss
     tab.state = "stopped"
@@ -198,17 +198,23 @@ def test_splitters_remembered_and_synced(app, tmp_path, monkeypatch):
 
 
 def test_legend_position_menu_and_drag(app, tmp_path, monkeypatch):
+    """The legend position is kept per tab (and saved in that tab's configuration)."""
     w = _win(tmp_path, monkeypatch)
     w.show()
     QApplication.processEvents()
     t = w.tabs.widget(0)
-    w.set_legend_pos(1, 1)
-    assert t.plot.legend_pos == (1.0, 1.0) and w.ui["legend_pos"] == [1, 1]
-    t.plot._legend_dropped(0.4, 0.25)                                # dropped after dragging
-    assert w.ui["legend_pos"] == [0.4, 0.25] and t.plot.legend_pos == (0.4, 0.25)
+    t2 = w.new_tab()
+    w.tabs.setCurrentIndex(0)
+    w.set_legend_pos(1, 1)                                           # menu: the CURRENT tab only
+    assert t.plot.legend_pos == (1.0, 1.0) and t.cfg.legend_pos == [1.0, 1.0]
+    assert t2.plot.legend_pos == (0.0, 0.0) and t2.cfg.legend_pos == [0.0, 0.0]
+    t2.plot._legend_dropped(0.4, 0.25)                               # dropped after dragging on the second tab
+    assert t2.cfg.legend_pos == [0.4, 0.25] and t2.plot.legend_pos == (0.4, 0.25)
+    assert t.plot.legend_pos == (1.0, 1.0)
     w.close()
     w2 = MainWindow(config_file=str(tmp_path / "c.json"))
-    assert w2.tabs.widget(0).plot.legend_pos == (0.4, 0.25)
+    assert w2.tabs.widget(0).plot.legend_pos == (1.0, 1.0)
+    assert w2.tabs.widget(1).plot.legend_pos == (0.4, 0.25)
     w2.close()
 
 

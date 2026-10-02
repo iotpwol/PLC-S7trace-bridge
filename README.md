@@ -51,15 +51,17 @@ Typy: BOOL, BYTE, SINT, USINT, WORD, INT, UINT, DWORD, DINT, UDINT, REAL, LREAL.
 * Trigger: `==`, `>`, `<`, `between`, `rising edge`, `falling edge`, histereza, pretrigger.
   Akcje: Pauza, Zapis CSV, Pauza + zapis CSV. Porównywana jest wartość surowa (bez gain / offsetu Y).
   Dla sygnałów BOOL użyj progu A = 0,5 przy zboczach.
-  Nazwa pliku: `{tab}`, `{date}`, `{time}`. Ścieżka względna liczona od katalogu uruchomienia.
-* REC: ciągły zapis wszystkich próbek do `rec_{tab}_{date}_{time}.csv`.
+  Nazwa pliku (domyślnie `snapshot_{confname}_{ip}_{tab}_{date}_{time}.csv`): `{confname}`, `{ip}`, `{tab}`, `{date}`, `{time}`.
+  Ścieżka względna liczona od katalogu uruchomienia.
+* REC: ciągły zapis wszystkich próbek; folder (domyślnie `rec`) i nazwa pliku (domyślnie
+  `REC_{confname}_{ip}_{tab}_{date}_{time}.csv`) ustawia się w panelu po lewej pod blokiem Trigger.
 * Punkty: znaczniki próbek. V / H znacznik: kliknięcie na wykresie stawia kursor (max 2), odczyt wartości i Δ.
 * CSV: `Eksport okna → CSV`, `Import CSV → wykres` (CSV zapisuje definicje sygnałów w komentarzach `# signal:`).
 * Symbole (Plik → Importuj symbole): tablica tagów TIA (.xlsx/.csv), źródło DB z TIA (.db/.scl) i XML,
   Step 7 (.sdf/.asc/.seq). Potem „Sygnały… → Z symboli…”.
   Offsety w DB liczone według zasad wyrównania S7 dla bloków nieoptymalizowanych.
 * Okno „Sygnały…”: kolumny Pobierz ✓ / Wykres ✓ / Nazwa / Aktualna wartość / Sposób wyświetlania
-  (Domyślnie, Dziesiętnie, HEX 16#…, BIN 2#…, TRUE/FALSE, Naukowo) / Źródło / Typ / DB / Bajt / Bit / Offset Y / Gain / Kolor / Opis.
+  (Domyślnie, Dziesiętnie, HEX 16#…, BIN 2#…, TRUE/FALSE, Naukowo) / Źródło / Typ / DB / Bajt / Bit / Offset Y / Gain / Share / Kolor / Opis.
   „Dodaj” dopisuje wiersz zawsze na końcu; nazwa idzie za wierszem z kursorem (`D160B`→`D160C`, `123M1`→`123M2`).
   Zdublowane nazwy: czerwone tło. Zdublowane adresy (źródło, typ, DB, bajt, bit): żółte tło.
   Najechanie na wiersz pokazuje wszystkie dane zmiennej (z opisem i bieżącą wartością).
@@ -77,7 +79,10 @@ Typy: BOOL, BYTE, SINT, USINT, WORD, INT, UINT, DWORD, DINT, UDINT, REAL, LREAL.
   W nazwach plików (trigger) znacznik `{confname}` = nazwa konfiguracji (brak → program pyta, potem `no_name`).
 * Przyciski sterujące mają konfigurowalne kolory stanów (Start/Stop/Pauza/REC/znaczniki), kropka REC miga (domyślnie 0,5 Hz).
 * Podziały można przeciągać: panel ustawień ↔ wykres oraz wykres główny ↔ pasek podglądu; legendę przeciągniesz myszą
-  lub ustawisz w Widok → Położenie legendy. Wszystko jest zapamiętywane.
+  lub ustawisz w Widok → Położenie legendy (ta karta); położenie jest osobne dla każdej karty. Podwójne kliknięcie legendy otwiera okno Sygnały.
+* Układ osi Y (panel Zakres): „Pasma wg Share” (domyślnie) – każdy sygnał ma własne pasmo, wysokość proporcjonalna do kolumny Share,
+  skalowanie do MIN…MAX widocznego okna, oś pokazuje wartości MIN / pośrednie / MAX; „Offset + Gain” – wspólna skala jak dawniej.
+  Najwęższe okno czasu to 0,1 s (kółko myszy dalej nie powiększa).
 * Diagnostyka połączenia (przycisk „Diagnostyka…”, Ctrl+D): ocena łącza, czas odczytu (chwilowy / średni 10 s, 60 s, od startu /
   min / max / odch. std. / P95 / P99), jitter próbkowania, histogram, pominięte cykle i błędy, zerwania, dostępność, przepustowość,
   ping ICMP z procentem utraty pakietów, test portu TCP, wykresy w czasie, raport do schowka / pliku.

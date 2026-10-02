@@ -77,6 +77,7 @@ class WizardDialog(QDialog):
         self.t_info.setColumnWidth(0, 250)
         self.t_info.setEditTriggers(QTableWidget.NoEditTriggers)
         self.lbl_time = QLabel()
+        self.lbl_time.setTextFormat(Qt.RichText)
         self.lbl_time.setWordWrap(True)
         v.addWidget(self.t_info, 1)
         v.addWidget(self.lbl_time)
@@ -165,11 +166,16 @@ class WizardDialog(QDialog):
         self.t_info.setRowCount(len(rows))
         for r, (a, b) in enumerate(rows):
             self.t_info.setItem(r, 0, QTableWidgetItem(a))
-            self.t_info.setItem(r, 1, QTableWidgetItem(b))
+            it = QTableWidgetItem(b)
+            f = it.font()
+            f.setBold(True)                                  # values bold, the parameter names normal
+            it.setFont(f)
+            self.t_info.setItem(r, 1, it)
         if res.plc_time:
             self.lbl_time.setText(
-                f"Czas sterownika: {res.plc_time:%Y-%m-%d %H:%M:%S}{' (UTC)' if res.plc_time_utc else ''}   |   "
-                f"różnica do czasu lokalnego komputera: {res.time_diff_local:+.1f} s   |   do UTC: {res.time_diff_utc:+.1f} s\n"
+                f"Czas sterownika: <b>{res.plc_time:%Y-%m-%d %H:%M:%S}{' (UTC)' if res.plc_time_utc else ''}</b>   |   "
+                f"różnica do czasu lokalnego komputera: <b>{res.time_diff_local:+.1f} s</b>   |   "
+                f"do UTC: <b>{res.time_diff_utc:+.1f} s</b><br>"
                 "Sterowniki Siemensa często pracują w UTC – właściwa jest ta różnica, która jest bliższa zera.")
         else:
             self.lbl_time.setText("Czas sterownika: nie udało się odczytać.")

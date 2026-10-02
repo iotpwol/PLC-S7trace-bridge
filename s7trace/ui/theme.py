@@ -148,12 +148,14 @@ def build_qss(t: dict) -> str:
 QMainWindow, QDialog {{ background: {t['window_bg']}; }}
 QGroupBox {{ border: 1px solid rgba(128,128,128,90); border-radius: 3px; margin-top: 14px; padding-top: 6px;
     background: {t['panel_bg']}; }}
-QGroupBox::title {{ subcontrol-origin: margin; left: 2px; top: -2px; color: {t['text']}; }}
-QLabel {{ color: {t['text']}; }}
+QGroupBox::title {{ subcontrol-origin: margin; left: 8px; top: -2px; color: {t['text']}; }}
+QLabel {{ color: {t['text']}; padding-left: 3px; }}
+QLabel[val="true"] {{ font-weight: bold; }}
 QCheckBox {{ color: {t['text']}; }}
 QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {{
     background: {t['edit_bg']}; color: {t['edit_text']}; border: 1px solid rgba(128,128,128,110);
-    border-radius: 2px; padding: 2px 4px; selection-background-color: {t['accent']}; }}
+    border-radius: 2px; padding: 2px 4px 2px 6px; selection-background-color: {t['accent']}; }}
+QSpinBox, QDoubleSpinBox {{ padding-left: 10px; }}
 QLineEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled {{
     color: {_disabled(t['edit_text'])}; }}
 QLineEdit[invalid="true"] {{ border: 1px solid #e04040; }}
@@ -168,8 +170,10 @@ QToolButton {{ background: {t['button_bg']}; color: {t['button_text']}; border: 
     border-radius: 2px; padding: 2px 8px; }}
 QTableWidget, QListWidget {{ background: {t['table_bg']}; gridline-color: rgba(128,128,128,90);
     color: {t['table_text']}; alternate-background-color: {t['table_bg']}; }}
+QTableWidget::item {{ padding-left: 12px; }}
+QListWidget::item {{ padding-left: 6px; }}
 QHeaderView::section {{ background: {t['header_bg']}; color: {t['text']}; border: 1px solid rgba(128,128,128,90);
-    padding: 3px; }}
+    padding: 3px 3px 3px 6px; }}
 QMenuBar {{ background: {t['menu_bg']}; color: {t['menu_text']}; }}
 QMenuBar::item:selected {{ background: {t['accent']}; }}
 QMenu {{ background: {t['menu_bg']}; color: {t['menu_text']}; border: 1px solid rgba(128,128,128,110); }}

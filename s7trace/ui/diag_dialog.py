@@ -1,12 +1,13 @@
 """Diagnostyka połączenia: opóźnienia, jitter, utracone cykle, zerwania, przepustowość, ping ICMP, wykresy."""
 from __future__ import annotations
 
+import html
 import time
 
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QFont, QPainter
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QFileDialog,
                                QHBoxLayout, QHeaderView, QLabel, QMessageBox, QPushButton, QTableWidget,
                                QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
@@ -18,6 +19,45 @@ RATING_COLOR = {"Bardzo dobre": "#2fbf4a", "Dobre": "#7fcf3a", "Przeciętne": "#
                 "Brak połączenia": "#e04040", "Brak danych": "#8a8a8a"}
 STAT_COLS = [("Chwilowo", "last"), ("Śr. 10 s", "avg10"), ("Śr. 60 s", "avg60"), ("Śr. całość", "avg"),
              ("Min", "min"), ("Max", "max"), ("Odch. std.", "std"), ("P95", "p95"), ("P99", "p99")]
+
+
+RATING_SCORE = {"Bardzo dobre": 100, "Dobre": 80, "Przeciętne": 50, "Słabe": 25, "Brak połączenia": 0, "Brak danych": 0}
+SPANS = (("10 s", 10), ("30 s", 30), ("1 min", 60), ("3 min", 180), ("10 min", 600), ("30 min", 1800), ("60 min", 3600))
+
+
+def _b(v) -> str:
+    """A value in bold (the labels around it stay in the normal weight)."""
+    return f"<b>{html.escape(str(v))}</b>"
+
+
+class RatingBar(QWidget):
+    """Horizontal bar graph of the link rating: 10 segments, coloured like the verbal rating."""
+    SEGMENTS = 10
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.score, self.color = 0, "#8a8a8a"
+        self.setFixedSize(260, 18)
+
+    def set_rating(self, rating: str, color: str) -> None:
+        score = RATING_SCORE.get(rating, 0)
+        if (score, color) != (self.score, self.color):
+            self.score, self.color = score, color
+            self.update()
+
+    def filled(self) -> int:
+        return round(self.score / 100 * self.SEGMENTS)
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        gap, n = 3, self.SEGMENTS
+        w = (self.width() - gap * (n - 1)) / n
+        on = self.filled()
+        for i in range(n):
+            col = QColor(self.color if i < on else "#808080")
+            col.setAlpha(255 if i < on else 70)
+            p.fillRect(int(i * (w + gap)), 0, int(w), self.height(), col)
+        p.end()
 
 
 def _f(v, fmt="{:.1f}") -> str:
@@ -39,9 +79,12 @@ class _Table(QTableWidget):
         self.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         self.verticalHeader().setMinimumWidth(190)
+        bold = QFont(self.font())
+        bold.setBold(True)                                       # values bold, the header labels stay normal
         for r in range(len(rows)):
             for c in range(len(cols)):
                 it = QTableWidgetItem("—")
+                it.setFont(bold)
                 it.setTextAlignment(Qt.AlignCenter if len(cols) > 1 else Qt.AlignVCenter | Qt.AlignLeft)
                 self.setItem(r, c, it)
 
@@ -64,7 +107,9 @@ class DiagDialog(QDialog):
 
         self.lbl_rating = QLabel()
         self.lbl_rating.setStyleSheet("font-size: 15pt; font-weight: bold;")
+        self.bar_rating = RatingBar()
         self.lbl_head = QLabel()
+        self.lbl_head.setTextFormat(Qt.RichText)
         self.lbl_head.setWordWrap(True)
         self.lbl_notes = QLabel()
         self.lbl_notes.setWordWrap(True)
@@ -72,6 +117,8 @@ class DiagDialog(QDialog):
         top = QHBoxLayout()
         top.addWidget(QLabel("Ocena łącza:"))
         top.addWidget(self.lbl_rating)
+        top.addSpacing(12)
+        top.addWidget(self.bar_rating)
         top.addStretch()
         lay.addLayout(top)
         lay.addWidget(self.lbl_head)
@@ -93,13 +140,22 @@ class DiagDialog(QDialog):
         ticks = [(i, f"{a}–{b}") for i, (a, b) in enumerate(zip(dg.HIST_EDGES, dg.HIST_EDGES[1:]))]
         ticks.append((len(dg.HIST_EDGES) - 1, f"≥{dg.HIST_EDGES[-1]}"))
         self.hist_plot.getAxis("bottom").setTicks([ticks])
+        self.hist_texts = []
+        for i in range(len(dg.HIST_EDGES)):                       # value above every non-empty bar
+            ti = pg.TextItem(anchor=(0.5, 1.0), color="#f0f0f0")
+            f = ti.textItem.font()
+            f.setBold(True)
+            ti.setFont(f)
+            ti.hide()
+            self.hist_plot.addItem(ti)
+            self.hist_texts.append(ti)
         w = QWidget()
         v = QVBoxLayout(w)
         v.addWidget(self.t_lat)
         v.addWidget(QLabel("Rozkład czasu odczytu (histogram):"))
         v.addWidget(self.hist_plot, 1)
         note = QLabel("Chwilowo = ostatnia próbka; Śr. 10 s / 60 s = średnia z ostatnich sekund; Min/Max/Odch. std. liczone od startu; "
-                      "P95 / P99 = 95% / 99% odczytów jest szybszych (z ostatnich ~20 000 próbek). Jitter = średnia zmiana "
+                      "P95 / P99 = 95% / 99% odczytów jest szybszych (z ostatnich ~20\u00a0000\u00a0próbek). Jitter = średnia zmiana "
                       "okresu między kolejnymi próbkami.")
         note.setWordWrap(True)
         v.addWidget(note)
@@ -126,9 +182,9 @@ class DiagDialog(QDialog):
 
         # --- charts
         self.cb_span = QComboBox()
-        for label, sec in (("30 s", 30), ("2 min", 120), ("10 min", 600)):
+        for label, sec in SPANS:
             self.cb_span.addItem(label, sec)
-        self.cb_span.setCurrentIndex(1)
+        self.cb_span.setCurrentIndex(3)
         self.plot = pg.PlotWidget()
         self.plot.setLabel("left", "ms")
         self.plot.setLabel("bottom", "s temu")
@@ -146,7 +202,7 @@ class DiagDialog(QDialog):
         row = QHBoxLayout()
         row.addWidget(QLabel("Zakres czasu:"))
         row.addWidget(self.cb_span)
-        row.addWidget(QLabel("Czerwona przerywana linia = ustawiony cykl."))
+        row.addWidget(QLabel("Czerwona przerywana linia = ustawiony cykl. Dla zakresów powyżej 2 min: maksimum czasu odczytu z każdej sekundy."))
         row.addStretch()
         cv.addLayout(row)
         cv.addWidget(self.plot, 1)
@@ -204,21 +260,25 @@ class DiagDialog(QDialog):
         if d is None:
             self.lbl_rating.setText("Brak danych")
             self.lbl_rating.setStyleSheet(f"font-size: 15pt; font-weight: bold; color: {RATING_COLOR['Brak danych']};")
-            ping_txt = f"Ping: {_f(p['last'])} ms, utrata {p['loss_pct']:.1f}%" if p and p["sent"] else "Ping wyłączony"
+            ping_txt = (f"Ping: {_b(_f(p['last']) + ' ms')}, utrata {_b(format(p['loss_pct'], '.1f') + '%')}"
+                        if p and p["sent"] else "Ping wyłączony")
             self.lbl_head.setText(f"Połączenie nie było uruchomione.   {ping_txt}")
+            self.bar_rating.set_rating("Brak danych", RATING_COLOR["Brak danych"])
             self.lbl_notes.setText("Kliknij Start na karcie, aby zbierać statystyki odczytu. Test portu TCP i ping działają także bez Start.")
             self._fill_ping_only(p)
             return
         rating, notes = dg.verdict(d, p)
         self.lbl_rating.setText(rating)
         self.lbl_rating.setStyleSheet(f"font-size: 15pt; font-weight: bold; color: {RATING_COLOR.get(rating, '#ccc')};")
+        self.bar_rating.set_rating(rating, RATING_COLOR.get(rating, "#cccccc"))
         lg = d["lag"]
-        ping_txt = (f"   |   Ping: {_f(p['last'])} ms (śr. {_f(p['avg'])}), utrata {p['loss_pct']:.1f}%"
-                    if p and p["sent"] else "")
+        ping_txt = (f"   |   Ping: {_b(_f(p['last']) + ' ms')} (śr. {_b(_f(p['avg']) + ' ms')}), "
+                    f"utrata {_b(format(p['loss_pct'], '.1f') + '%')}" if p and p["sent"] else "")
         self.lbl_head.setText(
-            f"Stan: {d['state']}   |   Czas pracy: {_hms(d['uptime_s'])}   |   Odczyt chwilowo: {_f(lg.get('last'))} ms, "
-            f"średnio: {_f(lg.get('avg'))} ms   |   Utracone cykle: {d['missed_pct']:.1f}%   |   "
-            f"Próbkowanie: {_f(d['rate10'])} Hz z {_f(d['expected_rate'])} Hz{ping_txt}")
+            f"Stan: {_b(d['state'])}   |   Czas pracy: {_b(_hms(d['uptime_s']))}   |   "
+            f"Odczyt chwilowo: {_b(_f(lg.get('last')) + ' ms')}, średnio: {_b(_f(lg.get('avg')) + ' ms')}   |   "
+            f"Utracone cykle: {_b(format(d['missed_pct'], '.1f') + '%')}   |   "
+            f"Próbkowanie: {_b(_f(d['rate10']) + ' Hz')} z {_b(_f(d['expected_rate']) + ' Hz')}{ping_txt}")
         self.lbl_notes.setText("\n".join("• " + n for n in notes))
 
         # latencies
@@ -232,7 +292,16 @@ class DiagDialog(QDialog):
             self.t_lat.put(2, 4, _f(p["min"]))
             self.t_lat.put(2, 5, _f(p["max"]))
         tot = max(sum(d["hist"]), 1)
-        self.hist_bars.setOpts(x=list(range(len(d["hist"]))), height=[100.0 * h / tot for h in d["hist"]])
+        pct = [100.0 * h / tot for h in d["hist"]]
+        self.hist_bars.setOpts(x=list(range(len(pct))), height=pct)
+        for i, (ti, v) in enumerate(zip(self.hist_texts, pct)):
+            if v > 0:
+                ti.setText(f"{v:.2f}%" if v < 1 else f"{v:.1f}%")
+                ti.setPos(i, v)
+                ti.show()
+            else:
+                ti.hide()
+        self.hist_plot.setYRange(0, max(max(pct) * 1.2, 5.0), padding=0)
         # reliability
         r = self.t_rel
         vals = [str(d["samples"]), str(d["missed"]), f"{d['missed_pct']:.2f}", str(d["overruns"]), f"{d['overrun_pct']:.2f}",

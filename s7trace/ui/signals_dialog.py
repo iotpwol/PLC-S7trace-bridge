@@ -22,7 +22,7 @@ COLS = [
     ("fetch", "Pobierz", 62), ("plot", "Wykres", 62), ("name", "Nazwa", 130),
     ("value", "Aktualna wartość", 125), ("fmt", "Sposób wyświetlania", 135), ("source", "Źródło", 70),
     ("dtype", "Typ", 85), ("db", "DB", 70), ("byte", "Bajt", 75), ("bit", "Bit", 55),
-    ("node", "Węzeł OPC / nazwa (Web API)", 190), ("offset", "Offset Y", 85), ("gain", "Gain", 85),
+    ("node", "Węzeł OPC / nazwa (Web API)", 190), ("offset", "Offset Y", 85), ("gain", "Gain", 85), ("share", "Share", 70),
     ("color", "Kolor", 80), ("comment", "Opis", 220),
 ]
 CI = {k: i for i, (k, _, _) in enumerate(COLS)}
@@ -299,6 +299,8 @@ class SignalsDialog(QDialog):
         w["plot"] = self._check_cell(s.plot)
         w["name"] = QLineEdit(s.name)
         w["value"] = QLabel("—")
+        w["value"].setProperty("val", True)                  # values are bold, with a larger left margin
+        w["value"].setStyleSheet("padding-left: 8px;")
         w["fmt"] = QComboBox()
         w["fmt"].addItems(FORMATS)
         w["fmt"].setCurrentText(s.fmt if s.fmt in FORMATS else FORMATS[0])
@@ -327,6 +329,12 @@ class SignalsDialog(QDialog):
         w["gain"].setRange(-1e9, 1e9)
         w["gain"].setDecimals(4)
         w["gain"].setValue(s.gain)
+        w["share"] = QDoubleSpinBox()
+        w["share"].setRange(0.01, 1000.0)
+        w["share"].setDecimals(2)
+        w["share"].setValue(s.share)
+        w["share"].setToolTip("Udział w wysokości osi pionowej (układ „Pasma wg Share”): sygnał ze Share=2 dostaje "
+                              "pasmo dwa razy wyższe niż sygnał ze Share=1.")
         w["color"] = QPushButton()
         self._set_color(w["color"], s.color)
         w["color"].clicked.connect(lambda _=False, b=w["color"]: self._pick_color(b))
@@ -386,7 +394,7 @@ class SignalsDialog(QDialog):
         return Signal(
             name=c("name").text().strip() or f"SIG{r + 1}", source=c("source").currentText(),
             dtype=c("dtype").currentText(), db=c("db").value(), byte=c("byte").value(), bit=c("bit").value(),
-            offset_y=c("offset").value(), gain=c("gain").value(), color=c("color").property("color"),
+            offset_y=c("offset").value(), gain=c("gain").value(), share=c("share").value(), color=c("color").property("color"),
             comment=c("comment").text(), enabled=c("fetch")._cb.isChecked(), plot=c("plot")._cb.isChecked(),
             fmt=c("fmt").currentText(), node=c("node").text().strip())
 
@@ -436,7 +444,7 @@ class SignalsDialog(QDialog):
                 f"Źródło: {s.source}   Typ: {s.dtype}   DB: {s.db if s.source == 'DB' else '—'}   "
                 f"Bajt: {s.byte}   Bit: {s.bit if s.dtype == 'BOOL' else '—'}\n"
                 f"Pobieranie: {'tak' if s.enabled else 'nie'}   Na wykresie: {'tak' if s.plot else 'nie'}\n"
-                f"Offset Y: {s.offset_y:g}   Gain: {s.gain:g}   Kolor: {s.color}\n"
+                f"Offset Y: {s.offset_y:g}   Gain: {s.gain:g}   Share: {s.share:g}   Kolor: {s.color}\n"
                 f"Sposób wyświetlania: {s.fmt}\nOpis: {s.comment or '—'}\n"
                 f"Aktualna wartość: {cur}")
 

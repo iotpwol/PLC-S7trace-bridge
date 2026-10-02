@@ -117,8 +117,12 @@ class MainWindow(QMainWindow):
         self.menuBar().setCornerWidget(corner, Qt.TopRightCorner)
 
         tabs = cfg.get("tabs") or [TabConfig().to_dict()]
+        legacy_legend = self.ui.get("legend_pos")                # before: one position for all tabs
         for d in tabs:
-            self.new_tab(TabConfig.from_dict(d))
+            tc = TabConfig.from_dict(d)
+            if "legend_pos" not in d and isinstance(legacy_legend, (list, tuple)) and len(legacy_legend) == 2:
+                tc.legend_pos = [float(legacy_legend[0]), float(legacy_legend[1])]
+            self.new_tab(tc)
         self.tabs.setCurrentIndex(min(max(cfg.get("current", 0), 0), self.tabs.count() - 1))
         geo = self.ui.get("geometry")
         if geo:
@@ -163,7 +167,7 @@ class MainWindow(QMainWindow):
         self.act_grid = self._act(v, "Siatka", self._set_grid, checked=self.ui.get("grid", True))
         v.addSeparator()
         self._act(v, "Diagnostyka połączenia…", lambda: self._cur(lambda t: t.open_diag()), "Ctrl+D")
-        self.menu_legend = v.addMenu("Położenie legendy")
+        self.menu_legend = v.addMenu("Położenie legendy (ta karta)")
         for label, pos in (("Lewy górny róg", (0, 0)), ("Prawy górny róg", (1, 0)),
                            ("Lewy dolny róg", (0, 1)), ("Prawy dolny róg", (1, 1))):
             self._act(self.menu_legend, label, lambda p=pos: self.set_legend_pos(*p))
@@ -266,8 +270,8 @@ class MainWindow(QMainWindow):
                 self.tabs.widget(i).apply_layout()
 
     def set_legend_pos(self, fx: float, fy: float) -> None:
-        self.ui["legend_pos"] = [fx, fy]
-        self._apply_layouts()
+        """Legend corner of the CURRENT tab (every tab keeps its own position)."""
+        self._cur(lambda t: t.set_legend_pos(fx, fy))
 
     def show_help(self, topic: str = "") -> None:
         HelpDialog(self, topic).exec()

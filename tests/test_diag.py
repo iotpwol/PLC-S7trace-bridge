@@ -241,7 +241,7 @@ def test_tab_ping_follows_checkbox_and_status(app, monkeypatch):
     tab.set_ping(True)
     tab.set_ping(True)                                       # same host: no second probe
     assert started == ["10.4.5.6"]
-    assert "Ping: 4 ms, utrata 10.0%" in tab._ping_text()
+    assert "Ping: <b>4 ms</b>, utrata <b>10.0%</b>" in tab._ping_text()
     tab.set_ping(False)
     assert tab._ping_text() == ""
     tab.ed_ip.setText("10.4.5")                              # invalid IP -> no probe

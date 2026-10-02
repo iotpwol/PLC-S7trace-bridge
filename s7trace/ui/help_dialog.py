@@ -52,7 +52,7 @@ S7-1200/1500 wymagają w CPU: „Permit access with PUT/GET communication” ora
 <h2>Układ okna</h2>
 <ul>
 <li><b>Pasek menu</b> (Plik / Widok / Pomoc) i – po jego prawej stronie – <b>karty</b> (każda karta to osobne połączenie).</li>
-<li><b>Panel ustawień</b> po lewej: Połączenie, Zakres, Trigger.</li>
+<li><b>Panel ustawień</b> po lewej: Połączenie, Zakres, Trigger, Nagrywanie REC.</li>
 <li><b>Wykres główny</b> i pod nim <b>pasek podglądu</b> całej historii.</li>
 <li><b>Przyciski sterujące</b> pod wykresem, przyciski <b>Sygnały… / Eksport / Import</b> po prawej, na dole <b>pasek statusu</b>.</li>
 </ul>
@@ -60,7 +60,7 @@ S7-1200/1500 wymagają w CPU: „Permit access with PUT/GET communication” ora
 <ul>
 <li><b>Szerokość panelu ustawień</b> – chwyć pionowy pasek między panelem a wykresem i przeciągnij w lewo / w prawo.</li>
 <li><b>Wysokość paska podglądu</b> – chwyć poziomy pasek między wykresem głównym a paskiem podglądu i przeciągnij w górę / w dół.</li>
-<li><b>Legenda</b> – przeciągnij ją myszą w dowolne miejsce wykresu albo wybierz narożnik w Widok → Położenie legendy.</li>
+<li><b>Legenda</b> – przeciągnij ją myszą w dowolne miejsce wykresu albo wybierz narożnik w Widok → Położenie legendy (ta karta). Każda karta pamięta własne położenie legendy; podwójne kliknięcie legendy otwiera okno „Sygnały…”.</li>
 </ul>
 <p>Wszystkie te ustawienia (oraz położenie i rozmiar okna, motyw, kolumny okna sygnałów) są zapamiętywane
 i przywracane po ponownym uruchomieniu (<tt>%APPDATA%\\S7Trace\\config.json</tt>, autozapis co 20 s i przy zamknięciu).</p>
@@ -94,7 +94,7 @@ i przywracane po ponownym uruchomieniu (<tt>%APPDATA%\\S7Trace\\config.json</tt>
         ("Dopasuj widok do całości (Ctrl+0)", "Pokazuje całą nagraną historię na wykresie."),
         ("Legenda / Siatka", "Włącza lub wyłącza legendę i siatkę wykresu."),
         ("Diagnostyka połączenia… (Ctrl+D)", "Okno szczegółowej diagnostyki łącza."),
-        ("Położenie legendy", "Narożnik wykresu, w którym stoi legenda (można ją też przeciągnąć myszą)."),
+        ("Położenie legendy (ta karta)", "Narożnik wykresu bieżącej karty, w którym stoi legenda (można ją też przeciągnąć myszą). Położenie jest zapisywane osobno dla każdej karty, w jej konfiguracji."),
     ])))
 
     s.append(("4a. Menu Ustawienia", """
@@ -181,8 +181,9 @@ Porównywana jest <b>wartość surowa</b> sygnału (bez gain i offsetu Y).</p>
         ("Akcja", "<b>Pauza</b> – wstrzymuje widok na zdarzeniu (Wznów = ponowne uzbrojenie); <b>Zapis CSV</b> – zapisuje okno do pliku "
          "i uzbraja się ponownie; <b>Pauza + zapis CSV</b> – jedno i drugie."),
         ("Folder", "Katalog zapisu (względny liczony od katalogu uruchomienia). Przycisk „…” otwiera wybór folderu."),
-        ("Nazwa pliku", "Szablon nazwy, domyślnie <tt>snapshot_{tab}_{date}_{time}.csv</tt>. Znaczniki: <tt>{tab}</tt> – nazwa karty, "
+        ("Nazwa pliku", "Szablon nazwy, domyślnie <tt>snapshot_{confname}_{ip}_{tab}_{date}_{time}.csv</tt>. Znaczniki: "
          "<tt>{confname}</tt> – nazwa konfiguracji (gdy jej brak, program zapyta o nazwę; bez odpowiedzi użyje <tt>no_name</tt>), "
+         "<tt>{ip}</tt> – adres IP sterownika, <tt>{tab}</tt> – nazwa karty, "
          "<tt>{date}</tt> – data, <tt>{time}</tt> – godzina. Istniejący plik nie jest nadpisywany (dodawany jest numer)."),
     ]) + _img("zal06", 230, "Panel ustawień z sekcją Trigger")))
 
@@ -190,13 +191,19 @@ Porównywana jest <b>wartość surowa</b> sygnału (bez gain i offsetu Y).</p>
 <h2>Wykres główny</h2>
 """ + _img("zal11", 640) + """
 <ul>
-<li><b>Krzywe</b> rysowane są schodkowo (wartość utrzymuje się do następnej próbki). Każdy sygnał ma własny kolor, <b>Offset Y</b> (przesunięcie
-w pionie, by sygnały BOOL nie nakładały się) i <b>Gain</b> (mnożnik) – ustawiane w oknie Sygnały.</li>
-<li><b>Oś czasu</b> pokazuje sekundy od startu (powyżej godziny: g:mm:ss).</li>
+<li><b>Krzywe</b> rysowane są schodkowo (wartość utrzymuje się do następnej próbki). Każdy sygnał ma własny kolor, <b>Gain</b> (mnożnik), <b>Share</b> (udział w wysokości osi) i <b>Offset Y</b> – ustawiane w oknie Sygnały.</li>
+<li><b>Układ osi Y</b> (panel Zakres): <b>Pasma wg Share</b> (domyślnie) – każdy sygnał dostaje własne pasmo na osi pionowej, od góry w kolejności
+wierszy w oknie Sygnały; wysokość pasma jest proporcjonalna do Share (trzy sygnały ze Share 1, 1 i 2 mają pasma 25%, 25% i 50% wysokości),
+a sygnał jest skalowany do swojego MIN…MAX w widocznym oknie czasu (BOOL: 0…1). Oś pionowa pokazuje, kolorem sygnału, wartość
+MIN i MAX, a w wyższych pasmach także wartości pośrednie. <b>Offset + Gain</b> – jedna wspólna skala (oś „Offset”), sygnały przesunięte
+o Offset Y i pomnożone przez Gain; wtedy działają też Auto Y i Y min / Y max.</li>
+<li><b>Oś czasu</b> pokazuje sekundy od startu (powyżej godziny: g:mm:ss; przy bardzo małym oknie także ułamki sekundy).
+Najwęższe okno to <b>0,1 s</b> – kółko myszy dalej nie powiększa.</li>
 <li><b>Przesuwanie i zoom myszą</b>: przeciągnięcie przesuwa wykres w czasie, kółko myszy powiększa / zmniejsza okno czasu.
 Wstrzymuje to widok na żywo (zbieranie trwa dalej) – <b>Wznów</b> wraca do podglądu bieżących danych.</li>
 <li><b>Legenda</b> (lewy górny róg) – pokazuje nazwy i kolory sygnałów widocznych na wykresie. Przeciągnij ją myszą, aby zmienić położenie,
-albo wybierz narożnik w Widok → Położenie legendy. Pozycja jest zapamiętywana.</li>
+albo wybierz narożnik w Widok → Położenie legendy (ta karta). Pozycja jest zapamiętywana osobno dla każdej karty.
+Podwójne kliknięcie legendy otwiera okno „Sygnały…”.</li>
 <li><b>V znacznik / H znacznik</b>: kliknięcie na wykresie stawia pionowy / poziomy kursor (maks. 2, przesuwalne);
 w ramce wyświetlane są wartości sygnałów w miejscu kursora, Δt (z częstotliwością) i ΔY.</li>
 <li>Pionowa czerwona linia <b>TRIG</b> oznacza chwilę wyzwolenia triggera.</li>
@@ -220,8 +227,10 @@ aby zmienić okno czasu.</li>
         ("Start", "Łączy ze sterownikiem i rozpoczyna zbieranie danych (wymaga poprawnego IP i co najmniej jednego pobieranego sygnału)."),
         ("Stop", "Kończy połączenie. Dane pozostają na wykresie."),
         ("Pauza / Wznów", "Wstrzymuje widok (zbieranie trwa) i wraca do trybu na żywo."),
-        ("● REC", "Ciągły zapis wszystkich próbek do pliku <tt>rec_{tab}_{date}_{time}.csv</tt>. Zapis trwa do wyłączenia przycisku lub Stop. "
-         "Dodanie zmiennej w trakcie zapisu zaczyna nowy plik (z dodatkową kolumną). Podczas zapisu miga czerwona kropka."),
+        ("● REC", "Ciągły zapis wszystkich próbek do pliku według ustawień panelu „Nagrywanie REC” (folder i nazwa, domyślnie "
+         "<tt>REC_{confname}_{ip}_{tab}_{date}_{time}.csv</tt> w folderze <tt>rec</tt>). Zapis trwa do wyłączenia przycisku lub Stop. "
+         "Dodanie zmiennej w trakcie zapisu zaczyna nowy plik (z dodatkową kolumną). Podczas zapisu miga czerwona kropka, "
+         "przy wyłączonym REC kropka ma kolor napisu."),
         ("Punkty", "Pokazuje znaczniki pojedynczych próbek na krzywych."),
         ("V znacznik / H znacznik", "Tryb stawiania kursorów pionowych / poziomych (patrz „Wykres główny”)."),
     ]) + """
@@ -261,7 +270,7 @@ aby zmienić okno czasu.</li>
     s.append(("15. Diagnostyka połączenia", """
 <h2>Diagnostyka połączenia (przycisk „Diagnostyka…”, Widok → Diagnostyka połączenia…, Ctrl+D)</h2>
 <p>Okno pokazuje na żywo (odświeżanie co 0,5 s) pełne statystyki łącza z bieżącą kartą i można je trzymać otwarte obok wykresu.
-Na górze jest <b>ocena łącza</b> (Bardzo dobre / Dobre / Przeciętne / Słabe / Brak połączenia) wraz z listą konkretnych spostrzeżeń
+Na górze jest <b>ocena łącza</b> (Bardzo dobre / Dobre / Przeciętne / Słabe / Brak połączenia) oraz <b>poziomym paskiem (bargrafem)</b> o 10 segmentach, wraz z listą konkretnych spostrzeżeń
 i zaleceń, np. „zwiększ cykl do ≥ 41 ms”. Statystyki zerują się przy każdym Start; po Stop zostają widoczne do następnego Start.</p>
 <h3>Zakładka „Opóźnienia”</h3>
 """ + _table([
@@ -270,7 +279,7 @@ i zaleceń, np. „zwiększ cykl do ≥ 41 ms”. Statystyki zerują się przy k
         ("Okres próbkowania", "Odstęp czasu między kolejnymi próbkami – powinien być równy ustawionemu cyklowi. "
          "Odchylenia to jitter (nierówność próbkowania)."),
         ("Ping ICMP (RTT)", "Czas odpowiedzi samej sieci na ping do adresu sterownika (rozdzielczość 1 ms), bez udziału protokołu S7."),
-        ("Histogram", "Procent odczytów w przedziałach czasu (0–2, 2–5, 5–10 … ≥1000 ms) – pokazuje, czy opóźnienia są stałe, czy zdarzają się rzadkie piki."),
+        ("Histogram", "Procent odczytów w przedziałach czasu (0–2, 2–5, 5–10 … ≥1000 ms), z liczbą nad każdym niepustym słupkiem – pokazuje, czy opóźnienia są stałe, czy zdarzają się rzadkie piki."),
     ], ("Wielkość", "Znaczenie")) + """
 <h3>Zakładka „Pakiety i niezawodność”</h3>
 """ + _table([
@@ -294,7 +303,7 @@ a utratę pakietów w sieci – ping ICMP (jeśli zapora lub router nie blokuje 
         ("Ruch w sieci – szacunek [kb/s]", "Dane plus ok. 150 B nagłówków na parę żądanie/odpowiedź – wartość orientacyjna."),
     ], ("Wielkość", "Znaczenie")) + """
 <h3>Zakładka „Wykresy w czasie”</h3>
-<p>Czas odczytu PLC i ping ICMP w funkcji czasu (ostatnie 30 s / 2 min / 10 min) z zaznaczonym ustawionym cyklem (czerwona linia).
+<p>Czas odczytu PLC i ping ICMP w funkcji czasu (zakres do wyboru: 10 s, 30 s, 1 min, 3 min, 10 min, 30 min, 60 min; dla zakresów powyżej 2 min wykres czasu odczytu pokazuje maksimum z każdej sekundy) z zaznaczonym ustawionym cyklem (czerwona linia).
 Piki powyżej linii cyklu oznaczają pomijane próbki.</p>
 <h3>Przyciski</h3>
 """ + _table([
@@ -325,6 +334,8 @@ w starszych próbkach mają przerwę); adres, pole „Pobierz”, kolejność i 
          "Powtórzony adres (źródło, typ, DB, bajt, bit) jest podświetlony <span style='background-color:#c9b030'>&nbsp;na żółto&nbsp;</span>."),
         ("Offset Y", "Przesunięcie krzywej w pionie (żeby sygnały nie nakładały się)."),
         ("Gain", "Mnożnik wartości na wykresie (surowa wartość w tabeli i w triggerze pozostaje bez zmian)."),
+        ("Share", "Udział sygnału w wysokości osi pionowej (układ „Pasma wg Share”). Sygnał ze Share = 2 ma pasmo dwa razy wyższe niż "
+         "sygnał ze Share = 1; wszystkie sygnały pokazane na wykresie dzielą oś proporcjonalnie do swoich wartości Share."),
         ("Kolor", "Kolor krzywej – kliknij, by wybrać."),
         ("Opis", "Dowolny komentarz; pokazuje się w podpowiedzi wiersza."),
     ], ("Kolumna", "Znaczenie")) + """
@@ -419,7 +430,8 @@ Hasło jest zapisywane w pliku konfiguracji <b>tylko</b>, gdy zaznaczysz „Zapa
 <h2>Pliki CSV</h2>
 <p>Pliki zawierają kolumny <tt>time_s</tt> (sekundy od startu), <tt>timestamp</tt> (data i godzina) i po jednej kolumnie na sygnał;
 w komentarzach <tt># signal:</tt> zapisane są definicje sygnałów. Puste pole = brak danych (przerwa w połączeniu lub zmienna dodana później).</p>
-<p>Znaczniki w nazwach plików: <tt>{tab}</tt> – nazwa karty, <tt>{confname}</tt> – nazwa konfiguracji, <tt>{date}</tt> – data, <tt>{time}</tt> – godzina.</p>
+<p>Znaczniki w nazwach plików (zapis wyzwolony triggerem i REC): <tt>{confname}</tt> – nazwa konfiguracji, <tt>{ip}</tt> – adres IP
+sterownika, <tt>{tab}</tt> – nazwa karty, <tt>{date}</tt> – data, <tt>{time}</tt> – godzina.</p>
 <h2>Skróty klawiszowe</h2>
 """ + _table([
         ("Ctrl+T", "Nowa karta"), ("Ctrl+W", "Zamknij kartę"), ("F2", "Zmień nazwę karty"),

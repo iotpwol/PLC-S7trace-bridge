@@ -42,6 +42,7 @@ class Signal:
     bit: int = 0                # only for BOOL
     offset_y: float = 0.0       # display offset
     gain: float = 1.0           # display gain
+    share: float = 1.0          # "Share": relative height of this signal's lane on the Y axis (lane layout)
     color: str = DEFAULT_COLORS[0]
     comment: str = ""           # "Opis"
     enabled: bool = True        # "Pobieraj" - read from the PLC
@@ -88,6 +89,12 @@ class Signal:
             s.source = "DB"
         if s.dtype not in TYPES:
             s.dtype = "BOOL"
+        try:
+            s.share = float(s.share)
+        except (TypeError, ValueError):
+            s.share = 1.0
+        if not s.share > 0:
+            s.share = 1.0
         return s
 
 

@@ -25,7 +25,7 @@ def app():
 
 
 def make_cfg():
-    c = TabConfig(ip="10.1.2.3", rack=0, slot=1, cycle_ms=40, window_s=60, auto_y=False,
+    c = TabConfig(ip="10.1.2.3", rack=0, slot=1, cycle_ms=40, window_s=60, auto_y=False, y_layout="offset",
                   y_min=-3, y_max=4)
     c.signals = [Signal(name="A", dtype="BOOL", db=2, byte=5, bit=3, color="#123456", offset_y=-1.1),
                  Signal(name="B", dtype="REAL", db=2, byte=8, gain=0.5)]
