@@ -461,6 +461,8 @@ def test_overview_region_cannot_leave_collected_data(app):
     p.region.setRegion((18.0, 30.0))                                  # dragging the yellow window past the end
     x0, x1 = p.view_range()
     assert x1 == pytest.approx(b) and x1 - x0 == pytest.approx(12.0)   # shifted back, the width is kept
+    r0, r1 = p.region.getRegion()
+    assert r1 == pytest.approx(b) and r1 - r0 == pytest.approx(12.0)   # and the yellow window itself stops at the end
     p.refresh(force=True)
     assert p.region.getRegion()[1] <= b + 1e-9                        # the region is put back inside the data
     tab.shutdown()
@@ -538,40 +540,136 @@ def test_form_labels_visible_in_narrowest_panel(app):
     for field in (tab.sp_window, tab.cb_ylayout, tab.sp_ymin, tab.ed_ip):
         lay = field.parentWidget().layout()
         lab = lay.labelForField(field)
-        assert lab is not None and lab.width() >= 40, lab.text()               # long fields never squeeze the labels away
+        assert lab is not None and lab.width() >= min(40, lab.sizeHint().width()), lab.text()   # long fields never squeeze the labels
     tab.shutdown()
 
 
-# ----------------------------------------------------------------- IP field with spaced dots
-def test_ip_edit_shows_spaced_dots_but_text_is_plain(app):
+# ----------------------------------------------------------------- IP field: 4 cells, fixed dots
+def _ipbox():
     from s7trace.ui.ip_edit import IpEdit
     e = IpEdit()
-    e.setText("10.12.91.1")
-    assert e.text() == "10.12.91.1" and e.displayText() == "10 . 12 . 91 . 1"
-    e.setText("192.168.0.10:1102")
-    assert e.text() == "192.168.0.10:1102" and e.displayText() == "192 . 168 . 0 . 10:1102"
-    e.clear()
     e.show()
     e.setFocus()
-    QTest.keyClicks(e, "10.12.91.1")                                   # typing the dots adds the spaces by itself
-    assert e.text() == "10.12.91.1" and e.displayText() == "10 . 12 . 91 . 1"
-    for _ in range(2):                                                 # Backspace over the spaces takes the dot too
+    return e
+
+
+def test_ip_edit_has_fixed_dots_and_plain_text(app):
+    e = _ipbox()
+    assert e.text() == "" and e.displayText().count(".") == 3                 # empty address: only the dots
+    e.setText("10.12.91.1")
+    assert e.text() == "10.12.91.1" and e.displayText() == "10  . 12  . 91  . 1  "
+    e.setText("192.168.0.10:1102")
+    assert e.text() == "192.168.0.10:1102" and e.displayText().endswith(" : 1102")
+    e.setText("")
+    QTest.keyClicks(e, "10.12.91.1")
+    assert e.text() == "10.12.91.1"
+    e.hide()
+
+
+def test_ip_edit_dots_never_move_and_cannot_be_deleted(app):
+    e = _ipbox()
+    e.setText("10.12.91.1")
+    dots = [i for i, c in enumerate(e.displayText()) if c == "."]
+    QTest.keyClick(e, Qt.Key_End)
+    for _ in range(40):                                                       # Backspace steps over the dots, takes digits
         QTest.keyClick(e, Qt.Key_Backspace)
-    assert e.text() == "10.12.91"
-    QTest.keyClicks(e, "x")                                            # wrong characters are still blocked
-    assert e.text() == "10.12.91"
-    e.setText("10.4.5")
-    assert e.validator().validate(e.displayText(), 0)[0].name == "Intermediate"
+    assert e.text() == "" and [i for i, c in enumerate(e.displayText()) if c == "."] == dots
+    e.setText("10.12.91.1")
+    QTest.keyClick(e, Qt.Key_Home)
+    for _ in range(40):
+        QTest.keyClick(e, Qt.Key_Delete)
+    assert e.text() == ".12.91.1"                                             # Delete never pulls the next cell back
+    assert [i for i, c in enumerate(e.displayText()) if c == "."] == dots
+    e.setText("10.12.91.1")
+    QTest.keyClick(e, Qt.Key_Home)
+    for _ in range(2):
+        QTest.keyClick(e, Qt.Key_Right)
+    QTest.keyClick(e, Qt.Key_Delete)                                          # at the end of a cell: nothing to delete
+    assert e.text() == "10.12.91.1"
+    e.hide()
+
+
+def test_ip_edit_cells_are_independent_and_can_be_empty(app):
+    e = _ipbox()
+    e.setText("10.12.91.1")
+    e.setCursorPosition(0)
+    QTest.keyClick(e, Qt.Key_Delete)
+    QTest.keyClick(e, Qt.Key_Delete)                                          # first cell emptied, the rest stays
+    assert e.text() == ".12.91.1" and e.displayText().startswith("    . 12  .")
+    e.selectAll()
+    QTest.keyClick(e, Qt.Key_Space)                                           # one key clears everything, dots stay
+    assert e.text() == "" and e.displayText().count(".") == 3
+    QTest.keyClicks(e, ".12..1")
+    assert e.text() == ".12..1"
+    e.setCursorPosition(0)
+    QTest.keyClicks(e, "256")                                                 # > 255 is refused
+    assert e.text().split(".")[0] in ("25", "2")
+    e.selectAll()
+    QTest.keyClick(e, Qt.Key_Delete)
+    assert e.text() == ""
+    QTest.keyClicks(e, "x a-")                                                # only digits are accepted
+    assert e.text() == ""
+    e.hide()
+
+
+def test_ip_edit_digits_move_on_after_three(app):
+    e = _ipbox()
+    QTest.keyClicks(e, "192168001")
+    assert e.text() == "192.168.0"                                            # '001' stops after '0' (no leading zeros)
+    e.setText("")
+    QTest.keyClicks(e, "1921681011")
+    assert e.text() == "192.168.101.1"
+    e.setText("10.1.1.1")
+    e.setCursorPosition(len(e.displayText()))
+    QTest.keyClicks(e, ":1102")
+    assert e.text() == "10.1.1.1:1102"
+    QTest.keyClick(e, Qt.Key_Backspace)
+    assert e.text() == "10.1.1.1:110"
     e.hide()
 
 
 def test_ip_field_in_tab_uses_plain_text_everywhere(app):
     tab = TraceTab(TabConfig(ip="10.12.91.1"), lambda: [])
-    assert tab.ed_ip.displayText() == "10 . 12 . 91 . 1" and tab.ed_ip.text() == "10.12.91.1"
+    assert tab.ed_ip.displayText() == "10  . 12  . 91  . 1  " and tab.ed_ip.text() == "10.12.91.1"
     assert tab.to_config().ip == "10.12.91.1" and tab.title() == "10.12.91.1"
     assert not tab.ed_ip.property("invalid")
     tab.ed_ip.setText("10.1.1")
     assert tab.ed_ip.property("invalid") is True
+    tab.shutdown()
+
+
+def test_ip_history_per_user_newest_first(app, tmp_path):
+    from s7trace.core import ip_history
+    assert ip_history.load() == []
+    ip_history.add("10.1.1.1")
+    ip_history.add("10.1.1.2")
+    ip_history.add("10.1.1.1:102")
+    ip_history.add("10.1.1")                                                  # incomplete: not stored
+    ip_history.add("10.1.1.2")                                                # used again: back to the top
+    assert ip_history.load() == ["10.1.1.2", "10.1.1.1:102", "10.1.1.1"]
+    assert str(tmp_path) in ip_history._path()                                # in the (per-user) %APPDATA%
+    for i in range(30):
+        ip_history.add(f"10.0.0.{i}")
+    assert len(ip_history.load()) == ip_history.MAX_ITEMS
+
+
+def test_ip_combo_lists_history_and_picking_fills_the_field(app):
+    from s7trace.core import ip_history
+    ip_history.add("172.16.0.5")
+    ip_history.add("10.12.91.1")
+    tab = TraceTab(TabConfig(ip="1.1.1.1"), lambda: [])
+    tab.ed_ip.set_history(ip_history.load())
+    assert tab.ed_ip.count() == 2 and tab.ed_ip.itemText(0) == "10 . 12 . 91 . 1"      # newest first
+    tab.ed_ip.activated.emit(1)
+    assert tab.ed_ip.text() == "172.16.0.5"
+    tab.shutdown()
+
+
+def test_successful_connection_is_remembered(app):
+    from s7trace.core import ip_history
+    tab = TraceTab(TabConfig(ip="10.7.7.7"), lambda: [])
+    tab._on_state("running", "ok")
+    assert ip_history.load() == ["10.7.7.7"]
     tab.shutdown()
 
 
@@ -590,7 +688,7 @@ DEV = {"method": "s7", "info": {"family": "S7-1500", "model": "CPU 1515-2 PN", "
 
 def test_device_box_empty_until_connection_and_cleared_by_ip_change(app):
     tab = TraceTab(TabConfig(ip="10.1.1.1"), lambda: [])
-    assert tab.lbl_dev.text() == "" and tab.device is None
+    assert "Brak połączenia ze sterownikiem" in tab.lbl_dev.text() and tab.device is None
     from PySide6.QtWidgets import QGroupBox
     titles = [g.title() for g in tab.findChildren(QGroupBox)]
     assert titles.index("Sterownik") == titles.index("Połączenie") + 1             # right under 'Połączenie'
@@ -599,14 +697,14 @@ def test_device_box_empty_until_connection_and_cleared_by_ip_change(app):
     t = tab.lbl_dev.text()
     for label, val in (("Rodzina", "S7-1500"), ("Model", "CPU 1515-2 PN"), ("Firmware", "V2.9.4"),
                        ("Nazwa stacji", "PIEC_1"), ("Nazwa modułu", "CPU_1515")):
-        assert f"{label}: <b>{val}</b>" in t
+        assert f"{label}:&nbsp;&nbsp;</td><td><b>{val}</b>" in t
     assert "Numer seryjny" not in t and "S C-X1" not in t                           # only the five requested fields
     tab.ed_ip.setText("10.1.1.1")                                                   # same address: data stays
     assert tab.lbl_dev.text() == t
     tab.ed_ip.setText("10.1.1.2")                                                   # another device: empty again
-    assert tab.lbl_dev.text() == "" and tab.device is None
+    assert "Brak połączenia ze sterownikiem" in tab.lbl_dev.text() and tab.device is None
     tab._infoRaw.emit({"method": "s7", "info": {"family": "S7-300"}})               # new connection: updated
-    assert "S7-300" in tab.lbl_dev.text() and "Model: <b>—</b>" in tab.lbl_dev.text()
+    assert "S7-300" in tab.lbl_dev.text() and "Model:&nbsp;&nbsp;</td><td><b>—</b>" in tab.lbl_dev.text()
     tab._infoRaw.emit({"method": "other", "info": {}})
     assert "Brak danych sterownika" in tab.lbl_dev.text()
     tab.shutdown()

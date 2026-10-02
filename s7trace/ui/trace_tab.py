@@ -31,7 +31,8 @@ from .diag_dialog import DiagDialog
 from .duration_combo import DurationCombo
 from .plotview import PlotView
 from .signals_dialog import SignalsDialog
-from .ip_edit import IpEdit
+from ..core import ip_history
+from .ip_edit import IpCombo
 
 RACK_SLOT_HELP = (
     "Rack / Slot:\n\n"
@@ -173,7 +174,7 @@ class TraceTab(QWidget):
             return f
 
         f = group("Połączenie")
-        self.ed_ip = IpEdit()                       # shows "10 . 12 . 91 . 1"; text() is the plain address
+        self.ed_ip = IpCombo()                      # 4 cells with fixed dots + history list; text() is the plain address
         self.ed_ip.setPlaceholderText("np. 192.168.0.1")
         self.ed_ip.setToolTip("Adres IPv4 sterownika (opcjonalnie :port). IPv6 i nazwy hostów nie są obsługiwane.")
         self.ed_ip.textChanged.connect(self._ip_check)
@@ -204,6 +205,7 @@ class TraceTab(QWidget):
         f = group("Sterownik")
         self.lbl_dev = ClickLabel()
         self.lbl_dev.setTextFormat(Qt.RichText)
+        self.lbl_dev.setWordWrap(True)
         self.lbl_dev.setMinimumHeight(self.lbl_dev.fontMetrics().lineSpacing() * len(DEVICE_ROWS) + 8)
         self.lbl_dev.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         self.lbl_dev.clicked.connect(self.open_device_info)
@@ -395,6 +397,7 @@ class TraceTab(QWidget):
             self.btn_rec.setIcon(self._icon_on if self._rec_phase else self._icon_off)
 
     def _layout_moved(self, *_) -> None:
+        self._want_left = None                                       # the user's own drag wins over a pending restore
         self.ui_state["left_width"] = self.split_h.sizes()[0]
         self.ui_state["overview_h"] = self.plot.overview_height()
         self.layoutChanged.emit()
@@ -422,7 +425,8 @@ class TraceTab(QWidget):
             self.split_h.blockSignals(True)
             self.split_h.setSizes([w, total - w])
             self.split_h.blockSignals(False)
-            self._want_left = None
+            if w == self._want_left:                      # the window was still too small (not laid out yet): try again
+                self._want_left = None
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
@@ -737,7 +741,7 @@ class TraceTab(QWidget):
     def _show_device(self) -> None:
         d = self.device
         if d is None:
-            self.lbl_dev.setText("")
+            self.lbl_dev.setText("<i>Brak połączenia ze sterownikiem – dane zostaną pobrane po pierwszym połączeniu.</i>")
             self.lbl_dev.setCursor(Qt.ArrowCursor)
             self.lbl_dev.setToolTip("Dane sterownika pojawią się po pierwszym połączeniu.")
             return
@@ -745,8 +749,9 @@ class TraceTab(QWidget):
         if d.get("method") == "other" or not info:
             self.lbl_dev.setText("<i>Brak danych sterownika dla tej metody połączenia.</i>")
         else:
-            self.lbl_dev.setText("<br>".join(f"{label}: <b>{html.escape(str(info.get(key) or '—'))}</b>"
-                                             for label, key in DEVICE_ROWS))
+            rows = "".join(f"<tr><td>{label}:&nbsp;&nbsp;</td><td><b>{html.escape(str(info.get(key) or '—'))}</b></td></tr>"
+                           for label, key in DEVICE_ROWS)       # a table: all values start in one vertical line
+            self.lbl_dev.setText(f'<table cellspacing="0" cellpadding="0">{rows}</table>')
         self.lbl_dev.setCursor(Qt.PointingHandCursor)
         self.lbl_dev.setToolTip("Kliknij, aby zobaczyć pełne informacje o sterowniku (zakładka „Sterownik i czas”).")
 
@@ -817,6 +822,7 @@ class TraceTab(QWidget):
                 self.start_wall = datetime.now()
             self.status_msg = msg
             self.state = "running"
+            ip_history.add(self.ed_ip.text())                  # an address that really connected: remembered per user
             self.plot.set_follow(not self.paused)
             if self.btn_rec.isChecked() and not self.recorder:
                 self._open_recorder()

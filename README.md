@@ -102,7 +102,10 @@ Typy: BOOL, BYTE, SINT, USINT, WORD, INT, UINT, DWORD, DINT, UDINT, REAL, LREAL.
   interfejsu (tuż pod „Interfejs…”); „Wczytaj z pliku…” otwiera plik z dowolnego miejsca.
 * Pole „Sterownik” pod blokiem Połączenie pokazuje dane z ostatniego połączenia (rodzina, model, firmware, nazwa stacji, nazwa modułu);
   jest puste do pierwszego połączenia i czyszczone po zmianie adresu IP. Kliknięcie otwiera pełne informacje („Sterownik i czas”).
-* Pole IP przyjmuje tylko IPv4 (opcjonalnie `:port`), błędny adres jest podświetlony i blokuje Start.
+* Pole IP to cztery niezależne pola liczbowe z nieruchomymi kropkami (`10 . 12 . 91 . 1`; pola mogą być puste, Backspace/Delete
+  kasują tylko cyfry, zaznaczenie + Delete/Spacja czyści adres). Tylko IPv4 (opcjonalnie `:port`), niepełny adres jest podświetlony
+  i blokuje Start. Lista rozwijana pokazuje historię adresów, z którymi się połączono (najnowsze u góry; osobna dla każdego
+  użytkownika Windows, `%APPDATA%\S7Trace\ip_history.json`).
 * Pamiętane: karty, sygnały, trigger, widok, motyw, rozmiar i położenie okna, kolumny okna sygnałów
   (autozapis co 20 s i przy zamknięciu).
 * Konfiguracja zapisywana przy zamknięciu w `%APPDATA%\S7Trace\config.json` (zakładki, sygnały, trigger).

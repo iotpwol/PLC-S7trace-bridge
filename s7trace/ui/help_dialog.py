@@ -141,8 +141,10 @@ Pełna nazwa i stan pokazują się w podpowiedzi po najechaniu.</li>
     s.append(("7. Panel „Połączenie”", """
 <h2>Panel „Połączenie”</h2>
 """ + _img("zal06", 230) + _table([
-        ("IP", "Adres IPv4 sterownika, opcjonalnie z portem (<tt>127.0.0.1:1102</tt> – symulator). Pole blokuje niedozwolone znaki "
-         "podczas pisania; błędny adres jest obramowany na czerwono i blokuje Start. IPv6 i nazwy hostów nie są obsługiwane "
+        ("IP", "Adres IPv4 sterownika, opcjonalnie z portem (<tt>127.0.0.1:1102</tt> – symulator). Pole ma cztery niezależne "
+         "pola liczbowe z nieruchomymi kropkami (puste pola są dozwolone; Backspace i Delete kasują tylko cyfry, zaznaczenie + "
+         "Delete lub Spacja czyści cały adres). Lista rozwijana pokazuje historię adresów, z którymi się połączono "
+         "(najnowsze u góry, osobno dla każdego użytkownika Windows). Niepełny adres jest obramowany na czerwono i blokuje Start. IPv6 i nazwy hostów nie są obsługiwane "
          "(S7comm działa wyłącznie po IPv4)."),
         ("Rack / Slot", "Położenie CPU: S7-300/400 – 0 / 2 (w S7-400 slot zależy od konfiguracji), S7-1200/1500 – 0 / 1. "
          "Przycisk „?” otwiera podpowiedź."),

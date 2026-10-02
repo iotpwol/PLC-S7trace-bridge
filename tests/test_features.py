@@ -62,8 +62,7 @@ def test_ipv4_state(text, state):
 
 def test_ip_field_blocks_typing(app):
     tab = TraceTab(TabConfig(), lambda: [])
-    v = tab.ed_ip.validator()
-    assert isinstance(v, Ipv4Validator)
+    v = Ipv4Validator()
     assert v.validate("192.168.0.1", 0)[0] == QValidator.Acceptable
     assert v.validate("19x", 0)[0] == QValidator.Invalid
     tab.ed_ip.setText("10.1.1")

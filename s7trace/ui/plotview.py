@@ -432,7 +432,14 @@ class PlotView(QWidget):
         x0, x1 = self.region.getRegion()
         if x1 - x0 < MIN_WINDOW:
             return
+        r0, r1 = x0, x1
         x0, x1 = self.clamp_view(x0, x1)
+        if abs(x0 - r0) > 1e-9 or abs(x1 - r1) > 1e-9:         # the yellow window cannot leave the data either
+            self._busy = True
+            try:
+                self.region.setRegion((x0, x1))
+            finally:
+                self._busy = False
         self._x = (x0, x1)
         self.window = x1 - x0
         self.userMoved.emit()

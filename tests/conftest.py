@@ -1,5 +1,11 @@
-"""Shared test setup: no modal prompt may block a test run."""
+"""Shared test setup: no modal prompt may block a test run, no test writes into the real user profile."""
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _private_appdata(monkeypatch, tmp_path):
+    """The address history (and other per-user files) live in %APPDATA%\\S7Trace: tests get an empty private one."""
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
 
 
 @pytest.fixture(autouse=True)

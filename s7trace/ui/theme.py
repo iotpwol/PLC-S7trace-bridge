@@ -158,7 +158,7 @@ QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {{
 QLineEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled {{
     color: {_disabled(t['edit_text'])}; }}
 QComboBox {{ padding-left: 11px; }}                      /* optically level with the spin boxes */
-QLineEdit[invalid="true"] {{ border: 1px solid #e04040; }}
+QLineEdit[invalid="true"], QComboBox[invalid="true"] {{ border: 1px solid #e04040; }}
 QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QComboBox QAbstractItemView {{ font-weight: bold; }}    /* values are bold */
 QComboBox QAbstractItemView {{ background: {t['edit_bg']}; color: {t['edit_text']};
     selection-background-color: {t['accent']}; }}
