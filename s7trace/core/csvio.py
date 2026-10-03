@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 from datetime import datetime, timedelta
 
 import numpy as np
@@ -33,8 +34,10 @@ def write_csv(path: str, signals: list[Signal], t: np.ndarray, v: np.ndarray,
 class CsvRecorder:
     """Streaming writer for the REC button (flushes periodically)."""
 
-    def __init__(self, path: str, signals: list[Signal], start_wall: datetime | None = None):
+    def __init__(self, path: str, signals: list[Signal], start_wall: datetime | None = None, mode: str = "all"):
         self.start_wall = start_wall or datetime.now()
+        self.changes_only = mode == "changes"            # a row only when at least one value differs from the previous row
+        self._prev: list[float] | None = None
         self._f = open(path, "w", newline="", encoding="utf-8")
         self._f.write("# s7trace v1\n")
         for s in signals:
@@ -46,6 +49,11 @@ class CsvRecorder:
         self.path = path
 
     def write(self, t: float, values) -> None:
+        if self.changes_only:
+            cur = list(values[: self._k]) + [math.nan] * max(self._k - len(values), 0)
+            if self._prev is not None and all(a == b or (a != a and b != b) for a, b in zip(cur, self._prev)):
+                return
+            self._prev = cur
         ts = (self.start_wall + timedelta(seconds=t)).isoformat(timespec="milliseconds")
         self._w.writerow([f"{t:.4f}", ts] + ["" if x != x else f"{x:.10g}" for x in values[: self._k]]
                          + [""] * max(self._k - len(values), 0))

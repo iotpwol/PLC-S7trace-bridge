@@ -235,7 +235,19 @@ aby zmienić okno czasu.</li>
         ("Start", "Łączy ze sterownikiem i rozpoczyna zbieranie danych (wymaga poprawnego IP i co najmniej jednego pobieranego sygnału)."),
         ("Stop", "Kończy połączenie. Dane pozostają na wykresie."),
         ("Pauza / Wznów", "Wstrzymuje widok (zbieranie trwa) i wraca do trybu na żywo."),
-        ("● REC", "Ciągły zapis wszystkich próbek do pliku według ustawień panelu „Nagrywanie REC” (folder i nazwa, domyślnie "
+        ("● REC", "Ciągły zapis do pliku CSV albo do bazy danych według panelu „Nagrywanie REC”: „Zapis do” (plik CSV, SQLite, "
+         "InfluxDB 1.x / 2.x / 3.x, TimescaleDB; przycisk „...” obok to ustawienia bazy i test połączenia) oraz „Próbki” "
+         "(<b>tylko zmiany stanu</b> – domyślnie, albo każda próbka). Przy zapisie zmian wartość trafia do pliku / bazy tylko wtedy, "
+         "gdy różni się od poprzedniej (plus pierwsza wartość każdej zmiennej) – to kilkadziesiąt razy mniej danych przy zapisie "
+         "godzin i dni; wykres z takiego zapisu odtwarza się dokładnie (krzywa schodkowa). Bazy zapisują w osobnym wątku "
+         "(paczki co ok. 0,5 s, ponawianie przy zaniku serwera, w pasku statusu licznik zapisanych wpisów i błędy). "
+         "Odczyt: Plik → Import z bazy → wykres… (lista nagrań, opcjonalnie wybrany zakres czasu; bardzo długie nagrania są "
+         "zmniejszane do min/max z każdego przedziału; „Zapisz jako CSV…” eksportuje wszystkie wiersze). Wszystkie czasy zapisu "
+         "(pełny stan co N minut w trybie zmian – domyślnie 10, wysyłka paczek, ponawianie, limity czasu, bufor na dysku, rotacja "
+         "SQLite, limit punktów odczytu) ustawia się w „...” albo w menu Ustawienia → „Zapis nagrań w bazach danych…”, zakładka "
+         "„Czasy i bufory” – każdy parametr ma tam dokładny opis i wartość domyślną. Po naciśnięciu REC program w tle sprawdza "
+         "serwer; gdy nie odpowiada, od razu pokazuje przyczynę („Przerwij REC” albo kontynuuj – dane czekają w buforze na dysku i "
+         "są dosyłane po powrocie serwera). Dla plików CSV (folder i nazwa, domyślnie "
          "<tt>REC_{confname}_{ip}_{tab}_{date}_{time}.csv</tt> w folderze <tt>rec</tt>). Zapis trwa do wyłączenia przycisku lub Stop. "
          "Dodanie zmiennej w trakcie zapisu zaczyna nowy plik (z dodatkową kolumną). Podczas zapisu miga czerwona kropka, "
          "przy wyłączonym REC kropka ma kolor napisu."),

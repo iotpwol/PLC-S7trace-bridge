@@ -259,6 +259,7 @@ class IpCombo(QComboBox):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._edit = IpEdit(self)
+        self._before, self._picked_flag = "", True
         self.setEditable(True)
         self.setLineEdit(self._edit)
         self.setInsertPolicy(QComboBox.NoInsert)
@@ -290,24 +291,27 @@ class IpCombo(QComboBox):
         """Newest first; the list shows the spaced form, the plain address is kept as item data."""
         self.blockSignals(True)
         try:
-            self.clear_items()
+            QComboBox.clear(self)                          # (also blanks the edit box ...)
             for s in items:
                 self.addItem(s.replace(".", " . "), s)
             self.setCurrentIndex(-1)
         finally:
             self.blockSignals(False)
-
-    def clear_items(self) -> None:
-        keep = self._edit.text()
-        QComboBox.clear(self)
-        self._edit.setText(keep)
+        self._edit._render()                               # ... so the address that was typed is shown again
 
     def showPopup(self) -> None:
         from ..core import ip_history
+        self._before, self._picked_flag = self._edit.text(), False
         self.set_history(ip_history.load())
         super().showPopup()
 
+    def hidePopup(self) -> None:
+        super().hidePopup()
+        if not self._picked_flag and self._edit.text() != self._before:
+            self._edit.setText(self._before)               # nothing chosen: the field keeps what it had
+
     def _picked(self, index: int) -> None:
+        self._picked_flag = True
         addr = self.itemData(index)
         if addr:
             self._edit.setText(addr)

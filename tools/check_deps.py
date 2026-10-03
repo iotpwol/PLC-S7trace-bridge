@@ -23,16 +23,35 @@ def imports(path):
     return dlls, funcs
 
 
+def scan(folder):
+    """Names of the DLL / PYD files in `folder` (and its *.libs sibling) that need something missing on Server 2016."""
+    bad = []
+    for d in (folder, folder + ".libs"):
+        if not os.path.isdir(d):
+            continue
+        for dll in sorted(f for f in os.listdir(d) if f.lower().endswith((".dll", ".pyd"))):
+            dlls, funcs = imports(os.path.join(d, dll))
+            hit = (dlls & FORBIDDEN) | (funcs & FORBIDDEN_FUNCS)
+            if hit:
+                bad.append((dll, sorted(hit)))
+    return bad
+
+
 def main(root):
-    ps = os.path.join(root, "Lib", "site-packages", "PySide6")
-    bad = False
-    for dll in sorted(f for f in os.listdir(ps) if f.lower().endswith((".dll", ".pyd"))):
-        dlls, funcs = imports(os.path.join(ps, dll))
-        hit = (dlls & FORBIDDEN) | (funcs & FORBIDDEN_FUNCS)
-        if hit:
-            print(f"BLAD: {dll} wymaga {sorted(hit)}")
-            bad = True
+    site = os.path.join(root, "Lib", "site-packages")
+    bad = scan(os.path.join(site, "PySide6"))
+    for dll, hit in bad:
+        print(f"BLAD: {dll} wymaga {hit}")
     print("zaleznosci Qt OK (Server 2016 / Win10 1607)" if not bad else "Paczka nie ruszy na Windows Server 2016")
+    # PostgreSQL driver (TimescaleDB target): psycopg-binary brings libpq.dll. Not fatal - without it the program falls
+    # back to the pure-Python pg8000 (store._psycopg) - but the builder should know which driver Server 2016 will get.
+    pg = scan(os.path.join(site, "psycopg_binary"))
+    if pg:
+        for dll, hit in pg:
+            print(f"UWAGA: {dll} (psycopg) wymaga {hit} - na Server 2016 TimescaleDB pojdzie przez pg8000")
+    elif os.path.isdir(os.path.join(site, "psycopg_binary")):
+        print("psycopg-binary OK (Server 2016 / Win10 1607)")
+    print("pg8000 (zapas dla psycopg): " + ("jest" if os.path.isdir(os.path.join(site, "pg8000")) else "BRAK"))
     return 1 if bad else 0
 
 

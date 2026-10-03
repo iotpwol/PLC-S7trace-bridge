@@ -5,3 +5,5 @@ python-snap7>=3.0
 numpy>=1.26
 openpyxl>=3.1
 asyncua>=1.1
+psycopg[binary]>=3.1
+pg8000>=1.30   # fallback driver when psycopg cannot be imported

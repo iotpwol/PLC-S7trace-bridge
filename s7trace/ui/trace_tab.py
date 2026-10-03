@@ -1,9 +1,11 @@
 """One connection tab: settings panel, plot, buttons, trigger handling."""
 from __future__ import annotations
 
+import dataclasses
 import html
 import os
 import re
+import threading
 import time
 from collections import deque
 from datetime import datetime, timedelta
@@ -11,8 +13,8 @@ from datetime import datetime, timedelta
 from PySide6.QtCore import QTimer, Qt, Signal as QtSignal
 from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
-                               QGroupBox, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMessageBox,
-                               QPushButton, QScrollArea, QSpinBox, QSplitter, QVBoxLayout, QWidget)
+                               QGroupBox, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMenu, QMessageBox,
+                               QPushButton, QScrollArea, QSizePolicy, QSpinBox, QSplitter, QVBoxLayout, QWidget)
 
 from ..core import trigger as trg
 from ..core.trigger import DEFAULT_REC_NAME
@@ -32,6 +34,9 @@ from .duration_combo import DurationCombo
 from .plotview import PlotView
 from .signals_dialog import SignalsDialog
 from ..core import ip_history, sessions
+from ..core.store import KIND_LABEL, KINDS, MODE_LABEL, DbRecorder, StoreConfig, test_connection
+from ..core.store import MODES as STORE_MODES            # (planner.MODES = communication modes)
+from .fold_splitter import FoldSplitter
 from .ip_edit import IpCombo
 
 RACK_SLOT_HELP = (
@@ -106,6 +111,8 @@ class TraceTab(QWidget):
     titleChanged = QtSignal(str)
     _stateRaw = QtSignal(str, str)     # from worker thread
     layoutChanged = QtSignal()         # splitters / legend moved -> main window syncs the other tabs
+    legendHideRequested = QtSignal()   # 'Ukryj legendę' in the legend's context menu (the setting is shared by all tabs)
+    _dbProbe = QtSignal(str, str)      # (recording id, cause or "") - result of the connection test run when REC starts
     _infoRaw = QtSignal(object)        # device data from the acquisition process (worker thread)
 
     def __init__(self, cfg: TabConfig, symbols: callable, ui_state: dict | None = None,
@@ -142,6 +149,8 @@ class TraceTab(QWidget):
         self._load_cfg()
         self._stateRaw.connect(self._on_state)
         self._infoRaw.connect(self._on_info)
+        self._dbProbe.connect(self._on_db_probe)
+        self._probe_box = None
         self.ed_ip.textChanged.connect(self._ip_changed_device)
         self.timer = QTimer(self)
         self.timer.setInterval(33)
@@ -175,7 +184,7 @@ class TraceTab(QWidget):
 
         f = group("Połączenie")
         self.ed_ip = IpCombo()                      # 4 cells with fixed dots + history list; text() is the plain address
-        self.ed_ip.setPlaceholderText("np. 192.168.0.1")
+        self.ed_ip.setPlaceholderText("192 . 168 . 0 . 1")
         self.ed_ip.setToolTip("Adres IPv4 sterownika (opcjonalnie :port). IPv6 i nazwy hostów nie są obsługiwane.")
         self.ed_ip.textChanged.connect(self._ip_check)
         self.sp_rack = _spin(0, 7, 0)
@@ -265,14 +274,34 @@ class TraceTab(QWidget):
 
         f = group("Nagrywanie REC")
         self.ed_rfolder = QLineEdit()
-        btn_rfolder = QPushButton("...")
-        btn_rfolder.clicked.connect(self._pick_rec_folder)
+        self.btn_rfolder = QPushButton("...")
+        self.btn_rfolder.clicked.connect(self._pick_rec_folder)
         rr = QHBoxLayout()
         rr.addWidget(self.ed_rfolder)
-        rr.addWidget(btn_rfolder)
+        rr.addWidget(self.btn_rfolder)
+        self.cb_rkind = QComboBox()                      # where REC writes: CSV file or a database
+        for k in KINDS:
+            self.cb_rkind.addItem(KIND_LABEL[k], k)
+        self.cb_rmode = QComboBox()                      # every sample or only the changes of state (default)
+        for m in STORE_MODES:
+            self.cb_rmode.addItem(MODE_LABEL[m], m)
+        for cb in (self.cb_rkind, self.cb_rmode):
+            cb.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+            cb.setMinimumContentsLength(6)
+            cb.setMinimumWidth(70)
+        self.btn_rdb = QPushButton("...")
+        self.btn_rdb.setToolTip("Ustawienia bazy danych (adres, baza, użytkownik / token, test połączenia)")
+        self.btn_rdb.clicked.connect(self.edit_store)
+        rk = QHBoxLayout()
+        rk.addWidget(self.cb_rkind)
+        rk.addWidget(self.btn_rdb)
+        self.cb_rkind.currentIndexChanged.connect(self._rkind_changed)
+        self.cb_rmode.currentIndexChanged.connect(self._rkind_changed)
         self.ed_rname = QLineEdit()
         self.ed_rname.setToolTip(PLACEHOLDERS_HELP)
         self.ed_tname.setToolTip(PLACEHOLDERS_HELP)
+        f.addRow("Zapis do:", rk)
+        f.addRow("Próbki:", self.cb_rmode)
         f.addRow("Folder:", rr)
         f.addRow("Nazwa pliku:", self.ed_rname)
         lv.addStretch()
@@ -317,11 +346,11 @@ class TraceTab(QWidget):
         self.lbl_status = QLabel()
         self.lbl_status.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.lbl_status.setTextFormat(Qt.RichText)
+        self.lbl_status.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)   # a long text must never widen the window
+        self.lbl_status.setMinimumWidth(0)
         right.addWidget(self.lbl_status)
 
-        self.split_h = QSplitter(Qt.Horizontal)         # drag the bar to resize the settings panel
-        self.split_h.setChildrenCollapsible(False)
-        self.split_h.setHandleWidth(6)
+        self.split_h = FoldSplitter(Qt.Horizontal, 0, 290)   # drag the bar to resize; button / double click folds the panel
         self.split_h.addWidget(scroll)
         self.split_h.addWidget(right_w)
         self.split_h.setStretchFactor(0, 0)
@@ -329,9 +358,11 @@ class TraceTab(QWidget):
         self.split_h.setSizes([290, 1000])
         root.addWidget(self.split_h)
         self.split_h.splitterMoved.connect(self._layout_moved)
+        self.split_h.foldChanged.connect(self._layout_moved)
         self.plot.splitChanged.connect(self._layout_moved)
         self.plot.legendMoved.connect(self._legend_moved)
         self.plot.legendDoubleClicked.connect(self.edit_signals)
+        self.plot.legendContextMenu.connect(self._legend_menu)
         self.cb_ylayout.currentIndexChanged.connect(self._on_ylayout)
 
         for b, role in ((self.btn_start, "start"), (self.btn_stop, "stop"), (self.btn_pause, "pause"),
@@ -398,9 +429,28 @@ class TraceTab(QWidget):
 
     def _layout_moved(self, *_) -> None:
         self._want_left = None                                       # the user's own drag wins over a pending restore
-        self.ui_state["left_width"] = self.split_h.sizes()[0]
-        self.ui_state["overview_h"] = self.plot.overview_height()
+        self.ui_state["left_collapsed"] = self.split_h.collapsed
+        self.ui_state["overview_collapsed"] = self.plot.split.collapsed
+        # a folded pane keeps the size it had when it was last visible
+        self.ui_state["left_width"] = self.split_h.saved if self.split_h.collapsed else self.split_h.sizes()[0]
+        self.ui_state["overview_h"] = (self.plot.split.saved if self.plot.split.collapsed
+                                       else self.plot.overview_height())
         self.layoutChanged.emit()
+
+    def _legend_menu(self, pos) -> None:
+        self._build_legend_menu().exec(pos)
+
+    def _build_legend_menu(self) -> QMenu:
+        """Right click on the legend: signals window, corner of this tab's legend, hide the legend."""
+        m = QMenu(self)
+        m.addAction("Sygnały…", lambda: self.edit_signals())
+        corners = m.addMenu("Położenie legendy (ta karta)")
+        for label, p in (("Lewy górny róg", (0, 0)), ("Prawy górny róg", (1, 0)),
+                         ("Lewy dolny róg", (0, 1)), ("Prawy dolny róg", (1, 1))):
+            corners.addAction(label, lambda p=p: self.set_legend_pos(*p))
+        m.addSeparator()
+        m.addAction("Ukryj legendę", lambda: self.legendHideRequested.emit())
+        return m
 
     def _legend_moved(self, fx: float, fy: float) -> None:
         self.cfg.legend_pos = [round(fx, 4), round(fy, 4)]          # per tab (saved in the tab's configuration)
@@ -414,17 +464,23 @@ class TraceTab(QWidget):
         st = self.ui_state
         if isinstance(st.get("left_width"), int):
             self._want_left = st["left_width"]
+            self.split_h.saved = st["left_width"]
         if isinstance(st.get("overview_h"), int):
             self.plot.set_overview_height(st["overview_h"])
+        if st.get("left_collapsed"):
+            self._want_left = None
+        else:
+            self.split_h.set_collapsed(False)
+        self.split_h.set_collapsed(bool(st.get("left_collapsed", False)))
+        self.plot.set_overview_collapsed(bool(st.get("overview_collapsed", False)))
         self._fit_layout()
 
     def _fit_layout(self) -> None:
         total = self.width()
         if self._want_left and total > 400:
             w = max(200, min(self._want_left, total - 300))
-            self.split_h.blockSignals(True)
-            self.split_h.setSizes([w, total - w])
-            self.split_h.blockSignals(False)
+            if not self.split_h.collapsed:
+                self.split_h.set_sizes_for(w)
             if w == self._want_left:                      # the window was still too small (not laid out yet): try again
                 self._want_left = None
 
@@ -514,6 +570,9 @@ class TraceTab(QWidget):
         self._on_auto_y(c.auto_y)
         self.ed_rfolder.setText(c.rec_folder)
         self.ed_rname.setText(c.rec_filename)
+        self.cb_rkind.setCurrentIndex(max(self.cb_rkind.findData(c.store.kind), 0))
+        self.cb_rmode.setCurrentIndex(max(self.cb_rmode.findData(c.store.mode), 0))
+        self._rkind_changed()
         self.plot.set_legend_pos(float(c.legend_pos[0]), float(c.legend_pos[1]))
         self._loading = False
         self._trigger_changed()
@@ -530,6 +589,7 @@ class TraceTab(QWidget):
         c.show_points = self.btn_pts.isChecked()
         c.y_layout = self.cb_ylayout.currentData()
         c.rec_folder, c.rec_filename = self.ed_rfolder.text().strip(), self.ed_rname.text().strip()
+        c.store.kind, c.store.mode = self.cb_rkind.currentData(), self.cb_rmode.currentData()
         t = c.trigger
         t.enabled = self.chk_trig.isChecked()
         t.signal = self.cb_tsig.currentText()
@@ -943,9 +1003,12 @@ class TraceTab(QWidget):
             self.lbl_status.setText(
                 f"PLC comm lag Avg: <b>{st.avg_lag:.1f} ms</b> (n=<b>{st.n}</b>), Last: <b>{st.last_lag:.1f} ms</b> | "
                 f"GUI lag: <b>{st.gui_lag_ms:.1f} ms</b>  Missed: <b>{st.missed} ({st.missed_pct:.1f}%)</b>"
-                f"{self._ping_text()}  <b>{html.escape(self.status_msg)}</b>")
+                f"{self._ping_text()}{self._rec_status()}  <b>{html.escape(self.status_msg)}</b>")
         else:
             self.lbl_status.setText(f"<b>{html.escape(self.status_msg)}</b>")
+        tip = html.unescape(re.sub(r"<[^>]+>", "", self.lbl_status.text()))
+        if tip != self.lbl_status.toolTip():
+            self.lbl_status.setToolTip(tip)                          # the full text when it does not fit
 
     # ================================================================ IO
     def _abs_folder(self, folder: str | None = None) -> str:
@@ -1027,6 +1090,9 @@ class TraceTab(QWidget):
         except Exception as e:
             QMessageBox.warning(self, "S7Trace", f"Import nie powiódł się: {e}")
             return
+        self._show_loaded(sigs, t, v, f"Zaimportowano {len(t)} próbek z {os.path.basename(path)}")
+
+    def _show_loaded(self, sigs, t, v, message: str) -> None:
         self.cfg.signals = sigs
         self._run_signals = [Signal.from_dict(s.to_dict()) for s in sigs]
         self.buffer.load(t, v)
@@ -1035,8 +1101,24 @@ class TraceTab(QWidget):
         self.plot.set_follow(False)
         self.plot.fit_all()
         self._on_zoomed(self.plot.window)
-        self.status_msg = f"Zaimportowano {len(t)} próbek z {os.path.basename(path)}"
+        self.status_msg = message
         self._update_status()
+
+    def import_db(self):
+        """Plik → Import z bazy → wykres…: a recording (or a time range of it) from SQLite / InfluxDB / TimescaleDB."""
+        if self.state != "stopped":
+            return
+        from dataclasses import replace
+        from .store_dialog import StoreImportDialog
+        d = StoreImportDialog(self.cfg.store, self)
+        if not d.exec() or d.result is None:
+            return
+        meta, t_us, v, used = d.result
+        self.cfg.store = replace(used, kind=self.cfg.store.kind, mode=self.cfg.store.mode)   # keep the connection settings
+        sigs = [Signal.from_dict(s) for s in meta["signals"]]
+        self.start_wall = datetime.fromtimestamp(float(t_us[0]) / 1e6)
+        t = (t_us - t_us[0]) / 1e6
+        self._show_loaded(sigs, t, v, f"Wczytano {len(t)} próbek z bazy ({meta.get('tab') or meta['id']}){d.note}")
 
     def edit_signals(self):
         locked = self.state != "stopped"
@@ -1096,16 +1178,90 @@ class TraceTab(QWidget):
         elif not on:
             self._close_recorder()
 
+    def _rkind_changed(self, *_) -> None:
+        """CSV uses the folder / file name fields, databases use their own settings (button next to the list)."""
+        csv_ = self.cb_rkind.currentData() == "csv"
+        for w in (self.ed_rfolder, self.ed_rname, self.btn_rfolder):
+            w.setEnabled(csv_)
+        self.btn_rdb.setEnabled(not csv_)
+        if not self._loading:
+            self._collect()
+
+    def edit_store(self, pick: bool = False) -> None:
+        """Settings of the REC database. `pick` (menu Ustawienia): when the tab records to CSV, ask which database."""
+        from .store_dialog import StoreDialog
+        kind = self.cb_rkind.currentData()
+        if kind == "csv":
+            if not pick:
+                return
+            labels = [KIND_LABEL[k] for k in KINDS if k != "csv"]
+            label, ok = QInputDialog.getItem(self, "Zapis nagrań w bazie", "Baza danych:", labels, 0, False)
+            if not ok:
+                return
+            kind = next(k for k in KINDS if k != "csv" and KIND_LABEL[k] == label)
+            self.cb_rkind.setCurrentIndex(self.cb_rkind.findData(kind))        # the tab records there from now on
+        d = StoreDialog(self.cfg.store, kind, self)
+        if d.exec():
+            self.cfg.store = d.config()
+
+    def _rec_status(self) -> str:
+        r = self.recorder
+        return f" | REC: <b>{html.escape(r.status())}</b>" if isinstance(r, DbRecorder) else ""
+
     def _open_recorder(self):
         try:
             c = self._collect()
-            path = self._file_name(c.rec_filename or DEFAULT_REC_NAME, "REC", c.rec_folder or "rec")
-            self.recorder = CsvRecorder(path, self._run_signals, self.start_wall)
+            if c.store.kind == "csv":
+                path = self._file_name(c.rec_filename or DEFAULT_REC_NAME, "REC", c.rec_folder or "rec")
+                self.recorder = CsvRecorder(path, self._run_signals, self.start_wall, c.store.mode)
+            else:
+                self.recorder = DbRecorder(
+                    c.store, self._run_signals, self.start_wall,
+                    {"name": self.title(), "ip": c.ip, "tab": self.title(), "conf": c.conf_name}, base_dir=data_dir())
+                path = self.recorder.path
+                if c.store.kind in StoreConfig.NETWORK:
+                    self._probe_db(c.store, self.recorder.session)
             self.status_msg = f"REC → {path}"
         except Exception as e:
             self.recorder = None
             self.btn_rec.setChecked(False)
             QMessageBox.warning(self, "S7Trace", f"Nie można rozpocząć nagrywania: {e}")
+
+    def _probe_db(self, cfg: StoreConfig, session: str) -> None:
+        """Checks the server in the background (the REC press must not freeze the window). Recording runs meanwhile:
+        the data wait in the queue / disk buffer. A failure is reported at once, with its cause."""
+        cfg = dataclasses.replace(cfg)
+        folder = data_dir()
+
+        def run():
+            try:
+                test_connection(cfg, folder, cfg.test_timeout_s)
+                err = ""
+            except Exception as e:
+                err = str(e) or type(e).__name__
+            try:
+                self._dbProbe.emit(session, err)
+            except RuntimeError:                                  # the tab is gone
+                pass
+
+        threading.Thread(target=run, daemon=True, name="StoreProbe").start()
+
+    def _on_db_probe(self, session: str, err: str) -> None:
+        r = self.recorder
+        if not err or not isinstance(r, DbRecorder) or r.session != session:
+            return
+        where = "w buforze na dysku" if r.spool is not None else "w kolejce w pamięci"
+        box = QMessageBox(QMessageBox.Warning, "S7Trace – REC",
+                          f"Baza danych nie odpowiada:\n{err}\n\nNagrywanie trwa – dane czekają {where} i zostaną wysłane, "
+                          "gdy serwer wróci (próby są ponawiane). Możesz też przerwać REC i poprawić ustawienia bazy "
+                          "(przycisk „...” przy REC lub menu Ustawienia).", QMessageBox.NoButton, self)
+        box.addButton("Kontynuuj REC", QMessageBox.AcceptRole)
+        stop = box.addButton("Przerwij REC", QMessageBox.RejectRole)
+        box.setModal(False)                                       # the acquisition and the chart go on behind it
+        box.buttonClicked.connect(lambda b: self.btn_rec.setChecked(False) if b is stop else None)
+        self._probe_box = box
+        self.status_msg = f"REC: brak połączenia z bazą – {err}"
+        box.show()
 
     def _close_recorder(self):
         if self.recorder:

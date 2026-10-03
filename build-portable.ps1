@@ -75,6 +75,11 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host '   (pominieto check_deps: pip install pefile)'
 }
 
+# TimescaleDB: sterownik PostgreSQL ma sie dac zaimportowac w paczce (psycopg z libpq; zapas: pg8000)
+$pgCode = 'try:' + [char]10 + ' import psycopg; print("psycopg", psycopg.__version__)' + [char]10 + 'except Exception as e:' + [char]10 + ' print("psycopg NIE dziala (" + str(e)[:60] + ") - zostaje pg8000")'
+$pgOut = & "$Out\python\python.exe" -c $pgCode 2>&1
+Write-Host "   Sterownik PostgreSQL w paczce: $pgOut"
+
 Write-Host '== 5/6 Aplikacja i skrypty startowe'
 Copy-Item main.py "$Out\app\main.py"
 Copy-Item s7trace "$Out\app\s7trace" -Recurse

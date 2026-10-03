@@ -11,6 +11,7 @@ from PySide6.QtGui import QColor, QPen
 from PySide6.QtWidgets import QLabel, QSplitter, QVBoxLayout, QWidget
 
 from ..core import render
+from .fold_splitter import FoldSplitter
 from ..core.buffer import TraceBuffer
 from ..core.types import Signal
 
@@ -94,6 +95,7 @@ class PlotView(QWidget):
     userMoved = QtSignal()             # user panned/zoomed (tab pauses the live view)
     legendMoved = QtSignal(float, float)    # legend dropped at (fx, fy)
     legendDoubleClicked = QtSignal()        # -> the 'Sygnały…' window
+    legendContextMenu = QtSignal(object)    # right click on the legend (global QPoint) -> the tab shows the menu
     splitChanged = QtSignal(int)       # height of the overview strip changed (pixels)
 
     def __init__(self, buffer: TraceBuffer, parent=None):
@@ -129,15 +131,14 @@ class PlotView(QWidget):
         self.glw = pg.GraphicsLayoutWidget()          # main chart
         self.glw_ov = pg.GraphicsLayoutWidget()       # overview strip (own widget -> draggable splitter)
         self.glw_ov.setMinimumHeight(48)
-        self.split = QSplitter(Qt.Vertical)
-        self.split.setChildrenCollapsible(False)
-        self.split.setHandleWidth(6)
+        self.split = FoldSplitter(Qt.Vertical, 1, 100)       # button / double click on the bar folds the overview down
         self.split.addWidget(self.glw)
         self.split.addWidget(self.glw_ov)
         self.split.setStretchFactor(0, 1)
         self.split.setStretchFactor(1, 0)
         self.split.setSizes([10000, 100])
         self.split.splitterMoved.connect(lambda *_: self.splitChanged.emit(self.overview_height()))
+        self.split.foldChanged.connect(lambda *_: self.splitChanged.emit(self.overview_height()))
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self.split)
@@ -222,12 +223,19 @@ class PlotView(QWidget):
         return self.split.sizes()[1]
 
     def set_overview_height(self, px: int) -> None:
+        self.split.saved = int(px)
+        if self.split.collapsed:                          # remembered; used when the strip is shown again
+            return
         self._ov_want = int(px)
         self._fit_overview()
 
+    def set_overview_collapsed(self, on: bool) -> None:
+        self._ov_want = None
+        self.split.set_collapsed(on)
+
     def _fit_overview(self) -> None:
         total = self.height()
-        if self._ov_want is None or total < 200:          # not laid out yet -> apply on the first resize
+        if self.split.collapsed or self._ov_want is None or total < 200:          # not laid out yet -> apply on the first resize
             return
         px = max(48, min(self._ov_want, total - 100))
         self.split.blockSignals(True)
@@ -447,6 +455,11 @@ class PlotView(QWidget):
         self._dirty = True
 
     def _on_click(self, ev):
+        if (ev.button() == Qt.RightButton and self.legend.isVisible()
+                and self.legend.sceneBoundingRect().contains(ev.scenePos())):
+            ev.accept()
+            self.legendContextMenu.emit(ev.screenPos().toPoint())
+            return
         if ev.button() != Qt.LeftButton or ev.double() or ev.isAccepted():
             return
         if not (self.v_mode or self.h_mode):

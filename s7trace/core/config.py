@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass, field
 
 from .drivers import conn_defaults
 from .planner import MODE_BLOCKS
+from .store import StoreConfig
 from .trigger import DEFAULT_REC_NAME, OLD_SNAPSHOT_NAME, DEFAULT_SNAPSHOT_NAME, TriggerConfig
 from .types import Signal
 
@@ -66,12 +67,14 @@ class TabConfig:
     legend_pos: list = field(default_factory=lambda: [0.0, 0.0])    # per tab: (0,0) top-left ... (1,1) bottom-right
     rec_folder: str = "rec"        # REC recordings
     rec_filename: str = DEFAULT_REC_NAME
+    store: StoreConfig = field(default_factory=StoreConfig)    # REC target (CSV / SQLite / InfluxDB / TimescaleDB) + mode
     signals: list[Signal] = field(default_factory=lambda: [Signal(name="SIG1")])
     trigger: TriggerConfig = field(default_factory=TriggerConfig)
 
     def to_dict(self) -> dict:
         d = asdict(self)
         d["signals"] = [s.to_dict() for s in self.signals]
+        d["store"] = self.store.to_dict()                    # passwords / tokens only when "remember" is ticked
         if not self.conn.get("remember_password"):
             d["conn"] = {**self.conn, "password": ""}      # the password is stored only when asked for
         return d
@@ -88,6 +91,7 @@ class TabConfig:
                 setattr(c, k, d[k])
         if d.get("signals"):
             c.signals = [Signal.from_dict(s) for s in d["signals"]]
+        c.store = StoreConfig.from_dict(d.get("store"))
         if isinstance(d.get("trigger"), dict):
             known = {k: v for k, v in d["trigger"].items() if k in TriggerConfig.__dataclass_fields__}
             c.trigger = TriggerConfig(**known)

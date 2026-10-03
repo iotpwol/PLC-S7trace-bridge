@@ -54,7 +54,28 @@ Typy: BOOL, BYTE, SINT, USINT, WORD, INT, UINT, DWORD, DINT, UDINT, REAL, LREAL.
   Nazwa pliku (domyślnie `snapshot_{confname}_{ip}_{tab}_{date}_{time}.csv`): `{confname}`, `{ip}`, `{tab}`, `{date}`, `{time}`.
   Ścieżka względna (domyślnie `snapshots`, `rec`) oznacza folder w `Dokumenty\S7Trace` bieżącego użytkownika Windows,
   więc przy wielu kontach każdy ma własne pliki.
-* REC: ciągły zapis wszystkich próbek; folder (domyślnie `rec`) i nazwa pliku (domyślnie
+* REC – pełny opis baz danych, trybów, czasów i buforów: [BAZY_DANYCH.md](BAZY_DANYCH.md).
+* REC: cel zapisu (panel „Nagrywanie REC”): plik CSV, SQLite, InfluxDB 1.x / 2.x / 3.x (HTTP, line protocol) lub TimescaleDB
+  (PostgreSQL, `psycopg`); próbki: **tylko zmiany stanu** (domyślnie) albo każda próbka. Zapis do bazy idzie w osobnym wątku
+  (paczki, ponawianie, ograniczona kolejka). Odczyt: Plik → Import z bazy → wykres… (lista nagrań + zakres czasu).
+  SQLite: tabele `sessions` / `samples` (jeden plik, wiele nagrań); Influx: pomiar `<nazwa>` + `<nazwa>_sessions`; Timescale: hypertable
+  `<tabela>` + `<tabela>_sessions`, kompresja po 7 dniach. Influx nie ma wartości NaN, więc niedostępność sygnału zapisywana jest
+  w osobnym polu `<sygnał>__ok` (0/1, tylko przy zmianie) i odczyt odtwarza z niej przerwę w krzywej.
+  **Ustawienia bazy** (przycisk „...” obok „Zapis do” albo Ustawienia → „Zapis nagrań w bazach danych…”) mają zakładkę
+  „Czasy i bufory” z opisem każdego parametru czasowego (wartości domyślne w nawiasach):
+  pełny stan co N min w trybie zmian (10; to „klatka kluczowa” – punkt startu dla odczytu zakresu i sygnał, że zapis żyje; 0 = wyłączony),
+  wysyłka paczek co (0,5 s), najdłuższa przerwa między ponowieniami (15 s), limit testu połączenia po naciśnięciu REC (3 s),
+  limit odpowiedzi serwera (15 s), dosyłanie po Stop (10 s), kolejka w pamięci (300 000 wpisów),
+  bufor na dysku (500 MB; 0 = wyłączony), SQLite: nowy plik po przekroczeniu rozmiaru (0 = nigdy) lub każdego dnia,
+  odczyt: maks. punktów na sygnał (200 000).
+  Po naciśnięciu REC program sprawdza serwer w tle: gdy nie odpowiada, od razu pokazuje przyczynę (przycisk „Przerwij REC”),
+  a nagrywanie trwa – dane czekają w buforze na dysku (`Dokumenty\S7Trace\spool`, z komunikatem „na dysku N” w pasku statusu)
+  i są dosyłane po powrocie serwera, także po ponownym uruchomieniu programu.
+  Odczyt bardzo długich nagrań zmniejsza liczbę punktów (min/max z każdego przedziału, szpilki nie znikają); okno importu ma
+  też „Zapisz jako CSV…” (wybrane nagranie lub zakres, wszystkie wiersze) i widzi pliki SQLite rotowane po dacie / rozmiarze.
+  TimescaleDB: sterownik `psycopg`; gdy się nie załaduje (np. Windows Server 2016), program używa czystego Pythona `pg8000`
+  (build-portable.ps1 sprawdza, który działa w paczce).
+* REC (CSV): ciągły zapis; folder (domyślnie `rec`) i nazwa pliku (domyślnie
   `REC_{confname}_{ip}_{tab}_{date}_{time}.csv`) ustawia się w panelu po lewej pod blokiem Trigger.
 * Punkty: znaczniki próbek. V / H znacznik: kliknięcie na wykresie stawia kursor (max 2), odczyt wartości i Δ.
 * CSV: `Eksport okna → CSV`, `Import CSV → wykres` (CSV zapisuje definicje sygnałów w komentarzach `# signal:`).
@@ -84,6 +105,10 @@ Typy: BOOL, BYTE, SINT, USINT, WORD, INT, UINT, DWORD, DINT, UDINT, REAL, LREAL.
 * Układ osi Y (panel Zakres okna wykresu): „Pasma wg Share” (domyślnie) – każdy sygnał ma własne pasmo, wysokość proporcjonalna do kolumny Share,
   skalowanie do MIN…MAX widocznego okna, oś pokazuje wartości MIN / pośrednie / MAX; „Offset + Gain” – wspólna skala jak dawniej.
   Najwęższe okno czasu to 0,1 s (kółko myszy dalej nie powiększa).
+* Zwijanie paneli: panel ustawień po lewej chowa się do lewej, wykres przeglądowy na dole chowa się w dół — małym przyciskiem
+  ze strzałką na belce rozdzielającej albo dwukrotnym kliknięciem tej belki (stan jest wspólny dla kart i zapamiętany).
+* Prawy przycisk na legendzie: Sygnały…, położenie legendy (ta karta), Ukryj legendę.
+* Ikona programu i nazwa „S7Trace” na pasku zadań Windows (własny identyfikator aplikacji zamiast „Python”).
 * Aktywne sesje programu (Ustawienia → Aktywne sesje programu…): kto ma program otwarty na tym komputerze i które karty skanują
   sterowniki. Każde okno programu zapisuje co 2 s mały plik w `%ProgramData%\S7Trace\sessions` (albo `C:\Users\Public\S7Trace\sessions`);
   nieodświeżany wpis (zamknięty / zawieszony program) znika po ok. 10 s. Start na już skanowany sterownik tylko ostrzega. Zasięg: ten komputer.
