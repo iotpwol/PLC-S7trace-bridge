@@ -311,11 +311,30 @@ przekazania danych do Excela lub innych narzędzi.
   (protokół v1/v2/v3, linie protokołu, zapytania) i atrapie `psycopg`. Pierwsze uruchomienie na prawdziwym serwerze może
   ujawnić różnice w składni zapytań – zwłaszcza zapytania „stan sprzed zakresu” w InfluxDB oraz hypertable/kompresja w
   TimescaleDB.
-* **`psycopg` / `pg8000` na Windows Server 2016** nie były testowane – trzeba wypróbować zbudowaną paczkę (build podaje, który
-  sterownik działa w paczce).
+* **`psycopg` / `pg8000` na Windows Server 2016** nie były testowane na tym systemie – uruchom `Test-TimescaleDB.bat` z paczki (p. 11a).
+  Na zwykłym PostgreSQL 16 (Windows) oba sterowniki przeszły pełny cykl; prawdziwego TimescaleDB (hypertable, kompresja) nie było.
 * Pole `__ok` w InfluxDB zapisuje tylko zmiany dostępności; gdy ktoś ręcznie usunie je z bazy, odczyt pokaże ostatnią wartość
   zamiast przerwy.
 * Wartości są liczbami zmiennoprzecinkowymi: 64-bitowe liczby całkowite powyżej 2^53 tracą dokładność.
+
+---
+
+## 11a. Test TimescaleDB / PostgreSQL na docelowym komputerze (np. Windows Server 2016)
+
+W paczce przenośnej jest **`Test-TimescaleDB.bat`** (skrypt `app\diagnoza_timescale.py`, źródło: `tools/diagnoza_timescale.py`).
+Pyta o adres serwera, port, bazę, użytkownika, hasło i `sslmode`, a potem – **osobno dla `psycopg` i dla `pg8000`** – wykonuje:
+
+1. środowisko (wersja Windows, Python, proxy), 2. import obu sterowników (wersje, libpq, błędy ładowania DLL),
+3. DNS i połączenie TCP, 4. logowanie, wersję serwera, uprawnienia, rozszerzenie `timescaledb`,
+5. pełny cykl przez kod programu: zapis nagrania (`DbRecorder`: zmiany, NaN, klatki kluczowe), odczyt całości i porównanie z zapisanym,
+   odczyt zakresu czasu ze stanem sprzed zakresu, hypertable i kompresja, przepustowość zapisu, bufor na dysku przy zaniku serwera
+   i dosyłanie po powrocie, 6. sprzątanie (tabele testowe `s7trace_selftest_…` są usuwane; `--keep` je zostawia).
+
+Wynik: **`diagnoza_timescale.txt`** i `.json` obok `S7Trace.bat` – z czasami kroków, pełnym opisem i tracebackiem każdego błędu oraz
+wskazówką (np. zły `pg_hba.conf`, DNS, SSL, brak uprawnień). **Hasło nie trafia do raportu.** Plik `.txt` wysyła się deweloperowi.
+Z linii poleceń: `python diagnoza_timescale.py --host … --port … --db … --user … [--sslmode …] [--drivers pg8000] [--keep]`.
+Kod wyjścia 0 = wszystko OK. Test sprawdzony na prawdziwym PostgreSQL 16.2 (Windows) z obydwoma sterownikami; **rozszerzenia
+`timescaledb` tam nie było**, więc hypertable i kompresja nie były jeszcze sprawdzone na prawdziwym TimescaleDB.
 
 ---
 

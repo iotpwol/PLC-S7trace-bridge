@@ -86,6 +86,7 @@ Copy-Item s7trace "$Out\app\s7trace" -Recurse
 Get-ChildItem "$Out\app" -Recurse -Directory -Filter '__pycache__' | Remove-Item -Recurse -Force
 Copy-Item README.md "$Out\app\README.md"
 Copy-Item tools\diagnoza.py "$Out\app\diagnoza.py"
+Copy-Item tools\diagnoza_timescale.py "$Out\app\diagnoza_timescale.py"
 Copy-Item portable\* $Out
 
 Write-Host '== 6/6 Kompilacja .pyc (szybszy pierwszy start)'
