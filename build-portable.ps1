@@ -76,9 +76,9 @@ if ($LASTEXITCODE -eq 0) {
 }
 
 # TimescaleDB: sterownik PostgreSQL ma sie dac zaimportowac w paczce (psycopg z libpq; zapas: pg8000)
-$pgCode = 'try:' + [char]10 + ' import psycopg; print("psycopg", psycopg.__version__)' + [char]10 + 'except Exception as e:' + [char]10 + ' print("psycopg NIE dziala (" + str(e)[:60] + ") - zostaje pg8000")'
-$pgOut = & "$Out\python\python.exe" -c $pgCode 2>&1
-Write-Host "   Sterownik PostgreSQL w paczce: $pgOut"
+$pgOk = $true
+try { & "$Out\python\python.exe" -c 'import psycopg' 2>$null; if ($LASTEXITCODE -ne 0) { $pgOk = $false } } catch { $pgOk = $false }
+if ($pgOk) { Write-Host '   Sterownik PostgreSQL w paczce: psycopg (pelny)' } else { Write-Host '   Sterownik PostgreSQL w paczce: psycopg sie nie laduje - zostaje pg8000 (zapas)' }
 
 Write-Host '== 5/6 Aplikacja i skrypty startowe'
 Copy-Item main.py "$Out\app\main.py"
