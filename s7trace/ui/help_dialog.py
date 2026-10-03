@@ -285,7 +285,7 @@ aby zmienić okno czasu.</li>
 """ + _img("zal15", 640) + _table([
         ("PLC comm lag Avg", "Średni czas odczytu ze sterownika [ms] z ostatnich 50 cykli (n = liczba próbek w średniej)."),
         ("Last", "Czas ostatniego odczytu [ms]."),
-        ("GUI lag", "Czas rysowania wykresu [ms] – gdy jest duży, ogranicz okno czasu lub liczbę sygnałów."),
+        ("GUI lag", "Czas rysowania wykresu [ms] – gdy jest duży, ogranicz okno czasu lub liczbę sygnałów albo zmniejsz odświeżanie w Ustawienia → Renderowanie wykresu."),
         ("Missed", "Liczba cykli pominiętych, bo odczyt trwał dłużej niż ustawiony okres, i ich odsetek."),
         ("Komunikat", "Bieżący stan: łączenie, utrata połączenia, ścieżka pliku REC / triggera, wynik eksportu."),
     ], ("Pole", "Znaczenie")) + """
@@ -384,6 +384,14 @@ w starszych próbkach mają przerwę); adres, pole „Pobierz”, kolejność i 
 <p>Najechanie kursorem na wiersz pokazuje wszystkie dane zmiennej: adres, opis i aktualną wartość.</p>
 """))
 
+    s.append(("16a. Renderowanie wykresu", """
+<h2>Ustawienia → Renderowanie wykresu</h2>
+<p>Wszystko, co decyduje o obciążeniu procesora przez wykres, jest regulowane (zmiany działają od razu, „Anuluj” je cofa, „Domyślne” przywraca
+ustawienia oszczędne): <b>odświeżanie</b> (Hz, domyślnie 20), <b>nie rysuj niewidocznych kart</b> (dane, trigger i REC działają dalej),
+<b>maks. punktów krzywej</b>, <b>punkty</b> – limit próbek w oknie, przy którym znaczniki są jeszcze rysowane, i ich rozmiar (przy większej liczbie
+pasek statusu informuje, że punkty są ukryte – przybliż wykres albo zwiększ limit), <b>wykres przeglądowy</b> – jak często i z ilu punktów jest
+przeliczany oraz <b>wygładzanie linii</b>. Na mocniejszym komputerze wartości można podkręcić.</p>
+"""))
     s.append(("17. Interfejs (kolory i czcionki)", """
 <h2>Widok → Interfejs</h2>
 <ul>

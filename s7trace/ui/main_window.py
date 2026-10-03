@@ -9,7 +9,7 @@ from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QInputDialog, QMainWindow, QMenu,
                                QMessageBox, QStackedWidget, QTabBar, QToolButton, QToolTip, QWidget)
 
-from ..core import sessions
+from ..core import render_cfg, sessions
 from ..core import symbols as sym
 from ..core.config import TabConfig, app_dir, load_app_config, save_app_config, symbols_path
 from ..core.naming import suggest_config_name
@@ -17,6 +17,7 @@ from . import theme as th
 from .help_dialog import HelpDialog
 from .conn_dialog import ConnectionDialog
 from .interface_dialog import InterfaceDialog
+from .render_dialog import RenderDialog
 from .wizard_dialog import WizardDialog
 from .trace_tab import RACK_SLOT_HELP, TraceTab, dot_icon
 
@@ -87,6 +88,7 @@ class MainWindow(QMainWindow):
         cfg = load_app_config(self.config_file)
         self.ui: dict = cfg.get("ui") if isinstance(cfg.get("ui"), dict) else {}
         self.theme = th.normalize(self.ui.get("theme"))
+        self.render_cfg = render_cfg.normalize(self.ui.get("render"))      # Ustawienia -> Renderowanie wykresu
 
         self.stack = QStackedWidget()
         self.setCentralWidget(self.stack)
@@ -196,6 +198,7 @@ class MainWindow(QMainWindow):
         self._act(st, "Wymagania, ograniczenia i blokady…", lambda: self.show_help("Ograniczenia"))
         st.addSeparator()
         self._act(st, "Interfejs (kolory, czcionki)…", self.edit_interface)
+        self._act(st, "Renderowanie wykresu (odświeżanie, punkty, obciążenie CPU)…", self.edit_render)
         self.menu_saved = st.addMenu("Zapisane konfiguracje interfejsu")
         self.menu_saved.aboutToShow.connect(self._fill_saved_menu)
         self.menu_profile = st.addMenu("Profil kolorów")
@@ -248,6 +251,16 @@ class MainWindow(QMainWindow):
             self.tabs.widget(i).plot.set_grid(on)
 
     # ----------------------------------------------------------- theme
+    def _apply_render(self, cfg: dict) -> None:
+        self.render_cfg = render_cfg.normalize(cfg)
+        for i in range(self.tabs.count()):
+            self.tabs.widget(i).apply_render(self.render_cfg)
+
+    def edit_render(self) -> None:
+        dlg = RenderDialog(self.render_cfg, self._apply_render, self)
+        if dlg.exec():
+            self._apply_render(dlg.result_cfg())
+
     def _apply_theme(self, theme: dict) -> None:
         self.theme = th.apply_theme(QApplication.instance(), theme)
         for i in range(self.tabs.count()):
@@ -378,6 +391,7 @@ class MainWindow(QMainWindow):
         tab.plot.set_grid(self.ui.get("grid", True))
         tab.apply_plot_theme(self.theme["plot_bg"], self.theme["plot_fg"])
         tab.apply_ctl_theme(self.theme)
+        tab.apply_render(self.render_cfg)
         tab.apply_layout()
         self._tab_state(tab, "stopped")
         self.tabs.setCurrentIndex(i)
@@ -449,6 +463,7 @@ class MainWindow(QMainWindow):
     def _config_dict(self) -> dict:
         self.ui["geometry"] = bytes(self.saveGeometry().toBase64()).decode()
         self.ui["theme"] = self.theme
+        self.ui["render"] = self.render_cfg
         return {"tabs": [self.tabs.widget(i).to_config().to_dict() for i in range(self.tabs.count())],
                 "current": self.tabs.currentIndex(), "ui": self.ui}
 

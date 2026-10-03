@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import time
 from typing import Callable
 
 import numpy as np
@@ -10,7 +11,7 @@ from PySide6.QtCore import QObject, Qt, Signal as QtSignal
 from PySide6.QtGui import QColor, QPen
 from PySide6.QtWidgets import QLabel, QSplitter, QVBoxLayout, QWidget
 
-from ..core import render
+from ..core import render, render_cfg
 from .fold_splitter import FoldSplitter
 from ..core.buffer import TraceBuffer
 from ..core.types import Signal
@@ -108,6 +109,9 @@ class PlotView(QWidget):
         self.auto_y = True
         self.y_range = (0.0, 10.0)
         self.show_points = False
+        self.points_hidden = False                       # 'Punkty' is on but there are too many samples in the window to draw
+        self.rcfg = dict(render_cfg.DEFAULTS)            # Ustawienia -> Renderowanie wykresu
+        self._ov_last = 0.0
         self._x = (0.0, 200.0)
         self._dirty = True
         self._last_version = -1
@@ -198,7 +202,7 @@ class PlotView(QWidget):
         self.curves, self.points, self.ov_curves = [], [], []
         for s in signals:
             c = pg.PlotDataItem(pen=pg.mkPen(s.color, width=1), connect="finite")
-            p = pg.PlotDataItem(pen=None, symbol="o", symbolSize=4, symbolBrush=s.color,
+            p = pg.PlotDataItem(pen=None, symbol="o", symbolSize=self.rcfg["point_size"], symbolBrush=s.color,
                                 symbolPen=None)
             o = pg.PlotDataItem(pen=pg.mkPen(s.color, width=1), connect="finite")
             self.plot.addItem(c)
@@ -387,6 +391,18 @@ class PlotView(QWidget):
 
     def set_y_range(self, lo: float, hi: float) -> None:
         self.y_range = (lo, hi)
+        self._dirty = True
+
+    def apply_render(self, cfg: dict) -> None:
+        """Rendering settings (point limits, curve resolution, overview interval, antialiasing, point size)."""
+        self.rcfg = render_cfg.normalize(cfg)
+        for p in self.points:
+            p.setSymbolSize(self.rcfg["point_size"])
+        for c in self.curves + self.ov_curves:
+            c.opts["antialias"] = self.rcfg["antialias"]
+            c.curve.opts["antialias"] = self.rcfg["antialias"]
+            c.curve.update()
+        self._ov_version = -1                            # the overview is rebuilt with the new resolution
         self._dirty = True
 
     def set_points(self, on: bool) -> None:
@@ -600,6 +616,9 @@ class PlotView(QWidget):
         vis = (t >= x0) & (t <= x1) if len(t) else None
         if vis is not None and not vis.any():
             vis = None
+        n_vis = int(vis.sum()) if vis is not None else 0
+        draw_points = self.show_points and 0 < n_vis <= self.rcfg["points_max"]
+        self.points_hidden = bool(self.show_points and n_vis > self.rcfg["points_max"])
         px = max(self.vb.height(), 1.0)
         lo = hi = None
         ticks, lane_cols, info = [], [], {}
@@ -617,9 +636,9 @@ class PlotView(QWidget):
                 info[k] = (b2, t2, llo, lhi, s.name)
                 ticks += self._lane_labels(k, llo, lhi, const, px)
             x_end = x1 if (self.follow and x1 > t[-1]) else None
-            xs, ys = render.curve_data(t, v[:, k], g, off, x_end)
+            xs, ys = render.curve_data(t, v[:, k], g, off, x_end, max_points=self.rcfg["curve_points"])
             self.curves[k].setData(xs, ys, connect="finite")
-            if self.show_points and len(t) <= 4000:
+            if draw_points:
                 m = (t >= x0) & (t <= x1)
                 self.points[k].setData(t[m], v[m, k] * g + off)
             else:
@@ -652,8 +671,10 @@ class PlotView(QWidget):
             return
         a, b = self.buffer.first_time(), self.buffer.last_time()
         lo_x, hi_x = min(a, x0), max(b, x1)
-        self._ov_tick += 1
-        if ver != self._ov_version and (self._ov_tick % 15 == 0 or self._ov_version == -1 or not self.follow):
+        now = time.monotonic()
+        if ver != self._ov_version and (now - self._ov_last >= self.rcfg["overview_s"] or self._ov_version == -1
+                                        or not self.follow):
+            self._ov_last = now
             t, v = self.buffer.snapshot()
             lanes = self.y_layout == "lanes"
             lo = hi = None
@@ -666,7 +687,7 @@ class PlotView(QWidget):
                 g, off = s.gain, s.offset_y
                 if lanes and k in self._lane_geo:
                     g, off = self._lane_xf(k, v[:, k])[:2]
-                xs, ys = render.curve_data(t, v[:, k], g, off, None, max_points=2000)
+                xs, ys = render.curve_data(t, v[:, k], g, off, None, max_points=self.rcfg["overview_points"])
                 self.ov_curves[k].setData(xs, ys, connect="finite")
                 fin = ys[np.isfinite(ys)]
                 if len(fin):

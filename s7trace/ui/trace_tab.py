@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog
                                QGroupBox, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMenu, QMessageBox,
                                QPushButton, QScrollArea, QSizePolicy, QSpinBox, QSplitter, QVBoxLayout, QWidget)
 
+from ..core import render_cfg
 from ..core import trigger as trg
 from ..core.trigger import DEFAULT_REC_NAME
 from ..core.acq_process import ProcAcquirer
@@ -158,7 +159,9 @@ class TraceTab(QWidget):
         self._info_dlg = None                                  # the non-modal "name the recording" window
         self.ed_ip.textChanged.connect(self._ip_changed_device)
         self.timer = QTimer(self)
-        self.timer.setInterval(33)
+        self._render = render_cfg.normalize(None)               # Ustawienia -> Renderowanie wykresu (set by the main window)
+        self._skipped = False                                  # redraws were skipped while the tab was not visible
+        self.timer.setInterval(int(1000 / self._render["fps"]))
         self.timer.timeout.connect(self._tick)
         self.timer.start()
         self.blink = QTimer(self)                    # REC dot
@@ -964,9 +967,20 @@ class TraceTab(QWidget):
             w.setEnabled(stopped)
 
     # ============================================================== tick
+    def apply_render(self, cfg: dict) -> None:
+        self._render = render_cfg.normalize(cfg)
+        self.timer.setInterval(max(int(1000 / self._render["fps"]), 1))
+        self.plot.apply_render(self._render)
+
     def _tick(self):
-        self._drain()
-        self.plot.refresh()
+        self._drain()                                          # data, trigger and REC always run
+        if self._render["pause_hidden"] and (not self.plot.isVisible() or self.window().isMinimized()):
+            self._skipped = True                               # nobody sees the chart: do not compute it
+        else:
+            if self._skipped:
+                self._skipped = False
+                self.plot.touch()                              # up to date at once when the tab comes back
+            self.plot.refresh()
         self._stat_tick += 1
         if self._stat_tick % 8 == 0:
             self._update_status()
@@ -1026,15 +1040,17 @@ class TraceTab(QWidget):
         return f" | Ping: <b>{last}</b>, utrata <b>{p['loss_pct']:.1f}%</b>"
 
     def _update_status(self):
+        hint = (" | <b>Punkty ukryte: za dużo próbek w oknie – przybliż wykres albo zwiększ limit "
+                "(Ustawienia → Renderowanie wykresu)</b>") if self.btn_pts.isChecked() and self.plot.points_hidden else ""
         if self.acq and self.state in ("running", "reconnecting"):
             st = self.acq.stats
             st.gui_lag_ms = self.plot.gui_lag_ms
             self.lbl_status.setText(
                 f"PLC comm lag Avg: <b>{st.avg_lag:.1f} ms</b> (n=<b>{st.n}</b>), Last: <b>{st.last_lag:.1f} ms</b> | "
                 f"GUI lag: <b>{st.gui_lag_ms:.1f} ms</b>  Missed: <b>{st.missed} ({st.missed_pct:.1f}%)</b>"
-                f"{self._ping_text()}{self._rec_status()}  <b>{html.escape(self.status_msg)}</b>")
+                f"{self._ping_text()}{self._rec_status()}  <b>{html.escape(self.status_msg)}</b>{hint}")
         else:
-            self.lbl_status.setText(f"<b>{html.escape(self.status_msg)}</b>")
+            self.lbl_status.setText(f"<b>{html.escape(self.status_msg)}</b>{hint}")
         tip = html.unescape(re.sub(r"<[^>]+>", "", self.lbl_status.text()))
         if tip != self.lbl_status.toolTip():
             self.lbl_status.setToolTip(tip)                          # the full text when it does not fit

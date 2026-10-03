@@ -111,6 +111,8 @@ Typy: BOOL, BYTE, SINT, USINT, WORD, INT, UINT, DWORD, DINT, UDINT, REAL, LREAL.
 * Zwijanie paneli: panel ustawień po lewej chowa się do lewej, wykres przeglądowy na dole chowa się w dół — dwukrotnym kliknięciem
   cienkiej belki rozdzielającej (belka pojawia się po najechaniu kursorem; jej kolor i „zawsze widoczna” — Widok → Interfejs;
   stan zwinięcia jest wspólny dla kart i zapamiętany). Panel ustawień nie jest węższy niż jego zawartość.
+* Obciążenie procesora (Ustawienia → Renderowanie wykresu): odświeżanie wykresu (Hz), pomijanie niewidocznych kart, maks. punktów krzywej,
+  limit i rozmiar „Punktów”, odświeżanie i rozdzielczość wykresu przeglądowego, wygładzanie linii — wszystko regulowane, domyślnie oszczędnie.
 * Pasek statusu: tekst, który się nie mieści, przeciągasz myszą w lewo / prawo; maks. liczbę linii, kolor tła i tekstu ustawisz w Widok → Interfejs.
 * Okna ustawień mają u góry pasek z nazwą funkcji i opisem; gdy nie mieszczą się na ekranie, zmniejszają się i mają paski przewijania.
 * Przebieg z bazy (Plik → Przegląd nagrań) otwiera się w pustej karcie od razu, w karcie z danymi program pyta (nowa / bieżąca karta),
