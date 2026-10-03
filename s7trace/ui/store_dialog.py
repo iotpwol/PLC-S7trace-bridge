@@ -1,15 +1,17 @@
-"""REC target settings (SQLite / InfluxDB 1.x 2.x 3.x / TimescaleDB) and the 'Import z bazy → wykres' window."""
+"""REC target settings (SQLite / InfluxDB 1.x 2.x / TimescaleDB) and the 'Import z bazy → wykres' window."""
 from __future__ import annotations
 
 import os
+import time
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime
 
 from PySide6.QtCore import QDateTime, Qt
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QDateTimeEdit, QDialog,
                                QDoubleSpinBox, QFileDialog, QFormLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
-                               QMessageBox, QPushButton, QScrollArea, QSpinBox, QTableWidget, QTableWidgetItem,
-                               QTabWidget, QVBoxLayout, QWidget)
+                               QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QSpinBox, QTableWidget,
+                               QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
 
 from ..core import store as st
 from ..core.config import data_dir
@@ -25,8 +27,6 @@ FIELDS = {
                 ("Użytkownik:", "user", "text"), ("Hasło:", "password", "secret"), ("Pomiar (measurement):", "measurement", "text")],
     "influx2": [("Adres (URL):", "url", "text"), ("Organizacja (org):", "org", "text"), ("Bucket:", "bucket", "text"),
                 ("Token:", "token", "secret"), ("Pomiar (measurement):", "measurement", "text")],
-    "influx3": [("Adres (URL):", "url", "text"), ("Baza (database):", "database", "text"),
-                ("Token:", "token", "secret"), ("Pomiar (measurement):", "measurement", "text")],
     "timescale": [("Serwer:", "host", "text"), ("Port:", "port", "int"), ("Baza:", "pg_database", "text"),
                   ("Użytkownik:", "pg_user", "text"), ("Hasło:", "pg_password", "secret"),
                   ("SSL (sslmode):", "pg_sslmode", "text"), ("Tabela:", "table", "text")],
@@ -36,9 +36,8 @@ HINTS = {
               "Jeden plik może zawierać wiele nagrań.",
     "influx1": "InfluxDB 1.x: zapis przez /write (line protocol), baza jest tworzona, jeśli konto ma uprawnienia.",
     "influx2": "InfluxDB 2.x: zapis przez /api/v2/write. Bucket i token (z prawem zapisu i odczytu) tworzy się w InfluxDB.",
-    "influx3": "InfluxDB 3.x: zapis przez /api/v3/write_lp, odczyt przez SQL. Token może być pusty, gdy serwer nie wymaga logowania.",
-    "timescale": "TimescaleDB (PostgreSQL): tabele tworzone automatycznie, hypertable i kompresja po 7 dniach, jeśli rozszerzenie "
-                 "timescaledb jest dostępne (zwykły PostgreSQL też działa).",
+    "timescale": "TimescaleDB (PostgreSQL): tabele tworzone automatycznie, hypertable i kompresja (domyślnie po 7 dniach, do zmiany na zakładce „Czasy i bufory”), jeśli "
+                 "rozszerzenie timescaledb jest dostępne (zwykły PostgreSQL też działa).",
 }
 
 
@@ -48,6 +47,10 @@ PARAMS_OF = {
     **{k: ["keyframe_min", "batch_s", "retry_max_s", "test_timeout_s", "http_timeout_s", "close_grace_s", "queue_max",
            "spool_mb", "read_max_points"] for k in st.StoreConfig.NETWORK},
 }
+PARAMS_OF["timescale"] = PARAMS_OF["timescale"] + ["compress_days"]
+
+
+USER_PARAMS = ["trash_days", "retention_days"]               # shown on the "Nagrania i użytkownicy" tab
 
 
 class StoreDialog(QDialog):
@@ -97,6 +100,7 @@ class StoreDialog(QDialog):
             lay.addWidget(self.chk_remember)
         lay.addStretch(1)
         self._build_times(tabs)
+        self._build_users(tabs)
         self.lbl = QLabel()
         self.lbl.setWordWrap(True)
         self.lbl.setTextFormat(Qt.RichText)
@@ -163,6 +167,81 @@ class StoreDialog(QDialog):
         lay.addWidget(reset, 0, Qt.AlignLeft)
         tabs.addTab(scroll, "Czasy i bufory")
 
+    def _param_row(self, form: QFormLayout, name: str) -> None:
+        label, lo, hi, unit, desc = st.PARAMS[name]
+        defaults = st.StoreConfig()
+        w = QDoubleSpinBox() if isinstance(getattr(defaults, name), float) else QSpinBox()
+        if isinstance(w, QDoubleSpinBox):
+            w.setDecimals(2)
+        w.setRange(lo, hi)
+        w.setValue(getattr(self.cfg, name))
+        w.setSuffix(" " + unit)
+        if lo == 0:
+            w.setSpecialValueText("wyłączone")
+        w.setToolTip(desc)
+        self.params[name] = w
+        form.addRow(label + ":", w)
+        form.addRow(self._note(f"{desc}  <i>Domyślnie: {self._fmt(getattr(defaults, name), unit)}.</i>"))
+
+    @staticmethod
+    def _note(html: str) -> QLabel:
+        d = QLabel(html)
+        d.setWordWrap(True)
+        d.setTextFormat(Qt.RichText)
+        d.setStyleSheet("color: gray; font-size: 11px; margin-bottom: 6px;")
+        return d
+
+    def _build_users(self, tabs: QTabWidget) -> None:
+        """Names of recordings, users and the trash."""
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        body = QWidget()
+        scroll.setWidget(body)
+        lay = QVBoxLayout(body)
+        form = QFormLayout()
+        lay.addLayout(form)
+        self.cb_title = QComboBox()
+        for k in st.TITLE_ASK:
+            self.cb_title.addItem(st.TITLE_ASK_LABEL[k], k)
+        self.cb_title.setCurrentIndex(st.TITLE_ASK.index(self.cfg.title_ask))
+        form.addRow("Nazwa nagrania:", self.cb_title)
+        form.addRow(self._note(
+            "<b>Na początku</b> – po REC pojawia się okno z tytułem, uwagami i tagami; nagrywanie rusza po jego zatwierdzeniu "
+            "(Anuluj = bez nagrywania). <b>W trakcie</b> – nagrywanie rusza od razu, okno pojawia się obok i można je wypełnić "
+            "w dowolnej chwili. <b>Na końcu</b> – pytanie przy zatrzymaniu REC. <b>Nie pytaj</b> – tytuł można nadać później w "
+            "oknie „Przegląd nagrań” (Właściwości). <i>Domyślnie: w trakcie.</i>"))
+        self.cb_scope = QComboBox()
+        self.cb_scope.addItem("Tylko moje nagrania", "mine")
+        self.cb_scope.addItem("Wszystkie nagrania", "all")
+        self.cb_scope.setCurrentIndex(st.VIEW_SCOPES.index(self.cfg.view_scope))
+        form.addRow("Przegląd nagrań pokazuje:", self.cb_scope)
+        form.addRow(self._note(
+            "Każde nagranie zapisuje konto Windows i nazwę komputera, z którego powstało. W bazach sieciowych (InfluxDB, "
+            "TimescaleDB) nagrania wielu osób leżą razem; ten wybór ustawia domyślny filtr w oknie przeglądu (można go tam "
+            "zmienić). <i>Domyślnie: tylko moje.</i>"))
+        self.chk_others = QCheckBox("Pozwól usuwać i edytować nagrania innych użytkowników")
+        self.chk_others.setChecked(self.cfg.delete_others)
+        lay.addWidget(self.chk_others)
+        lay.addWidget(self._note("Bez zaznaczenia można usuwać i edytować tylko własne nagrania (oraz stare, bez zapisanego "
+                                 "właściciela). Program nie zastępuje uprawnień serwera bazy – to ustawienie jest "
+                                 "zabezpieczeniem przed pomyłką. <i>Domyślnie: wyłączone.</i>"))
+        self.chk_shared = QCheckBox("SQLite: wspólny folder dla wszystkich kont Windows na tym komputerze")
+        self.chk_shared.setChecked(self.cfg.sqlite_shared)
+        if self.kind == "sqlite":
+            lay.addWidget(self.chk_shared)
+            lay.addWidget(self._note(
+                "Gdy ścieżka pliku jest względna, plik leży w folderze <tt>ProgramData\\S7Trace\\data</tt> zamiast w "
+                "Dokumentach bieżącego konta – nagrania widzą wtedy wszyscy użytkownicy tego komputera (każdy z właścicielem "
+                "w opisie). Nie używaj tego na udziale sieciowym – SQLite jest tam zawodny. <i>Domyślnie: wyłączone "
+                "(każde konto ma własny plik w Dokumentach).</i>"))
+        form2 = QFormLayout()
+        lay.addLayout(form2)
+        for name in USER_PARAMS:
+            self._param_row(form2, name)
+        lay.addStretch(1)
+        tabs.addTab(scroll, "Nagrania i użytkownicy")
+
     @staticmethod
     def _fmt(v, unit: str) -> str:
         return "wyłączone" if v == 0 else f"{v:g} {unit}"
@@ -170,7 +249,8 @@ class StoreDialog(QDialog):
     def _reset_times(self) -> None:
         d = st.StoreConfig()
         for name, w in self.params.items():
-            w.setValue(getattr(d, name))
+            if name not in USER_PARAMS:
+                w.setValue(getattr(d, name))
         self.chk_daily.setChecked(d.rotate_daily)
 
     def _browse(self) -> None:
@@ -188,6 +268,10 @@ class StoreDialog(QDialog):
         for name, w in self.params.items():
             setattr(c, name, w.value())
         c.rotate_daily = self.chk_daily.isChecked() if self.kind == "sqlite" else self.cfg.rotate_daily
+        c.title_ask = self.cb_title.currentData()
+        c.view_scope = self.cb_scope.currentData()
+        c.delete_others = self.chk_others.isChecked()
+        c.sqlite_shared = self.chk_shared.isChecked() if self.kind == "sqlite" else self.cfg.sqlite_shared
         return c
 
     def test(self) -> None:
@@ -209,19 +293,91 @@ class StoreDialog(QDialog):
         super().accept()
 
 
+class RecInfoDialog(QDialog):
+    """Title, notes and tags of a recording (asked when REC starts / during / ends, and edited in the overview)."""
+
+    def __init__(self, title="", notes="", tags="", heading="", ok_text="Zapisz", cancel_text="Pomiń", parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Nagranie – tytuł i uwagi")
+        self.setMinimumWidth(460)
+        lay = QVBoxLayout(self)
+        if heading:
+            h = QLabel(heading)
+            h.setWordWrap(True)
+            lay.addWidget(h)
+        form = QFormLayout()
+        lay.addLayout(form)
+        self.ed_title = QLineEdit(title)
+        self.ed_title.setPlaceholderText("np. Rozruch pieca 2 po remoncie")
+        self.ed_notes = QPlainTextEdit(notes)
+        self.ed_notes.setFixedHeight(90)
+        self.ed_tags = QLineEdit(tags)
+        self.ed_tags.setPlaceholderText("tagi po przecinku, np. rozruch, piec 2")
+        form.addRow("Tytuł:", self.ed_title)
+        form.addRow("Uwagi:", self.ed_notes)
+        form.addRow("Tagi:", self.ed_tags)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        self.btn_ok, self.btn_cancel = QPushButton(ok_text), QPushButton(cancel_text)
+        self.btn_ok.setDefault(True)
+        self.btn_ok.clicked.connect(self.accept)
+        self.btn_cancel.clicked.connect(self.reject)
+        row.addWidget(self.btn_ok)
+        row.addWidget(self.btn_cancel)
+        lay.addLayout(row)
+
+    def values(self) -> dict:
+        return {"title": self.ed_title.text().strip(), "notes": self.ed_notes.toPlainText().strip(),
+                "tags": self.ed_tags.text().strip()}
+
+
+class SortItem(QTableWidgetItem):
+    """A table cell that sorts by a key (time, count) instead of its text."""
+
+    def __init__(self, text: str, key=None):
+        super().__init__(text)
+        self.key = text.lower() if key is None else key
+
+    def __lt__(self, other) -> bool:
+        k = getattr(other, "key", other.text().lower())
+        try:
+            return self.key < k
+        except TypeError:
+            return str(self.key) < str(k)
+
+
+DAYS_PL = ["poniedziałek", "wtorek", "środa", "czwartek", "piątek", "sobota", "niedziela"]
+
+
+def fmt_duration(sec: float) -> str:
+    sec = int(sec)
+    if sec < 60:
+        return f"{sec} s"
+    if sec < 3600:
+        return f"{sec // 60} min {sec % 60:02d} s"
+    return f"{sec // 3600} h {sec % 3600 // 60:02d} min"
+
+
 class StoreImportDialog(QDialog):
-    """Pick a recording from a database and load it into the tab (whole recording or a time range)."""
+    """Przegląd nagrań: the recordings of a database (sort, search, filter by user), their title / notes / tags, the trash,
+    deleting, export to CSV and loading a recording (or a time range of it) into the tab."""
 
-    COLS = ["Początek", "Nazwa / konfiguracja", "IP", "Karta", "Zapis", "Sygnały"]
+    COLS = [("start", "Początek"), ("dur", "Czas trwania"), ("title", "Tytuł"), ("tags", "Tagi"), ("notes", "Uwagi"),
+            ("owner", "Użytkownik"), ("computer", "Komputer"), ("conf", "Konfiguracja"), ("ip", "IP"), ("tab", "Karta"),
+            ("mode", "Zapis"), ("sigs", "Sygnały"), ("events", "Wpisy")]
 
-    def __init__(self, cfg: st.StoreConfig, parent=None):
+    def __init__(self, cfg: st.StoreConfig, parent=None, can_load: bool = True, base_dir: str | None = None):
         super().__init__(parent)
         self.cfg = cfg if cfg.kind in DB_KINDS else replace(cfg, kind="sqlite")
-        self.sessions: list[dict] = []
+        self.can_load = can_load
+        self.base_dir = base_dir if base_dir is not None else data_dir()
+        self.all: list[dict] = []                                # every recording of the database (incl. the trash)
+        self.sessions: list[dict] = []                           # the ones shown
         self.result: tuple | None = None                         # (meta, t_us, matrix, store config)
         self.note = ""                                           # e.g. "thinned out from N to M rows"
-        self.setWindowTitle("Import z bazy → wykres")
-        self.resize(900, 460)
+        self._policies_done = False
+        self.setWindowTitle("Przegląd nagrań")
+        self.resize(1180, 560)
         lay = QVBoxLayout(self)
         top = QHBoxLayout()
         top.addWidget(QLabel("Baza:"))
@@ -236,16 +392,38 @@ class StoreImportDialog(QDialog):
         self.btn_list = QPushButton("Odśwież listę")
         self.btn_list.clicked.connect(self.refresh)
         top.addWidget(self.btn_list)
+        self.btn_spool = QPushButton("Zaległe bufory…")
+        self.btn_spool.setToolTip("Dane, które nie zdążyły dotrzeć do serwera przed zamknięciem programu.")
+        self.btn_spool.clicked.connect(self.open_spools)
+        top.addWidget(self.btn_spool)
         top.addStretch(1)
         lay.addLayout(top)
+        flt = QHBoxLayout()
+        self.ed_search = QLineEdit()
+        self.ed_search.setPlaceholderText("Szukaj w tytule, uwagach, tagach, konfiguracji, użytkowniku…")
+        self.ed_search.setClearButtonEnabled(True)
+        flt.addWidget(self.ed_search, 1)
+        flt.addWidget(QLabel("Pokaż:"))
+        self.cb_user = QComboBox()
+        flt.addWidget(self.cb_user)
+        self.chk_trash = QCheckBox("Kosz")
+        self.chk_trash.setToolTip("Pokazuje usunięte nagrania (można je przywrócić do czasu opróżnienia kosza).")
+        flt.addWidget(self.chk_trash)
+        self.chk_group = QCheckBox("Grupuj po dniach")
+        self.chk_group.setToolTip("Nagłówek z datą nad nagraniami z danego dnia (najnowsze dni na górze). "
+                                  "Przy grupowaniu sortowanie po kolumnach jest wyłączone.")
+        flt.addWidget(self.chk_group)
+        lay.addLayout(flt)
+        self._set_users([])
         self.table = QTableWidget(0, len(self.COLS))
-        self.table.setHorizontalHeaderLabels(self.COLS)
+        self.table.setHorizontalHeaderLabels([h for _, h in self.COLS])
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setSortingEnabled(True)
         self.table.itemSelectionChanged.connect(self._selected)
         self.table.itemDoubleClicked.connect(lambda *_: self.load())
         lay.addWidget(self.table, 1)
@@ -267,6 +445,17 @@ class StoreImportDialog(QDialog):
         self.lbl.setTextFormat(Qt.RichText)
         lay.addWidget(self.lbl)
         row = QHBoxLayout()
+        self.btn_props = QPushButton("Właściwości…")
+        self.btn_props.setToolTip("Tytuł, uwagi i tagi wybranego nagrania.")
+        self.btn_props.clicked.connect(self.edit_properties)
+        self.btn_del = QPushButton("Usuń")
+        self.btn_del.clicked.connect(self.delete_selected)
+        self.btn_restore = QPushButton("Przywróć")
+        self.btn_restore.clicked.connect(self.restore_selected)
+        self.btn_empty = QPushButton("Opróżnij kosz")
+        self.btn_empty.clicked.connect(self.empty_trash)
+        for b in (self.btn_props, self.btn_del, self.btn_restore, self.btn_empty):
+            row.addWidget(b)
         row.addStretch(1)
         self.btn_load = QPushButton("Wczytaj")
         self.btn_load.setEnabled(False)
@@ -282,79 +471,341 @@ class StoreImportDialog(QDialog):
         row.addWidget(close)
         lay.addLayout(row)
         self.cb_kind.currentIndexChanged.connect(self._kind_changed)
+        self.ed_search.textChanged.connect(self._fill)
+        self.cb_user.currentIndexChanged.connect(self._fill)
+        self.chk_trash.toggled.connect(self._fill)
+        self.chk_group.toggled.connect(self._fill)
         now = QDateTime.currentDateTime()
         self.dt0.setDateTime(now.addSecs(-3600))
         self.dt1.setDateTime(now)
         self._range_enabled(False)
+        self._update_buttons()
 
-    # ---- settings / list
+    # ---- helpers
+    def cell(self, row: int, key: str) -> str:
+        """Text of the cell in column `key` (columns are identified by name, not by position)."""
+        return self.table.item(row, [k for k, _ in self.COLS].index(key)).text()
+
+    def own(self, s: dict) -> bool:
+        return s.get("owner", "") in ("", st.current_user())      # recordings of older versions have no owner: they are yours
+
+    def running(self, s: dict) -> bool:
+        return s["id"] in st._ACTIVE_SESSIONS                     # being recorded by this program right now
+
+    def can_modify(self, s: dict) -> bool:
+        return (self.own(s) or self.cfg.delete_others) and not self.running(s)
+
+    def _set_users(self, owners: list[str]) -> None:
+        keep = self.cb_user.currentData() if self.cb_user.count() else self.cfg.view_scope
+        self.cb_user.blockSignals(True)
+        self.cb_user.clear()
+        self.cb_user.addItem("Moje nagrania", "mine")
+        self.cb_user.addItem("Wszystkie nagrania", "all")
+        for o in sorted(set(owners)):
+            if o and o != st.current_user():
+                self.cb_user.addItem(f"Użytkownik: {o}", "u:" + o)
+        i = self.cb_user.findData(keep)
+        self.cb_user.setCurrentIndex(i if i >= 0 else 0)
+        self.cb_user.blockSignals(False)
+
+    @contextmanager
+    def _backend(self, s: dict):
+        b = st.open_backend(s.get("_cfg", self.cfg), self.base_dir)
+        try:
+            yield b
+        finally:
+            b.close()
+
     def _kind_changed(self) -> None:
         self.cfg = replace(self.cfg, kind=self.cb_kind.currentData())
-        self.sessions = []
-        self.table.setRowCount(0)
-        self.btn_load.setEnabled(False)
+        self._policies_done = False
+        self.all, self.sessions = [], []
+        self._fill()
 
     def edit_settings(self) -> None:
         d = StoreDialog(self.cfg, self.cb_kind.currentData(), self)
         if d.exec():
             self.cfg = d.config()
 
-    def refresh(self) -> None:
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        try:
-            self.sessions = []
-            for c in self._sources():                            # SQLite: the file and its rotated siblings
-                b = st.open_backend(c, data_dir())
-                try:
-                    for s in b.sessions():
-                        self.sessions.append({**s, "_cfg": c})
-                finally:
-                    b.close()
-            self.sessions.sort(key=lambda s: -s["start_us"])
-        except st.StoreError as e:
-            self.sessions = []
-            self.lbl.setText(f"<span style='color:#e04040'><b>Błąd:</b></span> {e}")
-        except Exception as e:
-            self.sessions = []
-            self.lbl.setText(f"<span style='color:#e04040'><b>Błąd:</b></span> {e}")
-        finally:
-            QApplication.restoreOverrideCursor()
-        self.table.setRowCount(len(self.sessions))
-        for r, s in enumerate(self.sessions):
-            vals = [datetime.fromtimestamp(s["start_us"] / 1e6).strftime("%Y-%m-%d %H:%M:%S"),
-                    s.get("conf") or s.get("name") or "", s.get("ip", ""), s.get("tab", ""),
-                    st.MODE_LABEL.get(s.get("mode"), s.get("mode", "")), str(len(s.get("signals", [])))]
-            for c, v in enumerate(vals):
-                it = QTableWidgetItem(v)
-                f = it.font()
-                f.setBold(True)
-                it.setFont(f)
-                self.table.setItem(r, c, it)
-        if self.sessions:
-            self.lbl.setText(f"Nagrań w bazie: <b>{len(self.sessions)}</b>")
-            self.table.selectRow(0)
-
     def _sources(self) -> list[st.StoreConfig]:
         if self.cfg.kind != "sqlite":
             return [self.cfg]
         p = self.cfg.sqlite_path or "s7trace.db"
-        p = p if os.path.isabs(p) else os.path.join(data_dir(), p)
+        p = p if os.path.isabs(p) else os.path.join(st.effective_base(self.cfg, self.base_dir), p)
         return [replace(self.cfg, sqlite_path=f) for f in st.sqlite_family(p) if os.path.exists(f)] or [self.cfg]
 
+    # ---- reading the list
+    def refresh(self) -> None:
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        err = ""
+        try:
+            self.all = []
+            for c in self._sources():                            # SQLite: the file and its rotated siblings
+                b = st.open_backend(c, self.base_dir)
+                try:
+                    try:
+                        stats = b.stats()
+                    except Exception:
+                        stats = {}
+                    for s in b.sessions():
+                        self.all.append({**s, "_cfg": c, "_events": stats.get(s["id"])})
+                finally:
+                    b.close()
+        except Exception as e:                                   # StoreError or a driver error that is not ours
+            self.all, err = [], str(e)
+        finally:
+            QApplication.restoreOverrideCursor()
+        if err:
+            self.lbl.setText(f"<span style='color:#e04040'><b>Błąd:</b></span> {err}")
+        elif not self._policies_done:
+            self._policies_done = True
+            if self._apply_policies():                           # the trash / retention changed something: read again
+                return self.refresh()
+        self._set_users([s["owner"] for s in self.all])
+        self._fill()
+        if not err:
+            self._status_line()
+
+    def _apply_policies(self) -> bool:
+        """Empties the trash of recordings that have been there longer than 'Kosz: przechowuj' and moves own recordings
+        older than 'Automatyczne czyszczenie' to the trash."""
+        now = int(time.time() * 1e6)
+        changed = False
+        for s in list(self.all):
+            try:
+                with self._backend(s) as b:
+                    if s["deleted_us"]:
+                        if self.can_modify(s) and now - s["deleted_us"] > self.cfg.trash_days * 86_400_000_000:
+                            b.delete_session(s["id"])
+                            changed = True
+                    elif self.cfg.retention_days > 0 and self.own(s) and \
+                            now - s["start_us"] > self.cfg.retention_days * 86_400_000_000:
+                        if self.cfg.trash_days > 0:
+                            b.update_session(s["id"], {"deleted_us": now})
+                        else:
+                            b.delete_session(s["id"])
+                        changed = True
+            except Exception:
+                continue
+        return changed
+
+    def _status_line(self) -> None:
+        live = [s for s in self.all if not s["deleted_us"]]
+        trash = [s for s in self.all if s["deleted_us"]]
+        ev = sum(s["_events"] or 0 for s in live)
+        txt = f"Nagrań w bazie: <b>{len(live)}</b>" + (f", w koszu: <b>{len(trash)}</b>" if trash else "")
+        if ev:
+            txt += f", wpisów: <b>{ev:,}</b>".replace(",", " ")
+        if self.chk_trash.isChecked() and self.cfg.trash_days > 0:
+            txt += f". Kosz opróżnia się sam po {self.cfg.trash_days} dniach."
+        n = len(st.scan_spools(self.base_dir)) if self.cfg.kind in st.StoreConfig.NETWORK else 0
+        self.btn_spool.setVisible(n > 0)
+        if n:
+            txt += f"  <span style='color:#e0a030'>Zaległe bufory zapisu: {n}.</span>"
+        self.lbl.setText(txt)
+
+    def _fill(self) -> None:
+        trash = self.chk_trash.isChecked()
+        who = self.cb_user.currentData()
+        needle = self.ed_search.text().strip().lower()
+        rows = []
+        for s in self.all:
+            if bool(s["deleted_us"]) != trash:
+                continue
+            if who == "mine" and not self.own(s):
+                continue
+            if who and who.startswith("u:") and s["owner"] != who[2:]:
+                continue
+            hay = " ".join(str(s.get(k, "")) for k in ("title", "notes", "tags", "conf", "name", "tab", "ip", "owner",
+                                                          "computer")).lower()
+            if needle and needle not in hay:
+                continue
+            rows.append(s)
+        self.sessions = rows
+        grouped = self.chk_group.isChecked()
+        self.table.setSortingEnabled(False)
+        self.table.clearSpans()
+        order = sorted(range(len(rows)), key=lambda i: -rows[i]["start_us"]) if grouped else list(range(len(rows)))
+        layout, day = [], None                                   # table rows: ("day", text) headers and ("rec", index)
+        for i in order:
+            if grouped:
+                d = datetime.fromtimestamp(rows[i]["start_us"] / 1e6).date()
+                if d != day:
+                    day = d
+                    n = sum(1 for k in order if datetime.fromtimestamp(rows[k]["start_us"] / 1e6).date() == d)
+                    layout.append(("day", f"{d:%Y-%m-%d} ({DAYS_PL[d.weekday()]}) – {n} nagr."))
+            layout.append(("rec", i))
+        self.table.setRowCount(len(layout))
+        for r, (kind, ref) in enumerate(layout):
+            if kind == "day":
+                it = QTableWidgetItem(ref)
+                f = it.font()
+                f.setBold(True)
+                it.setFont(f)
+                it.setFlags(Qt.ItemIsEnabled)                    # not selectable
+                it.setBackground(self.palette().alternateBase())
+                self.table.setItem(r, 0, it)
+                self.table.setSpan(r, 0, 1, len(self.COLS))
+                continue
+            idx, s = ref, rows[ref]
+            end = s.get("end_us")
+            dur = max((end - s["start_us"]) / 1e6, 0) if end else None
+            vals = {
+                "start": (datetime.fromtimestamp(s["start_us"] / 1e6).strftime("%Y-%m-%d %H:%M:%S"), s["start_us"]),
+                "dur": (fmt_duration(dur) if dur is not None else "trwa / nie zakończono", dur if dur is not None else -1),
+                "title": (s["title"], None), "tags": (s["tags"], None),
+                "notes": (s["notes"].replace("\n", " "), None), "owner": (s["owner"], None),
+                "computer": (s["computer"], None), "conf": (s.get("conf") or s.get("name") or "", None),
+                "ip": (s.get("ip", ""), None), "tab": (s.get("tab", ""), None),
+                "mode": (st.MODE_LABEL.get(s.get("mode"), s.get("mode", "")), None),
+                "sigs": (str(len(s.get("signals", []))), len(s.get("signals", []))),
+                "events": ("" if s["_events"] is None else f"{s['_events']:,}".replace(",", " "), s["_events"] or 0)}
+            for c, (key, _h) in enumerate(self.COLS):
+                text, k = vals[key]
+                it = SortItem(text, k)
+                f = it.font()
+                f.setBold(True)
+                it.setFont(f)
+                if key == "start":
+                    it.setData(Qt.UserRole, idx)
+                    if s["deleted_us"] or not self.can_modify(s):
+                        it.setToolTip("Usunięte" if s["deleted_us"] else
+                                      "Nagranie trwa" if self.running(s) else "Nagranie innego użytkownika")
+                self.table.setItem(r, c, it)
+        if not grouped:
+            self.table.setSortingEnabled(True)
+            self.table.sortByColumn(0, Qt.DescendingOrder)
+        first = next((r for r, (k, _) in enumerate(layout) if k == "rec"), None)
+        if first is not None:
+            self.table.selectRow(first)
+        self._update_buttons()
+
+    def _picked(self) -> list[dict]:
+        out = []
+        for r in sorted({i.row() for i in self.table.selectedItems()}):
+            it = self.table.item(r, 0)
+            idx = it.data(Qt.UserRole) if it else None
+            if idx is not None and 0 <= idx < len(self.sessions):
+                out.append(self.sessions[idx])
+        return out
+
     def _selected(self) -> None:
-        r = self.table.currentRow()
-        ok = 0 <= r < len(self.sessions)
-        self.btn_load.setEnabled(ok)
-        self.btn_csv.setEnabled(ok)
-        if ok:
-            s = self.sessions[r]
+        sel = self._picked()
+        if len(sel) == 1:
+            s = sel[0]
             self.dt0.setDateTime(QDateTime.fromSecsSinceEpoch(int(s["start_us"] / 1e6)))
             end = s.get("end_us") or s["start_us"] + 3_600_000_000
             self.dt1.setDateTime(QDateTime.fromSecsSinceEpoch(int(end / 1e6) + 1))
+        self._update_buttons()
+
+    def _update_buttons(self) -> None:
+        sel = self._picked()
+        trash = self.chk_trash.isChecked()
+        one = len(sel) == 1
+        self.btn_load.setEnabled(one and not trash and self.can_load)
+        self.btn_load.setToolTip("" if self.can_load else "Wczytanie na wykres jest możliwe, gdy karta jest zatrzymana.")
+        self.btn_csv.setEnabled(one)
+        self.btn_props.setEnabled(one and self.can_modify(sel[0]))
+        mods = bool(sel) and all(self.can_modify(s) for s in sel)
+        self.btn_del.setEnabled(mods)
+        self.btn_del.setText("Usuń trwale" if trash else "Usuń")
+        self.btn_restore.setVisible(trash)
+        self.btn_restore.setEnabled(mods)
+        self.btn_empty.setVisible(trash)
+        self.btn_empty.setEnabled(any(self.can_modify(s) for s in self.sessions))
 
     def _range_enabled(self, on: bool) -> None:
         self.dt0.setEnabled(on)
         self.dt1.setEnabled(on)
+
+    # ---- properties, trash, deleting
+    def edit_properties(self) -> None:
+        sel = self._picked()
+        if len(sel) != 1 or not self.can_modify(sel[0]):
+            return
+        s = sel[0]
+        d = RecInfoDialog(s["title"], s["notes"], s["tags"], ok_text="Zapisz", cancel_text="Anuluj", parent=self)
+        if not d.exec():
+            return
+        try:
+            with self._backend(s) as b:
+                b.update_session(s["id"], d.values())
+        except Exception as e:
+            QMessageBox.warning(self, "S7Trace", f"Nie udało się zapisać opisu: {e}")
+            return
+        s.update(d.values())
+        self._fill()
+        self._status_line()
+
+    def _describe(self, sel: list[dict]) -> str:
+        names = [f"• {datetime.fromtimestamp(s['start_us'] / 1e6):%Y-%m-%d %H:%M}  {s['title'] or s.get('conf') or s['id']}"
+                 for s in sel[:6]]
+        return "\n".join(names) + (f"\n… i {len(sel) - 6} więcej" if len(sel) > 6 else "")
+
+    def delete_selected(self) -> None:
+        sel = [s for s in self._picked() if self.can_modify(s)]
+        if not sel:
+            return
+        in_trash = self.chk_trash.isChecked()
+        permanent = in_trash or self.cfg.trash_days <= 0
+        if permanent:
+            text = f"Usunąć TRWALE {len(sel)} nagr.? Tej operacji nie można cofnąć.\n\n{self._describe(sel)}"
+        else:
+            text = (f"Przenieść do kosza {len(sel)} nagr.? Można je przywrócić przez {self.cfg.trash_days} dni, potem znikną "
+                    f"na stałe.\n\n{self._describe(sel)}")
+        if QMessageBox.question(self, "Usuń nagrania", text) != QMessageBox.Yes:
+            return
+        self._apply(sel, permanent)
+
+    def restore_selected(self) -> None:
+        sel = [s for s in self._picked() if self.can_modify(s)]
+        errs = []
+        for s in sel:
+            try:
+                with self._backend(s) as b:
+                    b.update_session(s["id"], {"deleted_us": None})
+                s["deleted_us"] = None
+            except Exception as e:
+                errs.append(str(e))
+        if errs:
+            QMessageBox.warning(self, "S7Trace", "Nie udało się przywrócić: " + errs[0])
+        self._fill()
+        self._status_line()
+
+    def empty_trash(self) -> None:
+        sel = [s for s in self.all if s["deleted_us"] and self.can_modify(s)]
+        if not sel:
+            return
+        if QMessageBox.question(self, "Opróżnij kosz", f"Usunąć trwale {len(sel)} nagr. z kosza?\n\n{self._describe(sel)}") \
+                != QMessageBox.Yes:
+            return
+        self._apply(sel, True)
+
+    def _apply(self, sel: list[dict], permanent: bool) -> None:
+        errs, now = [], int(time.time() * 1e6)
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            for s in sel:
+                try:
+                    with self._backend(s) as b:
+                        if permanent:
+                            b.delete_session(s["id"])
+                            self.all.remove(s)
+                        else:
+                            b.update_session(s["id"], {"deleted_us": now})
+                            s["deleted_us"] = now
+                except Exception as e:
+                    errs.append(str(e))
+        finally:
+            QApplication.restoreOverrideCursor()
+        self._fill()
+        self._status_line()
+        if errs:
+            QMessageBox.warning(self, "S7Trace", "\n".join(sorted(set(errs))[:4]))
+
+    def open_spools(self) -> None:
+        SpoolDialog(self.cfg, self.base_dir, self).exec()
+        self._status_line()
 
     # ---- load
     def selected_range(self) -> tuple[int | None, int | None]:
@@ -363,11 +814,11 @@ class StoreImportDialog(QDialog):
         return self.dt0.dateTime().toSecsSinceEpoch() * 1_000_000, self.dt1.dateTime().toSecsSinceEpoch() * 1_000_000
 
     def load(self) -> None:
-        r = self.table.currentRow()
-        if not (0 <= r < len(self.sessions)):
+        sel = self._picked()
+        if len(sel) != 1 or not self.can_load or self.chk_trash.isChecked():
             return
         try:
-            meta, t, v, note = self._read(self.sessions[r], downsample=True)
+            meta, t, v, note = self._read(sel[0], downsample=True)
         except Exception as e:
             QMessageBox.warning(self, "S7Trace", f"Wczytanie nie powiodło się: {e}")
             return
@@ -383,7 +834,7 @@ class StoreImportDialog(QDialog):
         limit = self.cfg.read_max_points if downsample else 0
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            b = st.open_backend(c, data_dir())
+            b = st.open_backend(c, self.base_dir)
             try:
                 meta, t, v = b.read(sess["id"], t0, t1, limit)
             finally:
@@ -399,10 +850,10 @@ class StoreImportDialog(QDialog):
 
     def export_csv(self) -> None:
         """The selected recording (or its time range) as a CSV file - every row, nothing thinned out."""
-        r = self.table.currentRow()
-        if not (0 <= r < len(self.sessions)):
+        sel = self._picked()
+        if len(sel) != 1:
             return
-        sess = self.sessions[r]
+        sess = sel[0]
         stamp = datetime.fromtimestamp(sess["start_us"] / 1e6).strftime("%Y%m%d_%H%M%S")
         path, _ = QFileDialog.getSaveFileName(self, "Zapisz nagranie jako CSV",
                                               os.path.join(data_dir(), f"nagranie_{stamp}.csv"), "CSV (*.csv)")
@@ -417,3 +868,91 @@ class StoreImportDialog(QDialog):
             QMessageBox.warning(self, "S7Trace", f"Eksport nie powiódł się: {e}")
             return
         self.lbl.setText(f"Zapisano <b>{len(t)}</b> wierszy: {path}")
+
+
+class SpoolDialog(QDialog):
+    """Buffers left on disk by recordings that could not deliver everything (the server was away when the program closed)."""
+
+    def __init__(self, cfg: st.StoreConfig, base_dir: str, parent=None):
+        super().__init__(parent)
+        self.cfg, self.base_dir = cfg, base_dir
+        self.setWindowTitle("Zaległe bufory zapisu")
+        self.resize(820, 340)
+        lay = QVBoxLayout(self)
+        info = QLabel("Dane zapisane na dysku, bo serwer bazy był niedostępny. Program dosyła je sam przy następnym nagraniu "
+                      "do tej samej bazy; tu można to zrobić od razu albo usunąć bufor.")
+        info.setWordWrap(True)
+        lay.addWidget(info)
+        self.table = QTableWidget(0, 5)
+        self.table.setHorizontalHeaderLabels(["Nagranie", "Cel", "Wpisów", "Rozmiar", "Ta baza?"])
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.verticalHeader().setVisible(False)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        lay.addWidget(self.table, 1)
+        self.lbl = QLabel()
+        self.lbl.setWordWrap(True)
+        lay.addWidget(self.lbl)
+        row = QHBoxLayout()
+        self.btn_send = QPushButton("Wyślij teraz")
+        self.btn_send.clicked.connect(self.send)
+        self.btn_del = QPushButton("Usuń bufor")
+        self.btn_del.clicked.connect(self.remove)
+        close = QPushButton("Zamknij")
+        close.clicked.connect(self.accept)
+        row.addWidget(self.btn_send)
+        row.addWidget(self.btn_del)
+        row.addStretch(1)
+        row.addWidget(close)
+        lay.addLayout(row)
+        self.items: list[dict] = []
+        self.table.itemSelectionChanged.connect(self._buttons)
+        self.refresh()
+
+    def refresh(self) -> None:
+        self.items = st.scan_spools(self.base_dir)
+        self.table.setRowCount(len(self.items))
+        for r, it in enumerate(self.items):
+            m = it["meta"]
+            when = datetime.fromtimestamp(m.get("start_us", 0) / 1e6).strftime("%Y-%m-%d %H:%M:%S") if m.get("start_us") else "?"
+            vals = [f"{when}  {m.get('title') or m.get('conf') or it['name']}", it["target"], f"{it['rows']:,}".replace(",", " "),
+                    f"{it['size'] / 1e6:.1f} MB", "tak" if it["target"] == self.cfg.describe() else "nie"]
+            for c, v in enumerate(vals):
+                self.table.setItem(r, c, QTableWidgetItem(v))
+        if self.items:
+            self.table.selectRow(0)
+        self._buttons()
+
+    def _cur(self) -> dict | None:
+        r = self.table.currentRow()
+        return self.items[r] if 0 <= r < len(self.items) else None
+
+    def _buttons(self) -> None:
+        it = self._cur()
+        self.btn_send.setEnabled(bool(it) and it["target"] == self.cfg.describe())
+        self.btn_del.setEnabled(bool(it))
+
+    def send(self) -> None:
+        it = self._cur()
+        if not it:
+            return
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            n = st.deliver_spool(self.cfg, it["path"], self.base_dir)
+            self.lbl.setText(f"<span style='color:#4ec04e'><b>OK</b></span> – wysłano {n} wpisów.")
+        except Exception as e:
+            self.lbl.setText(f"<span style='color:#e04040'><b>Błąd:</b></span> {e}")
+        finally:
+            QApplication.restoreOverrideCursor()
+        self.refresh()
+
+    def remove(self) -> None:
+        it = self._cur()
+        if not it:
+            return
+        if QMessageBox.question(self, "Usuń bufor", f"Usunąć bufor ({it['rows']} wpisów)? Tych danych nie da się odzyskać.") \
+                != QMessageBox.Yes:
+            return
+        st.remove_spool(it["path"])
+        self.refresh()

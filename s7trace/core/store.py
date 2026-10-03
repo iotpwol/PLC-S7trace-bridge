@@ -1,4 +1,4 @@
-"""Recording targets and readers for the REC button: CSV file, SQLite, InfluxDB 1.x / 2.x / 3.x, TimescaleDB.
+"""Recording targets and readers for the REC button: CSV file, SQLite, InfluxDB 1.x / 2.x, TimescaleDB.
 
 Model: a *session* = one REC run (start time, address, tab, signal definitions, mode). The recorded samples are
 events (time, signal, value). Mode "changes" (default) stores a value only when it differs from the previous one
@@ -11,9 +11,11 @@ HTTP APIs need nothing extra."""
 from __future__ import annotations
 
 import dataclasses
+import getpass
 import json
 import math
 import os
+import platform
 import queue
 import re
 import sqlite3
@@ -28,10 +30,14 @@ from urllib import parse, request
 
 import numpy as np
 
-KINDS = ["csv", "sqlite", "influx1", "influx2", "influx3", "timescale"]
+KINDS = ["csv", "sqlite", "influx1", "influx2", "timescale"]
 KIND_LABEL = {"csv": "Plik CSV", "sqlite": "SQLite", "influx1": "InfluxDB 1.x", "influx2": "InfluxDB 2.x",
-              "influx3": "InfluxDB 3.x", "timescale": "TimescaleDB"}
+              "timescale": "TimescaleDB"}
 MODES = ["changes", "all"]
+TITLE_ASK = ["start", "during", "end", "off"]          # when the program asks for the name of a recording
+TITLE_ASK_LABEL = {"start": "Na początku: pytanie, potem nagrywanie", "during": "W trakcie: nagrywanie rusza, pytanie obok",
+                   "end": "Na końcu: pytanie przy zatrzymaniu REC", "off": "Nie pytaj"}
+VIEW_SCOPES = ["mine", "all"]
 MODE_LABEL = {"changes": "Tylko zmiany stanu", "all": "Każda próbka"}
 MAX_READ_ROWS = 5_000_000
 
@@ -40,18 +46,22 @@ class StoreError(Exception):
     """A readable message for the user (connection refused, bad credentials, missing library ...)."""
 
 
+class _TooBig(StoreError):
+    """A query result above MAX_READ_ROWS (the caller may retry in slices)."""
+
+
 @dataclass
 class StoreConfig:
     kind: str = "csv"
     mode: str = "changes"                   # default: only changes of state
     sqlite_path: str = "s7trace.db"         # relative = in the user's S7Trace folder in Documents
     url: str = "http://localhost:8086"      # InfluxDB
-    database: str = "s7trace"               # InfluxDB 1.x / 3.x
+    database: str = "s7trace"               # InfluxDB 1.x
     org: str = ""                           # InfluxDB 2.x
     bucket: str = "s7trace"                 # InfluxDB 2.x
     user: str = ""                          # InfluxDB 1.x
     password: str = ""
-    token: str = ""                         # InfluxDB 2.x / 3.x
+    token: str = ""                         # InfluxDB 2.x
     measurement: str = "s7trace"
     host: str = "localhost"                 # TimescaleDB (PostgreSQL)
     port: int = 5432
@@ -72,10 +82,18 @@ class StoreConfig:
     spool_mb: int = 500                     # disk buffer while the server is away (0 = off)
     rotate_mb: int = 0                      # SQLite: start a new file above this size (0 = never)
     rotate_daily: bool = False              # SQLite: a new file every day
+    compress_days: int = 7                  # TimescaleDB: compress data older than this (0 = no compression)
     read_max_points: int = 200000           # reading: downsample above this many points per signal
+    # ---- recordings: names, users, trash (all editable in the database settings, tab "Nagrania i użytkownicy")
+    title_ask: str = "during"               # when to ask for the title: start / during / end / off
+    trash_days: int = 30                    # deleted recordings stay in the trash this long (0 = delete at once)
+    retention_days: int = 0                 # own recordings older than this go to the trash (0 = never)
+    view_scope: str = "mine"                # the overview shows: mine / all recordings
+    delete_others: bool = False             # allow deleting / editing recordings of other users
+    sqlite_shared: bool = False             # relative SQLite path: shared folder (ProgramData) instead of the user's
 
     SECRETS = ("password", "token", "pg_password")
-    NETWORK = ("influx1", "influx2", "influx3", "timescale")
+    NETWORK = ("influx1", "influx2", "timescale")
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -104,6 +122,10 @@ class StoreConfig:
             c.kind = "csv"
         if c.mode not in MODES:
             c.mode = "changes"
+        if c.title_ask not in TITLE_ASK:
+            c.title_ask = "during"
+        if c.view_scope not in VIEW_SCOPES:
+            c.view_scope = "mine"
         return c
 
     def describe(self) -> str:
@@ -114,8 +136,6 @@ class StoreConfig:
             return f"InfluxDB 1.x {self.url} / {self.database}"
         if k == "influx2":
             return f"InfluxDB 2.x {self.url} / {self.bucket}"
-        if k == "influx3":
-            return f"InfluxDB 3.x {self.url} / {self.database}"
         if k == "timescale":
             return f"TimescaleDB {self.host}:{self.port} / {self.pg_database}"
         return "CSV"
@@ -154,10 +174,77 @@ PARAMS = {
     "rotate_mb": ("SQLite: nowy plik po", 0, 1_000_000, "MB",
                   "Tylko SQLite: gdy plik bazy przekroczy ten rozmiar, kolejne nagrania trafiają do nowego pliku "
                   "(nazwa_2.db, nazwa_3.db…). 0 = bez limitu rozmiaru."),
+    "compress_days": ("Kompresja danych starszych niż", 0, 3650, "dni",
+                      "Tylko TimescaleDB (z rozszerzeniem timescaledb): dane starsze niż tyle dni są kompresowane przez serwer "
+                      "(zwykle kilka razy mniej miejsca). Skompresowanych nagrań nie da się usunąć w starszych wersjach TimescaleDB "
+                      "(poniżej 2.11), a w nowszych usuwanie jest wolniejsze. 0 = bez kompresji: najprostsze usuwanie, ale tabela "
+                      "zajmuje pełny rozmiar. Zmiana działa od następnego połączenia z bazą; to, co już skompresowano, zostaje "
+                      "skompresowane."),
+    "trash_days": ("Kosz: przechowuj", 0, 3650, "dni",
+                   "Usunięte nagranie trafia do kosza (jest ukryte, ale można je przywrócić) i po tylu dniach znika na stałe. "
+                   "0 = bez kosza: usunięcie jest od razu trwałe."),
+    "retention_days": ("Automatyczne czyszczenie: nagrania starsze niż", 0, 36500, "dni",
+                       "Własne nagrania starsze niż tyle dni są przenoszone do kosza (przy otwarciu okna „Przegląd nagrań”). "
+                       "0 = wyłączone."),
     "read_max_points": ("Odczyt: maks. punktów na sygnał", 1000, 50_000_000, "pkt",
                         "Przy wczytywaniu bardzo długiego zakresu program, jeśli danych jest więcej niż tyle, zmniejsza je "
                         "(dla każdego przedziału zachowuje wartość minimalną i maksymalną, więc szpilki nie znikają)."),
 }
+
+
+def current_user() -> str:
+    try:
+        return getpass.getuser()
+    except Exception:
+        return os.environ.get("USERNAME", "")
+
+
+def shared_data_dir() -> str | None:
+    """Folder for SQLite files shared by every Windows user of this computer (ProgramData/S7Trace/data, fallback
+    Public/S7Trace/data); None when neither can be created."""
+    for var in ("PROGRAMDATA", "PUBLIC"):
+        base = os.environ.get(var)
+        if not base:
+            continue
+        d = os.path.join(base, "S7Trace", "data")
+        try:
+            fresh = not os.path.isdir(d)
+            os.makedirs(d, exist_ok=True)
+            if fresh:
+                from . import sessions as _s
+                _s._grant_everyone(os.path.dirname(d))
+                _s._grant_everyone(d)
+            return d
+        except OSError:
+            continue
+    return None
+
+
+def effective_base(cfg: "StoreConfig", base_dir: str = "") -> str:
+    """Folder a relative SQLite path is resolved against: the shared one (option) or the user's own."""
+    if cfg.kind == "sqlite" and cfg.sqlite_shared:
+        return shared_data_dir() or base_dir
+    return base_dir
+
+
+def norm_session(d: dict) -> dict:
+    """Types and defaults of a session description, whatever the backend returned."""
+    out = dict(d)
+
+    def num(v, cast, default=None):
+        try:
+            return cast(float(v)) if v not in (None, "") else default
+        except (TypeError, ValueError):
+            return default
+    out["start_us"] = num(out.get("start_us"), int, 0)
+    out["end_us"] = num(out.get("end_us"), int)
+    dl = num(out.get("deleted_us"), int)
+    out["deleted_us"] = dl if dl else None                     # 0 / empty = not deleted
+    out["keyframe_min"] = num(out.get("keyframe_min"), float, 0.0)
+    for k in ("name", "title", "notes", "tags", "owner", "computer", "ip", "tab", "conf", "mode"):
+        v = out.get(k)
+        out[k] = "" if v is None else str(v)
+    return out
 
 
 def new_session_id() -> str:
@@ -248,7 +335,7 @@ def rotated_sqlite_path(cfg: "StoreConfig", base_dir: str = "", now: datetime | 
     """The SQLite file a new recording goes to: the configured file, with the date added (rotate_daily) and/or a counter
     (_2, _3 … once a file is larger than rotate_mb). Without rotation it is simply the configured file."""
     p = cfg.sqlite_path or "s7trace.db"
-    p = p if os.path.isabs(p) else os.path.join(base_dir, p)
+    p = p if os.path.isabs(p) else os.path.join(effective_base(cfg, base_dir), p)
     stem, ext = os.path.splitext(p)
     if cfg.rotate_daily:
         stem += (now or datetime.now()).strftime("_%Y-%m-%d")
@@ -304,6 +391,32 @@ class Backend:
     def ping(self) -> str: ...
 
 
+    def update_session(self, session_id: str, fields: dict) -> None:
+        """Changes title / notes / tags / deleted_us / end_us of a stored recording."""
+        raise NotImplementedError
+
+    def delete_session(self, session_id: str) -> None:
+        """Removes the recording (its data and its description) for good."""
+        raise NotImplementedError
+
+    def stats(self) -> dict:
+        """{session id: number of stored entries}; backends that cannot tell cheaply return {}."""
+        return {}
+
+
+def _td(rows):
+    """(time, {signal: value}, is_keyframe) of every row; a row is (t, d) or (t, d, True) for a keyframe."""
+    for r in rows:
+        yield r[0], r[1], len(r) > 2 and bool(r[2])
+
+
+SESSION_COLS = ("id", "name", "start_us", "end_us", "ip", "tab", "conf", "mode", "signals", "fields",
+                "title", "notes", "tags", "owner", "computer", "keyframe_min", "deleted_us")
+EXTRA_COLS = {"title": "TEXT", "notes": "TEXT", "tags": "TEXT", "owner": "TEXT", "computer": "TEXT",
+              "keyframe_min": "REAL", "deleted_us": "INTEGER"}
+EDITABLE = ("title", "notes", "tags", "deleted_us", "end_us")
+
+
 def _meta_json(meta: dict) -> dict:
     return {**meta, "signals": json.dumps(meta.get("signals", []), ensure_ascii=False),
             "fields": json.dumps(meta.get("fields", []), ensure_ascii=False)}
@@ -335,21 +448,47 @@ class SqliteBackend(Backend):
             CREATE TABLE IF NOT EXISTS samples(
                 session TEXT NOT NULL, sig INTEGER NOT NULL, ts_us INTEGER NOT NULL, value REAL,
                 PRIMARY KEY(session, sig, ts_us)) WITHOUT ROWID;""")
+        have = {r[1] for r in self.db.execute("PRAGMA table_info(sessions)")}
+        for col, typ in EXTRA_COLS.items():                        # files written by an older version get the new columns
+            if col not in have:
+                self.db.execute(f"ALTER TABLE sessions ADD COLUMN {col} {typ}")
         self.db.commit()
         self.sid = ""
 
     def begin(self, meta):
         self.sid = meta.get("id") or new_session_id()
         m = _meta_json(meta)
-        self.db.execute("INSERT OR REPLACE INTO sessions(id,name,start_us,end_us,ip,tab,conf,mode,signals,fields)"
-                        " VALUES(?,?,?,?,?,?,?,?,?,?)",
+        self.db.execute("INSERT OR REPLACE INTO sessions(id,name,start_us,end_us,ip,tab,conf,mode,signals,fields,"
+                        "title,notes,tags,owner,computer,keyframe_min,deleted_us) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (self.sid, m.get("name", ""), m["start_us"], None, m.get("ip", ""), m.get("tab", ""),
-                         m.get("conf", ""), m.get("mode", "changes"), m["signals"], m["fields"]))
+                         m.get("conf", ""), m.get("mode", "changes"), m["signals"], m["fields"], m.get("title", ""),
+                         m.get("notes", ""), m.get("tags", ""), m.get("owner", ""), m.get("computer", ""),
+                         m.get("keyframe_min", 0.0), None))
         self.db.commit()
         return self.sid
 
+    def update_session(self, session_id, fields):
+        sets = {k: v for k, v in fields.items() if k in EDITABLE}
+        if sets:
+            self.db.execute(f"UPDATE sessions SET {','.join(k + '=?' for k in sets)} WHERE id=?",
+                            (*sets.values(), session_id))
+            self.db.commit()
+
+    def delete_session(self, session_id):
+        self.db.execute("DELETE FROM samples WHERE session=?", (session_id,))
+        self.db.execute("DELETE FROM sessions WHERE id=?", (session_id,))
+        self.db.commit()
+        try:                                                       # give the space back to the file system
+            self.db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            self.db.execute("VACUUM")
+        except sqlite3.Error:
+            pass
+
+    def stats(self):
+        return dict(self.db.execute("SELECT session, COUNT(*) FROM samples GROUP BY session").fetchall())
+
     def write(self, rows):
-        data = [(self.sid, i, t, None if (v != v) else float(v)) for t, d in rows for i, v in d.items()]
+        data = [(self.sid, i, t, None if (v != v) else float(v)) for t, d, _k in _td(rows) for i, v in d.items()]
         self.db.executemany("INSERT OR REPLACE INTO samples(session,sig,ts_us,value) VALUES(?,?,?,?)", data)
         self.db.commit()
 
@@ -364,10 +503,8 @@ class SqliteBackend(Backend):
             pass
 
     def sessions(self):
-        cur = self.db.execute("SELECT id,name,start_us,end_us,ip,tab,conf,mode,signals,fields FROM sessions"
-                              " ORDER BY start_us DESC")
-        keys = ("id", "name", "start_us", "end_us", "ip", "tab", "conf", "mode", "signals", "fields")
-        return [_meta_back(dict(zip(keys, r))) for r in cur.fetchall()]
+        cur = self.db.execute(f"SELECT {','.join(SESSION_COLS)} FROM sessions ORDER BY start_us DESC")
+        return [norm_session(_meta_back(dict(zip(SESSION_COLS, r)))) for r in cur.fetchall()]
 
     def read(self, session_id, t0_us=None, t1_us=None, max_points=0):
         meta = next((s for s in self.sessions() if s["id"] == session_id), None)
@@ -381,7 +518,9 @@ class SqliteBackend(Backend):
                               (session_id, lo, hi, MAX_READ_ROWS + 1)).fetchone()[0] > MAX_READ_ROWS
         if big and max_points > 0:                                # too much for memory: min / max of every time slice, in SQL
             a = t0_us if t0_us is not None else int(meta["start_us"])
-            b = t1_us if t1_us is not None else int(meta.get("end_us") or time.time() * 1e6)
+            b = t1_us if t1_us is not None else meta.get("end_us")
+            if b is None:                                        # a recording that was never closed properly
+                b = self.db.execute("SELECT MAX(ts_us) FROM samples WHERE session=?", (session_id,)).fetchone()[0] or a
             w = max((b - a) // max(max_points // 2, 1) + 1, 1)
             if t0_us is not None and meta["mode"] == "changes":
                 events += self._carry(session_id, lo, t0_us)
@@ -441,9 +580,23 @@ def session_line(measurement: str, meta: dict) -> str:
     m = _meta_json(meta)
     f = [f"name={_esc_str(m.get('name', ''))}", f"start_us={int(m['start_us'])}i", f"ip={_esc_str(m.get('ip', ''))}",
          f"tab={_esc_str(m.get('tab', ''))}", f"conf={_esc_str(m.get('conf', ''))}", f"mode={_esc_str(m.get('mode', ''))}",
-         f"signals={_esc_str(m['signals'])}", f"fields={_esc_str(m['fields'])}"]
+         f"signals={_esc_str(m['signals'])}", f"fields={_esc_str(m['fields'])}",
+         f"title={_esc_str(m.get('title', ''))}", f"notes={_esc_str(m.get('notes', ''))}", f"tags={_esc_str(m.get('tags', ''))}",
+         f"owner={_esc_str(m.get('owner', ''))}", f"computer={_esc_str(m.get('computer', ''))}",
+         f"keyframe_min={float(m.get('keyframe_min') or 0.0)!r}", "deleted_us=0i"]
     return (f"{_esc_meas(measurement + '_sessions')},session={_esc_key(meta['id'])} {','.join(f)} "
             f"{int(m['start_us']) * 1000}")
+
+
+def session_update_line(measurement: str, session: str, start_us: int, fields: dict) -> str:
+    """Rewrites some fields of the session point (same series and time: InfluxDB merges the fields)."""
+    f = []
+    for k, v in fields.items():
+        if k in ("title", "notes", "tags"):
+            f.append(f"{k}={_esc_str(v or '')}")
+        elif k in ("deleted_us", "end_us"):
+            f.append(f"{k}={int(v or 0)}i")
+    return f"{_esc_meas(measurement + '_sessions')},session={_esc_key(session)} {','.join(f)} {int(start_us) * 1000}"
 
 
 QUALITY = "__ok"
@@ -463,8 +616,6 @@ class InfluxBackend(Backend):
         c = self.cfg
         if self.v == 2 and c.token:
             h["Authorization"] = f"Token {c.token}"
-        elif self.v == 3 and c.token:
-            h["Authorization"] = f"Bearer {c.token}"
         elif self.v == 1 and c.user:
             h["Authorization"] = "Basic " + b64encode(f"{c.user}:{c.password}".encode()).decode()
         return h
@@ -487,16 +638,15 @@ class InfluxBackend(Backend):
             body = "\n".join(lines[i:i + 5000]).encode("utf-8")
             if self.v == 1:
                 self._http("POST", "/write", {"db": c.database, "precision": "ns"}, body)
-            elif self.v == 2:
-                self._http("POST", "/api/v2/write", {"org": c.org, "bucket": c.bucket, "precision": "ns"}, body)
             else:
-                self._http("POST", "/api/v3/write_lp", {"db": c.database, "precision": "nanosecond"}, body)
+                self._http("POST", "/api/v2/write", {"org": c.org, "bucket": c.bucket, "precision": "ns"}, body)
 
     # -- write
     def begin(self, meta):
         self.sid = meta.get("id") or new_session_id()
         meta = {**meta, "id": self.sid}
         self.fields = meta.get("fields", [])
+        self._start_us = int(meta["start_us"])
         if self.v == 1:
             try:
                 self._http("POST", "/query", {"q": f'CREATE DATABASE "{self.cfg.database}"'})
@@ -507,11 +657,11 @@ class InfluxBackend(Backend):
 
     def write(self, rows):
         lines = []
-        for t, d in rows:
+        for t, d, key in _td(rows):
             ok = {}
             for i, v in d.items():
                 valid = v == v
-                if valid != self._valid.get(i, True):              # availability changed: remember it in `<name>__ok`
+                if key or valid != self._valid.get(i, True):       # availability changed (or keyframe): `<name>__ok`
                     ok[i] = 1.0 if valid else 0.0
                 self._valid[i] = valid
             ln = sample_line(self.meas, self.sid, self.fields, t, d, ok)
@@ -521,43 +671,55 @@ class InfluxBackend(Backend):
             self._write_lp(lines)
 
     def end(self, end_us):
-        pass
+        if self.sid and getattr(self, "_start_us", None):
+            self._write_lp([session_update_line(self.meas, self.sid, self._start_us, {"end_us": end_us})])
 
     def close(self):
         pass
 
+    def update_session(self, session_id, fields):
+        meta = next((x for x in self.sessions() if x["id"] == session_id), None)
+        if meta is None:
+            raise StoreError("Nie znaleziono nagrania w bazie.")
+        sets = {k: v for k, v in fields.items() if k in EDITABLE}
+        if sets:
+            self._write_lp([session_update_line(self.meas, session_id, meta["start_us"], sets)])
+
+    def delete_session(self, session_id):
+        c, sid = self.cfg, session_id.replace("'", "").replace('"', "")
+        for m in (self.meas, self.meas + "_sessions"):
+            if self.v == 1:
+                self._http("POST", "/query", {"db": c.database, "q": f'DROP SERIES FROM "{m}" WHERE "session"=\'{sid}\''})
+            else:
+                body = json.dumps({"start": "1970-01-01T00:00:00Z", "stop": "2200-01-01T00:00:00Z",
+                                   "predicate": f'_measurement="{m}" AND session="{sid}"'}).encode()
+                self._http("POST", "/api/v2/delete", {"org": c.org, "bucket": c.bucket}, body,
+                           {"Content-Type": "application/json"})
+
     # -- read
-    def _query(self, v1: str, flux: str, sql: str):
+    def _query(self, v1: str, flux: str):
         c = self.cfg
         if self.v == 1:
             raw = self._http("GET", "/query", {"db": c.database, "q": v1, "epoch": "ns"})
             return json.loads(raw)
-        if self.v == 2:
-            body = json.dumps({"query": flux, "type": "flux"}).encode()
-            raw = self._http("POST", "/api/v2/query", {"org": c.org}, body,
-                             {"Content-Type": "application/json", "Accept": "application/csv"})
-            return parse_flux_csv(raw.decode("utf-8"))
-        body = json.dumps({"db": c.database, "q": sql, "format": "json"}).encode()
-        raw = self._http("POST", "/api/v3/query_sql", None, body, {"Content-Type": "application/json"})
-        return json.loads(raw)
+        body = json.dumps({"query": flux, "type": "flux"}).encode()
+        raw = self._http("POST", "/api/v2/query", {"org": c.org}, body,
+                         {"Content-Type": "application/json", "Accept": "application/csv"})
+        return parse_flux_csv(raw.decode("utf-8"))
 
     def sessions(self):
         m, b = self.meas + "_sessions", self.cfg.bucket
         res = self._query(f'SELECT * FROM "{m}" ORDER BY time DESC',
                           f'from(bucket: "{b}") |> range(start: -3650d) |> filter(fn: (r) => r._measurement == "{m}")'
-                          ' |> pivot(rowKey: ["_time", "session"], columnKey: ["_field"], valueColumn: "_value")',
-                          f'SELECT * FROM "{m}" ORDER BY time DESC')
+                          ' |> pivot(rowKey: ["_time", "session"], columnKey: ["_field"], valueColumn: "_value")')
         out = []
         for r in self._rows(res):
-            d = _meta_back({**r, "id": r.get("session")})
-            d["start_us"] = int(float(d.get("start_us") or 0))
-            d["end_us"] = None
-            out.append(d)
+            out.append(norm_session(_meta_back({**r, "id": r.get("session")})))
         out.sort(key=lambda s: -s["start_us"])
         return out
 
     def _rows(self, res) -> list[dict]:
-        """Rows (dicts, 'time' in epoch microseconds) of a query result of any version."""
+        """Rows (dicts, 'time' in epoch microseconds) of a query result of either version."""
         if self.v == 1:
             rows = []
             for r in res.get("results", []):
@@ -580,33 +742,71 @@ class InfluxBackend(Backend):
             rows.append(d)
         return rows
 
-    def read(self, session_id, t0_us=None, t1_us=None, max_points=0):
-        meta = next((s for s in self.sessions() if s["id"] == session_id), None)
-        if meta is None:
-            raise StoreError("Nie znaleziono nagrania w bazie.")
+    def _range_rows(self, sess: str, lo: int, hi: int) -> list[dict]:
+        """The points of a recording between two times (inclusive), oldest first; _TooBig above MAX_READ_ROWS."""
         m, b = self.meas, self.cfg.bucket
-        lo = t0_us if t0_us is not None else meta["start_us"]
-        hi = t1_us if t1_us is not None else int(time.time() * 1e6) + 86_400_000_000
-        sess = session_id.replace("'", "")
         v1 = (f"SELECT * FROM \"{m}\" WHERE \"session\"='{sess}' AND time >= {lo * 1000} AND time <= {hi * 1000}"
               f" ORDER BY time ASC LIMIT {MAX_READ_ROWS + 1}")
         flux = (f'from(bucket: "{b}") |> range(start: time(v: {lo * 1000}), stop: time(v: {hi * 1000 + 1}))'
                 f' |> filter(fn: (r) => r._measurement == "{m}" and r.session == "{sess}")'
                 ' |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")')
-        sql = (f"SELECT * FROM \"{m}\" WHERE session = '{sess}' AND time >= '{us_to_rfc3339(lo)}'"
-               f" AND time <= '{us_to_rfc3339(hi)}' ORDER BY time ASC LIMIT {MAX_READ_ROWS + 1}")
-        rows = self._rows(self._query(v1, flux, sql))
+        rows = self._rows(self._query(v1, flux))
         if len(rows) > MAX_READ_ROWS:
-            raise StoreError("Za dużo danych do wczytania naraz – wybierz węższy zakres czasu.")
+            raise _TooBig(f"Za dużo danych do wczytania naraz (> {MAX_READ_ROWS:,} wpisów) – wybierz węższy zakres czasu.")
+        return rows
+
+    def read(self, session_id, t0_us=None, t1_us=None, max_points=0):
+        meta = next((s for s in self.sessions() if s["id"] == session_id), None)
+        if meta is None:
+            raise StoreError("Nie znaleziono nagrania w bazie.")
+        lo = t0_us if t0_us is not None else meta["start_us"]
+        hi = t1_us if t1_us is not None else int(meta.get("end_us") or time.time() * 1e6) + 86_400_000_000
+        sess = session_id.replace("'", "")
         fields_ = meta.get("fields") or unique_fields([s.get("name", "") for s in meta["signals"]])
         index = {f: i for i, f in enumerate(fields_)}
-        events = []
+        hold = meta["mode"] == "changes"
+        state = self._carry_in(meta, sess, t0_us, index) if (t0_us is not None and hold) else {}
+        try:
+            rows = self._range_rows(sess, lo, hi)
+        except _TooBig:
+            if max_points <= 0:
+                raise
+            return self._read_sliced(meta, sess, lo, hi, index, hold, state, max_points)
+        events = [(t0_us, i, v) for i, v in state.items()]       # the state before the range first, real points after it
         for r in rows:
             events += self._row_events(r, index)
-        if t0_us is not None and meta["mode"] == "changes":      # carry-in: what every signal had before the range
-            events += [(t0_us, i, v) for i, v in self._carry_in(meta, sess, t0_us, index).items()]
-        t, v = events_to_matrix(len(fields_), events, meta["mode"] == "changes")
+        t, v = events_to_matrix(len(fields_), events, hold)
         return meta, t, v
+
+    def _read_sliced(self, meta, sess, lo, hi, index, hold, state, max_points):
+        """A range too big for memory: read it in slices, thin every slice out (min / max) and join the pieces. The state
+        of the signals is carried from one slice to the next. Works on every InfluxDB version."""
+        end = int(meta.get("end_us") or 0) or min(hi, int(time.time() * 1e6))
+        hi = min(hi, end)
+        span = max(hi - lo, 1)
+        step = max(span // 48, 60_000_000)
+        n = len(index)
+        ts, vs = [], []
+        a = lo
+        while a <= hi:
+            b = min(a + step, hi + 1)
+            try:
+                rows = self._range_rows(sess, a, b - 1)
+            except _TooBig:
+                raise StoreError("Za dużo danych w krótkim czasie – wybierz węższy zakres czasu.") from None
+            events = [(a, i, v) for i, v in state.items()]
+            for r in rows:
+                events += self._row_events(r, index)
+            t, v = events_to_matrix(n, events, hold)
+            if len(t):
+                state = {i: (None if v[-1, i] != v[-1, i] else float(v[-1, i])) for i in range(n)} if hold else {}
+                t, v = downsample_minmax(t, v, max(int(max_points * (b - a) / span), 8))
+                ts.append(t)
+                vs.append(v)
+            a = b
+        if not ts:
+            return meta, np.zeros(0, dtype=np.int64), np.zeros((0, n))
+        return meta, np.concatenate(ts), np.vstack(vs)
 
     @staticmethod
     def _row_events(r: dict, index: dict) -> list:
@@ -621,16 +821,46 @@ class InfluxBackend(Backend):
         return out
 
     def _carry_in(self, meta: dict, sess: str, t0_us: int, index: dict) -> dict[int, float]:
+        """The state of every signal at `t0_us` (None = it was not readable then). The keyframes (a full state every N
+        minutes) make a short look-back enough, and it gives exact times; whatever it does not find comes from the
+        slower 'last value before' query."""
+        kf = float(meta.get("keyframe_min") or 0.0)
+        got: dict[int, float | None] = {}
+        if kf > 0:
+            a = max(int(meta["start_us"]), t0_us - int(kf * 60e6 * 2) - 5_000_000)
+            try:
+                got = self._window_state(sess, a, t0_us, index)
+            except StoreError:
+                got = {}
+        if len(got) < len(index):
+            rest = self._carry_in_last(meta, sess, t0_us, index)
+            for i, v in rest.items():
+                got.setdefault(i, v)
+        return got
+
+    def _window_state(self, sess: str, a_us: int, b_us: int, index: dict) -> dict[int, float | None]:
+        """Latest value per signal among the points in [a, b): a range query and a pass over its rows in time order."""
+        m, bk = self.meas, self.cfg.bucket
+        v1 = (f"SELECT * FROM \"{m}\" WHERE \"session\"='{sess}' AND time >= {a_us * 1000} AND time < {b_us * 1000}"
+              " ORDER BY time ASC")
+        flux = (f'from(bucket: "{bk}") |> range(start: time(v: {a_us * 1000}), stop: time(v: {b_us * 1000}))'
+                f' |> filter(fn: (r) => r._measurement == "{m}" and r.session == "{sess}")'
+                ' |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")')
+        out: dict[int, float | None] = {}
+        for r in sorted(self._rows(self._query(v1, flux)), key=lambda r: r["time"]):
+            for _t, i, v in self._row_events(r, index):
+                out[i] = v
+        return out
+
+    def _carry_in_last(self, meta: dict, sess: str, t0_us: int, index: dict) -> dict[int, float]:
         """The last value of every signal before `t0_us` (None = it was not readable then)."""
         m, b, lo = self.meas, self.cfg.bucket, t0_us
         start = int(meta["start_us"]) * 1000
         v1 = f'SELECT LAST(*) FROM "{m}" WHERE "session"=\'{sess}\' AND time < {lo * 1000}'
         flux = (f'from(bucket: "{b}") |> range(start: time(v: {start}), stop: time(v: {lo * 1000})) '
                 f'|> filter(fn: (r) => r._measurement == "{m}" and r.session == "{sess}") |> last()')
-        sql = (f"SELECT * FROM \"{m}\" WHERE session = '{sess}' AND time < '{us_to_rfc3339(lo)}' "
-               "ORDER BY time DESC LIMIT 5000")
         try:
-            res = self._query(v1, flux, sql)
+            res = self._query(v1, flux)
         except StoreError:
             return {}
         last: dict[str, float] = {}
@@ -638,16 +868,11 @@ class InfluxBackend(Backend):
             for r in res:
                 if r.get("_field") and r.get("_value") not in (None, ""):
                     last[r["_field"]] = float(r["_value"])
-        elif self.v == 1:                                          # LAST(*) -> columns "last_<field>"
+        else:                                                      # v1: LAST(*) -> columns "last_<field>"
             for r in self._rows(res):
                 for k, val in r.items():
                     if k.startswith("last_") and val is not None:
                         last[k[5:]] = float(val)
-        else:                                                      # newest rows first: the first value of a column wins
-            for r in self._rows(res):
-                for k, val in r.items():
-                    if k not in last and val not in (None, "") and k not in ("time", "session"):
-                        last[k] = val
         out: dict[int, float | None] = {}
         for k, val in last.items():
             if k in index:
@@ -660,8 +885,6 @@ class InfluxBackend(Backend):
     def ping(self):
         if self.v == 1:
             self._http("GET", "/ping")
-        elif self.v == 2:
-            self._http("GET", "/health")
         else:
             self._http("GET", "/health")
         return f"InfluxDB {self.v}.x: {self.base} odpowiada"
@@ -747,6 +970,9 @@ class TimescaleBackend(Backend):
         cur = c.cursor()
         cur.execute(f"CREATE TABLE IF NOT EXISTS {self.ts}(id text PRIMARY KEY, name text, start_us bigint,"
                     " end_us bigint, ip text, tab text, conf text, mode text, signals text, fields text)")
+        for col, typ in (("title", "text"), ("notes", "text"), ("tags", "text"), ("owner", "text"), ("computer", "text"),
+                         ("keyframe_min", "double precision"), ("deleted_us", "bigint")):
+            cur.execute(f"ALTER TABLE {self.ts} ADD COLUMN IF NOT EXISTS {col} {typ}")
         cur.execute(f"CREATE TABLE IF NOT EXISTS {self.t}(time timestamptz NOT NULL, session text NOT NULL,"
                     " sig integer NOT NULL, value double precision)")
         c.commit()
@@ -754,27 +980,69 @@ class TimescaleBackend(Backend):
             cur.execute("CREATE EXTENSION IF NOT EXISTS timescaledb")
             cur.execute(f"SELECT create_hypertable('{self.t}', 'time', if_not_exists => TRUE)")
             c.commit()
-            cur.execute(f"ALTER TABLE {self.t} SET (timescaledb.compress, timescaledb.compress_segmentby = 'session, sig')")
-            cur.execute(f"SELECT add_compression_policy('{self.t}', INTERVAL '7 days', if_not_exists => TRUE)")
+        except Exception:
+            c.rollback()
+        else:
+            self._compression(cur)
+        cur.execute(f"CREATE INDEX IF NOT EXISTS {self.t}_sess_idx ON {self.t}(session, sig, time DESC)")
+        c.commit()
+
+    def _compression(self, cur) -> None:
+        """Compress chunks older than `compress_days` days (0 = none). Best effort: not every edition has compression."""
+        c, n = self.conn, int(self.cfg.compress_days)
+        try:
+            if n > 0:
+                cur.execute(f"ALTER TABLE {self.t} SET (timescaledb.compress, timescaledb.compress_segmentby = 'session, sig')")
+                cur.execute("SELECT (config->>'compress_after')::interval = %s::interval FROM timescaledb_information.jobs "
+                            "WHERE proc_name = 'policy_compression' AND hypertable_name = %s", (f"{n} days", self.t))
+                row = cur.fetchone()
+                if row is None or not row[0]:                     # no policy yet, or one with another interval: set it afresh
+                    cur.execute(f"SELECT remove_compression_policy('{self.t}', if_exists => TRUE)")
+                    cur.execute(f"SELECT add_compression_policy('{self.t}', INTERVAL '{n} days', if_not_exists => TRUE)")
+            else:
+                cur.execute(f"SELECT remove_compression_policy('{self.t}', if_exists => TRUE)")
             c.commit()
         except Exception:
             c.rollback()
-        cur.execute(f"CREATE INDEX IF NOT EXISTS {self.t}_sess_idx ON {self.t}(session, sig, time DESC)")
-        c.commit()
 
     def begin(self, meta):
         self.sid = meta.get("id") or new_session_id()
         m = _meta_json(meta)
         cur = self.conn.cursor()
-        cur.execute(f"INSERT INTO {self.ts}(id,name,start_us,end_us,ip,tab,conf,mode,signals,fields)"
-                    " VALUES(%s,%s,%s,NULL,%s,%s,%s,%s,%s,%s) ON CONFLICT (id) DO NOTHING",
+        cur.execute(f"INSERT INTO {self.ts}(id,name,start_us,end_us,ip,tab,conf,mode,signals,fields,title,notes,tags,owner,"
+                    "computer,keyframe_min,deleted_us) VALUES(%s,%s,%s,NULL,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL)"
+                    " ON CONFLICT (id) DO NOTHING",
                     (self.sid, m.get("name", ""), m["start_us"], m.get("ip", ""), m.get("tab", ""), m.get("conf", ""),
-                     m.get("mode", "changes"), m["signals"], m["fields"]))
+                     m.get("mode", "changes"), m["signals"], m["fields"], m.get("title", ""), m.get("notes", ""),
+                     m.get("tags", ""), m.get("owner", ""), m.get("computer", ""), m.get("keyframe_min", 0.0)))
         self.conn.commit()
         return self.sid
 
+    def update_session(self, session_id, fields):
+        sets = {k: v for k, v in fields.items() if k in EDITABLE}
+        if sets:
+            cur = self.conn.cursor()
+            cur.execute(f"UPDATE {self.ts} SET {','.join(k + '=%s' for k in sets)} WHERE id=%s", (*sets.values(), session_id))
+            self.conn.commit()
+
+    def delete_session(self, session_id):
+        cur = self.conn.cursor()
+        try:
+            cur.execute(f"DELETE FROM {self.t} WHERE session=%s", (session_id,))
+            cur.execute(f"DELETE FROM {self.ts} WHERE id=%s", (session_id,))
+            self.conn.commit()
+        except Exception as e:
+            self.conn.rollback()
+            raise StoreError(f"TimescaleDB: nie można usunąć danych ({str(e).strip()[:200]}). Dane w skompresowanych "
+                             "fragmentach wymagają nowszej wersji TimescaleDB (2.11+).") from None
+
+    def stats(self):
+        cur = self.conn.cursor()
+        cur.execute(f"SELECT session, count(*) FROM {self.t} GROUP BY session")
+        return {k: int(v) for k, v in cur.fetchall()}
+
     def write(self, rows):
-        data = [(us_to_rfc3339(t), self.sid, i, None if v != v else float(v)) for t, d in rows for i, v in d.items()]
+        data = [(us_to_rfc3339(t), self.sid, i, None if v != v else float(v)) for t, d, _k in _td(rows) for i, v in d.items()]
         cur = self.conn.cursor()
         cur.executemany(f"INSERT INTO {self.t}(time,session,sig,value) VALUES(%s,%s,%s,%s)", data)
         self.conn.commit()
@@ -792,9 +1060,8 @@ class TimescaleBackend(Backend):
 
     def sessions(self):
         cur = self.conn.cursor()
-        cur.execute(f"SELECT id,name,start_us,end_us,ip,tab,conf,mode,signals,fields FROM {self.ts} ORDER BY start_us DESC")
-        keys = ("id", "name", "start_us", "end_us", "ip", "tab", "conf", "mode", "signals", "fields")
-        return [_meta_back(dict(zip(keys, r))) for r in cur.fetchall()]
+        cur.execute(f"SELECT {','.join(SESSION_COLS)} FROM {self.ts} ORDER BY start_us DESC")
+        return [norm_session(_meta_back(dict(zip(SESSION_COLS, r)))) for r in cur.fetchall()]
 
     def read(self, session_id, t0_us=None, t1_us=None, max_points=0):
         meta = next((s for s in self.sessions() if s["id"] == session_id), None)
@@ -809,6 +1076,29 @@ class TimescaleBackend(Backend):
             cur.execute(f"SELECT DISTINCT ON (sig) sig, value FROM {self.t} WHERE session=%s AND time<%s::timestamptz"
                         " ORDER BY sig, time DESC", (session_id, us_to_rfc3339(lo)))
             events += [(lo, s, v) for s, v in cur.fetchall()]
+        if max_points > 0:                                       # too much for memory: min / max of every time slice, in SQL
+            cur.execute(f"SELECT COUNT(*) FROM (SELECT 1 FROM {self.t} WHERE session=%s AND time>=%s::timestamptz"
+                        " AND time<=%s::timestamptz LIMIT %s) x",
+                        (session_id, us_to_rfc3339(lo), us_to_rfc3339(hi), MAX_READ_ROWS + 1))
+            if cur.fetchone()[0] > MAX_READ_ROWS:
+                a = t0_us if t0_us is not None else int(meta["start_us"])
+                b = t1_us if t1_us is not None else meta.get("end_us")
+                if b is None:                                    # a recording that was never closed properly
+                    cur.execute(f"SELECT (EXTRACT(EPOCH FROM max(time)) * 1000000)::bigint FROM {self.t} WHERE session=%s",
+                                (session_id,))
+                    b = int(cur.fetchone()[0] or a)
+                w = max((b - a) // max(max_points // 2, 1) + 1, 1)
+                cur.execute("SELECT sig, (EXTRACT(EPOCH FROM date_bin(%s::bigint * interval '1 microsecond', time,"
+                            f" %s::timestamptz)) * 1000000)::bigint AS k, MIN(value), MAX(value) FROM {self.t}"
+                            " WHERE session=%s AND time>=%s::timestamptz AND time<=%s::timestamptz GROUP BY sig, k",
+                            (w, us_to_rfc3339(a), session_id, us_to_rfc3339(lo), us_to_rfc3339(hi)))
+                for sig, k, vmin, vmax in cur.fetchall():
+                    events.append((int(k), sig, vmin))
+                    if vmax is not None and vmax != vmin:
+                        events.append((int(k) + w // 2, sig, vmax))
+                events.sort(key=lambda e: e[0])
+                t, v = events_to_matrix(n, events, meta["mode"] == "changes")
+                return meta, t, v
         cur.execute(f"SELECT (EXTRACT(EPOCH FROM time) * 1000000)::bigint, sig, value FROM {self.t}"
                     " WHERE session=%s AND time>=%s::timestamptz AND time<=%s::timestamptz ORDER BY time LIMIT %s",
                     (session_id, us_to_rfc3339(lo), us_to_rfc3339(hi), MAX_READ_ROWS + 1))
@@ -828,8 +1118,8 @@ def open_backend(cfg: StoreConfig, base_dir: str = "", timeout: float | None = N
     k = cfg.kind
     if k == "sqlite":
         p = cfg.sqlite_path or "s7trace.db"
-        return SqliteBackend(p if os.path.isabs(p) else os.path.join(base_dir, p))
-    if k in ("influx1", "influx2", "influx3"):
+        return SqliteBackend(p if os.path.isabs(p) else os.path.join(effective_base(cfg, base_dir), p))
+    if k in ("influx1", "influx2"):
         return InfluxBackend(cfg, int(k[-1]), timeout)
     if k == "timescale":
         return TimescaleBackend(cfg, timeout)
@@ -872,7 +1162,8 @@ class Spool:
 
     def add(self, rows) -> None:
         self.db.executemany("INSERT INTO q(t,d) VALUES(?,?)",
-                            [(t, json.dumps({str(i): v for i, v in d.items()})) for t, d in rows])
+                            [(t, json.dumps({**{str(i): v for i, v in d.items()}, **({"k": 1} if key else {})}))
+                             for t, d, key in _td(rows)])
         self.db.commit()
 
     def count(self) -> int:
@@ -881,7 +1172,12 @@ class Spool:
     def peek(self, n: int) -> tuple[int, list]:
         """(last id, rows) of the oldest `n` rows; delete them with remove(last id) once delivered."""
         cur = self.db.execute("SELECT id,t,d FROM q ORDER BY id LIMIT ?", (n,)).fetchall()
-        rows = [(t, {int(k): (math.nan if v is None else v) for k, v in json.loads(d).items()}) for _, t, d in cur]
+        rows = []
+        for _, t, d in cur:
+            dd = json.loads(d)
+            key = dd.pop("k", None)
+            vals = {int(k): (math.nan if v is None else v) for k, v in dd.items()}
+            rows.append((t, vals, True) if key else (t, vals))
         return (cur[-1][0] if cur else 0), rows
 
     def remove(self, upto_id: int) -> None:
@@ -916,6 +1212,66 @@ class Spool:
                     pass
 
 
+_ACTIVE_SPOOLS: set[str] = set()                           # buffers of the recordings running in this program
+_ACTIVE_SESSIONS: set[str] = set()                         # ids of the recordings running in this program
+
+
+def scan_spools(base_dir: str) -> list[dict]:
+    """Disk buffers left behind by earlier recordings: [{path, name, meta, target, rows, size}] (buffers of recordings that
+    are running now are not listed)."""
+    folder = os.path.join(base_dir, "spool")
+    out = []
+    if not os.path.isdir(folder):
+        return out
+    for name in sorted(os.listdir(folder)):
+        path = os.path.join(folder, name)
+        if not (name.startswith("spool_") and name.endswith(".db")) or path in _ACTIVE_SPOOLS:
+            continue
+        sp = None
+        try:
+            sp = Spool(path, 0)
+            meta, target = sp.get_meta()
+            rows = sp.count()
+            sp.close(delete=rows == 0)                           # an empty buffer is just litter
+            if rows:
+                out.append({"path": path, "name": name, "meta": meta, "target": target, "rows": rows,
+                            "size": os.path.getsize(path)})
+        except Exception:
+            if sp is not None:
+                sp.close()
+    return out
+
+
+def deliver_spool(cfg: StoreConfig, path: str, base_dir: str = "") -> int:
+    """Sends a disk buffer to the database (oldest rows first) and deletes the file. Returns the number of rows.
+    Raises when the server cannot be reached (the file stays)."""
+    sp = Spool(path, 0)
+    n = 0
+    try:
+        meta, _target = sp.get_meta()
+        if not meta.get("id"):
+            raise StoreError("Bufor nie zawiera opisu nagrania.")
+        b = open_backend(cfg, base_dir)
+        try:
+            b.begin(meta)
+            while sp.count():
+                last, rows = sp.peek(20000)
+                b.write(rows)
+                sp.remove(last)
+                n += len(rows)
+        finally:
+            b.close()
+    except BaseException:
+        sp.close()
+        raise
+    sp.close(delete=True)
+    return n
+
+
+def remove_spool(path: str) -> None:
+    Spool(path, 0).close(delete=True)
+
+
 class DbRecorder:
     """The recorder of a database target: same interface as CsvRecorder (write / close / path), but the work is
     done by a thread: batches every ~0.5 s, retries while the server is away, bounded memory."""
@@ -935,13 +1291,19 @@ class DbRecorder:
         self.fields = unique_fields([s.name for s in signals])
         meta = {"id": new_session_id(), "name": meta_extra.get("name", ""), "start_us": to_us(start_wall, 0.0),
                 "ip": meta_extra.get("ip", ""), "tab": meta_extra.get("tab", ""), "conf": meta_extra.get("conf", ""),
+                "title": meta_extra.get("title", ""), "notes": meta_extra.get("notes", ""), "tags": meta_extra.get("tags", ""),
+                "owner": current_user(), "computer": platform.node(), "keyframe_min": self._key_s / 60.0,
                 "mode": cfg.mode, "signals": [s.to_dict() for s in signals], "fields": self.fields}
+        self._begun = False
+        self._info: dict = {}
+        self._info_dirty = False
         self._meta, self._base_dir, self.session = meta, base_dir, meta["id"]
         self.backend = backend
         if self.backend is None and cfg.kind == "sqlite":        # local file: a wrong path is reported at once
             self.backend = open_backend(cfg, base_dir)
         if self.backend is not None:
             self.backend.begin(meta)                             # network targets connect in the writer thread (retries)
+            self._begun = True
         self.path = f"{cfg.describe()} (nagranie {self.session})"
         self.q: queue.Queue = queue.Queue(maxsize=self.QUEUE_MAX or max(int(cfg.queue_max), 1000))
         self.dropped = 0
@@ -953,6 +1315,7 @@ class DbRecorder:
             try:
                 self.spool = Spool(os.path.join(base_dir, "spool", f"spool_{self.session}.db"), cfg.spool_mb)
                 self.spool.set_meta(meta, cfg.describe())
+                _ACTIVE_SPOOLS.add(self.spool.path)
             except (sqlite3.Error, OSError):
                 self.spool = None                                # no disk buffer: memory only
         self._stop = threading.Event()
@@ -960,10 +1323,11 @@ class DbRecorder:
         self._deadline = float("inf")
         self.thread = threading.Thread(target=self._run_spool if self.spool else self._run, daemon=True,
                                        name="StoreWriter")
+        _ACTIVE_SESSIONS.add(self.session)
         self.thread.start()
 
     def write(self, t: float, values) -> None:
-        key = self._key_s > 0 and t >= self._next_key
+        key = (self._key_s > 0 and t >= self._next_key) or self.filter.prev is None      # the first row is a full state too
         if key:                                                  # keyframe: the full state again (starting point for range reads)
             self._next_key = t + self._key_s
         idx = self.filter.changed(values, force=key)
@@ -971,7 +1335,7 @@ class DbRecorder:
             return
         us = to_us(self.start_wall, t)
         self._last_us = us
-        row = (us, {i: (values[i] if i < len(values) else math.nan) for i in idx})
+        row = (us, {i: (values[i] if i < len(values) else math.nan) for i in idx}) + ((True,) if key else ())
         try:
             self.q.put_nowait(row)
         except queue.Full:
@@ -981,6 +1345,28 @@ class DbRecorder:
                 pass
             self.dropped += 1
             self.q.put_nowait(row)
+
+    def update_info(self, title=None, notes=None, tags=None) -> None:
+        """Title / notes / tags of the recording being written (from the GUI thread; applied by the writer thread)."""
+        kw = {k: v for k, v in (("title", title), ("notes", notes), ("tags", tags)) if v is not None}
+        if not kw:
+            return
+        self._meta.update(kw)                                    # also used when the connection has to be opened later
+        self._info.update(kw)
+        self._info_dirty = True
+        if self.spool is not None:
+            try:
+                self.spool.set_meta(self._meta, self.cfg.describe())
+            except sqlite3.Error:
+                pass
+
+    def _apply_info(self) -> None:
+        if self._info_dirty and self._begun and self.backend is not None:
+            try:
+                self.backend.update_session(self.session, dict(self._info))
+                self._info_dirty = False
+            except Exception:
+                pass                                             # the next turn tries again
 
     def _batch(self, block: bool) -> list:
         rows = []
@@ -996,6 +1382,7 @@ class DbRecorder:
         pending: list = []
         backoff = 1.0
         while True:
+            self._apply_info()
             if not pending:
                 pending = self._batch(block=not self._stop.is_set())
             if not pending:
@@ -1006,6 +1393,7 @@ class DbRecorder:
                 if self.backend is None:
                     self.backend = open_backend(self.cfg, self._base_dir)
                     self.backend.begin(self._meta)
+                    self._begun = True
                 self.backend.write(pending)
                 self.written += len(pending)
                 pending, self.last_error, backoff = [], "", 1.0
@@ -1024,6 +1412,7 @@ class DbRecorder:
         if self.backend is None:
             self.backend = open_backend(self.cfg, self._base_dir)
             self.backend.begin(self._meta)
+            self._begun = True
         self.backend.write(rows)
         self.written += len(rows)
 
@@ -1043,36 +1432,19 @@ class DbRecorder:
 
     def _recover(self) -> None:
         """Deliver the buffers that earlier runs left behind (closed or crashed while the server was away)."""
-        folder = os.path.dirname(self.spool.path)
-        for name in sorted(os.listdir(folder)):
-            path = os.path.join(folder, name)
-            if not (name.startswith("spool_") and name.endswith(".db")) or path == self.spool.path:
+        for it in scan_spools(self._base_dir):
+            if it["path"] == self.spool.path or it["target"] != self.cfg.describe() or not it["meta"].get("id"):
                 continue
-            old = None
             try:
-                old = Spool(path, 0)
-                meta, target = old.get_meta()
-                if target != self.cfg.describe() or not meta.get("id"):
-                    old.close()
-                    continue
-                if old.count():
-                    b = open_backend(self.cfg, self._base_dir)
-                    b.begin(meta)
-                    while old.count():
-                        last, rows = old.peek(20000)
-                        b.write(rows)
-                        old.remove(last)
-                        self.written += len(rows)
-                    b.close()
-                old.close(delete=True)
+                self.written += deliver_spool(self.cfg, it["path"], self._base_dir)
             except Exception:
-                if old is not None:
-                    old.close()                                  # still unreachable: next run tries again
+                pass                                             # still unreachable: next run tries again
 
     def _run_spool(self) -> None:
         sp = self.spool
         backoff, next_try, recovered = 1.0, 0.0, False
         while True:
+            self._apply_info()
             rows = self._batch(block=not self._stop.is_set())
             stopping = self._stop.is_set()
             now = time.time()
@@ -1135,6 +1507,8 @@ class DbRecorder:
         self._deadline = time.time() + grace                     # a last chance to deliver what is queued
         self._stop.set()
         self.thread.join(max(15.0, grace + 5.0))
+        _ACTIVE_SESSIONS.discard(self.session)
+        self._apply_info()
         if self.backend is not None:
             try:
                 self.backend.end(self._last_us)
@@ -1142,4 +1516,5 @@ class DbRecorder:
                 pass
             self.backend.close()
         if self.spool is not None:
+            _ACTIVE_SPOOLS.discard(self.spool.path)
             self.spool.close(delete=not self.spooled)            # an empty buffer is removed; a full one waits for the next run

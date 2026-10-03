@@ -151,6 +151,8 @@ class TraceTab(QWidget):
         self._infoRaw.connect(self._on_info)
         self._dbProbe.connect(self._on_db_probe)
         self._probe_box = None
+        self._rec_info: dict = {}                              # title / notes / tags of the running DB recording
+        self._info_dlg = None                                  # the non-modal "name the recording" window
         self.ed_ip.textChanged.connect(self._ip_changed_device)
         self.timer = QTimer(self)
         self.timer.setInterval(33)
@@ -908,7 +910,8 @@ class TraceTab(QWidget):
             self.plot.set_follow(False)
             if self.btn_pause.isChecked():              # Pauza / Wznów only makes sense while a connection is active
                 self.btn_pause.setChecked(False)
-            self._close_recorder()
+            self._close_recorder(ask=True)
+            self._rec_info = {}
             if self.diag_dlg is None:
                 self._stop_ping()
             if self.acq is not None:
@@ -1106,11 +1109,9 @@ class TraceTab(QWidget):
 
     def import_db(self):
         """Plik → Import z bazy → wykres…: a recording (or a time range of it) from SQLite / InfluxDB / TimescaleDB."""
-        if self.state != "stopped":
-            return
         from dataclasses import replace
         from .store_dialog import StoreImportDialog
-        d = StoreImportDialog(self.cfg.store, self)
+        d = StoreImportDialog(self.cfg.store, self, can_load=self.state == "stopped", base_dir=data_dir())
         if not d.exec() or d.result is None:
             return
         meta, t_us, v, used = d.result
@@ -1167,16 +1168,17 @@ class TraceTab(QWidget):
         self._run_signals.extend(fetched)
         if self.acq is not None and self.state != "stopped":
             self.acq.update_signals(self._run_signals)
-        if self.recorder:                                  # new header = new REC file
+        if self.recorder:                                  # new header = new REC file (same title, no new question)
             self._close_recorder()
-            self._open_recorder()
+            self._open_recorder(ask=False)
 
     # ================================================================ REC
     def _on_rec(self, on: bool):
         if on and self.state == "running":
             self._open_recorder()
         elif not on:
-            self._close_recorder()
+            self._close_recorder(ask=True)
+            self._rec_info = {}
 
     def _rkind_changed(self, *_) -> None:
         """CSV uses the folder / file name fields, databases use their own settings (button next to the list)."""
@@ -1204,28 +1206,65 @@ class TraceTab(QWidget):
         if d.exec():
             self.cfg.store = d.config()
 
+    def open_spools(self) -> None:
+        """Ustawienia -> Zaległe bufory: data a closed recording could not deliver (server was away)."""
+        from .store_dialog import SpoolDialog
+        SpoolDialog(self.cfg.store, data_dir(), self).exec()
+
     def _rec_status(self) -> str:
         r = self.recorder
         return f" | REC: <b>{html.escape(r.status())}</b>" if isinstance(r, DbRecorder) else ""
 
-    def _open_recorder(self):
+    def _open_recorder(self, ask: bool = True):
         try:
             c = self._collect()
             if c.store.kind == "csv":
                 path = self._file_name(c.rec_filename or DEFAULT_REC_NAME, "REC", c.rec_folder or "rec")
                 self.recorder = CsvRecorder(path, self._run_signals, self.start_wall, c.store.mode)
             else:
+                from .store_dialog import RecInfoDialog
+                mode, info = c.store.title_ask, dict(self._rec_info)
+                if ask and mode == "start":                    # question first, recording after the answer
+                    d = RecInfoDialog(info.get("title") or c.conf_name, info.get("notes", ""), info.get("tags", ""),
+                                      "Nazwa nagrania – zostanie zapisana w bazie razem z nagraniem.",
+                                      "Rozpocznij nagrywanie", "Anuluj REC", self)
+                    if not d.exec():
+                        self.recorder = None
+                        self.btn_rec.setChecked(False)
+                        return
+                    info = d.values()
+                self._rec_info = info
                 self.recorder = DbRecorder(
                     c.store, self._run_signals, self.start_wall,
-                    {"name": self.title(), "ip": c.ip, "tab": self.title(), "conf": c.conf_name}, base_dir=data_dir())
+                    {"name": self.title(), "ip": c.ip, "tab": self.title(), "conf": c.conf_name, **info},
+                    base_dir=data_dir())
                 path = self.recorder.path
                 if c.store.kind in StoreConfig.NETWORK:
                     self._probe_db(c.store, self.recorder.session)
+                if ask and mode == "during":                   # recording runs; the window opens beside it
+                    self._show_info_dialog(info, c.conf_name)
             self.status_msg = f"REC → {path}"
         except Exception as e:
             self.recorder = None
             self.btn_rec.setChecked(False)
             QMessageBox.warning(self, "S7Trace", f"Nie można rozpocząć nagrywania: {e}")
+
+    def _show_info_dialog(self, info: dict, default_title: str) -> None:
+        from .store_dialog import RecInfoDialog
+        rec = self.recorder
+        d = RecInfoDialog(info.get("title") or default_title, info.get("notes", ""), info.get("tags", ""),
+                          "Nagrywanie trwa. Nadaj nazwę nagraniu – możesz to zrobić w dowolnej chwili, także później w oknie "
+                          "„Przegląd nagrań”.", "Zapisz", "Pomiń", self)
+        d.setModal(False)
+        d.accepted.connect(lambda: self._apply_info(rec, d.values()))
+        self._info_dlg = d
+        d.show()
+
+    def _apply_info(self, rec, vals: dict) -> None:
+        if rec is self.recorder and isinstance(rec, DbRecorder):
+            self._rec_info.update(vals)
+            rec.update_info(**vals)
+            self.status_msg = f"REC: zapisano tytuł „{vals.get('title', '')}”"
 
     def _probe_db(self, cfg: StoreConfig, session: str) -> None:
         """Checks the server in the background (the REC press must not freeze the window). Recording runs meanwhile:
@@ -1263,7 +1302,18 @@ class TraceTab(QWidget):
         self.status_msg = f"REC: brak połączenia z bazą – {err}"
         box.show()
 
-    def _close_recorder(self):
+    def _close_recorder(self, ask: bool = False):
+        """`ask`: the user stopped the recording - in the "ask at the end" mode this is the moment to name it."""
+        if self._info_dlg is not None:
+            self._info_dlg.close()
+            self._info_dlg = None
+        if self.recorder and ask and isinstance(self.recorder, DbRecorder) and self.recorder.cfg.title_ask == "end" \
+                and not self._rec_info.get("title"):
+            from .store_dialog import RecInfoDialog
+            d = RecInfoDialog(self.cfg.conf_name, self._rec_info.get("notes", ""), self._rec_info.get("tags", ""),
+                              "Zatrzymano nagrywanie. Nadaj nazwę nagraniu.", "Zapisz", "Pomiń", self)
+            if d.exec():
+                self.recorder.update_info(**d.values())
         if self.recorder:
             self.status_msg = f"REC zakończony: {self.recorder.path}"
             self.recorder.close()

@@ -297,10 +297,45 @@ def full_cycle(name: str, mod, cfg_base, keep: bool, events: int) -> None:
                     s.note("tabela jest hypertable")
                     cur.execute("SELECT count(*) FROM timescaledb_information.jobs WHERE hypertable_name=%s "
                                 "AND proc_name='policy_compression'", (cfg.table,))
-                    s.note(f"polityka kompresji (po 7 dniach): {'jest' if cur.fetchone()[0] else 'BRAK'}")
+                    has = cur.fetchone()[0]
+                    if cfg.compress_days > 0:
+                        s.note(f"polityka kompresji (po {cfg.compress_days} dniach): {'jest' if has else 'BRAK'}")
+                    else:
+                        s.note(f"kompresja wylaczona (compress_days=0): polityka {'JEST (powinna byc usunieta)' if has else 'nie istnieje - OK'}")
             finally:
                 conn.rollback()
                 conn.close()
+        with Step("tytul, uwagi, kosz, usuwanie nagrania i odczyt zagregowany (min/max po stronie serwera)", name) as s:
+            b = store.open_backend(cfg, tmp)
+            old_max = store.MAX_READ_ROWS
+            try:
+                b.begin({"id": "selftest_meta", "name": "meta", "title": "T0", "owner": store.current_user(),
+                         "start_us": store.to_us(start, 0), "mode": "all", "keyframe_min": 0.0,
+                         "signals": [x.to_dict() for x in sigs[:1]], "fields": ["A"]})
+                data = [(store.to_us(start, i * 0.01), {0: 1000.0 if i == 2500 else float(i % 7)}) for i in range(5000)]
+                for k in range(0, len(data), 2000):
+                    b.write(data[k:k + 2000])
+                b.update_session("selftest_meta", {"title": "T1", "notes": "uwaga", "tags": "x"})
+                me = next(x for x in b.sessions() if x["id"] == "selftest_meta")
+                if (me["title"], me["notes"], me["tags"]) != ("T1", "uwaga", "x"):
+                    raise RuntimeError(f"edycja opisu nie zadzialala: {me}")
+                b.update_session("selftest_meta", {"deleted_us": 123})
+                if next(x for x in b.sessions() if x["id"] == "selftest_meta")["deleted_us"] != 123:
+                    raise RuntimeError("znacznik kosza (deleted_us) nie zapisal sie")
+                s.note(f"opis, kosz: OK; wpisow w bazie (stats): {b.stats().get('selftest_meta')}")
+                store.MAX_READ_ROWS = 800                                            # force the aggregated query
+                meta, t, m = b.read("selftest_meta", max_points=200)
+                s.note(f"odczyt zagregowany: {len(t)} wierszy z 5000; maks. {m[:, 0].max()}")
+                if len(t) >= 800 or m[:, 0].max() != 1000.0:
+                    raise RuntimeError("odczyt zagregowany zgubil szpilke albo nie zmniejszyl danych")
+                store.MAX_READ_ROWS = old_max
+                b.delete_session("selftest_meta")
+                if any(x["id"] == "selftest_meta" for x in b.sessions()) or "selftest_meta" in b.stats():
+                    raise RuntimeError("usuniete nagranie nadal jest w bazie")
+                s.note("usuwanie nagrania: OK")
+            finally:
+                store.MAX_READ_ROWS = old_max
+                b.close()
         with Step(f"przepustowosc zapisu ({events} wpisow)", name) as s:
             b = store.open_backend(cfg, tmp)
             try:
@@ -408,6 +443,7 @@ def main(argv=None) -> int:
     ap.add_argument("--table", default=None)
     ap.add_argument("--drivers", default="psycopg,pg8000")
     ap.add_argument("--events", type=int, default=50000)
+    ap.add_argument("--compress-days", type=int, default=7, help="kompresja po N dniach (0 = wylaczona), jak w ustawieniach programu")
     ap.add_argument("--keep", action="store_true", help="nie usuwaj tabel testowych")
     ap.add_argument("--no-server", action="store_true", help="tylko kroki bez serwera (srodowisko, sterowniki)")
     ap.add_argument("--report", default=os.path.join(ROOT, "diagnoza_timescale"))
@@ -434,7 +470,7 @@ def main(argv=None) -> int:
         table = a.table or "s7trace_selftest_" + os.urandom(3).hex()
         from s7trace.core.store import StoreConfig
         cfg = StoreConfig(kind="timescale", host=a.host, port=a.port, pg_database=a.db, pg_user=a.user,
-                          pg_password=pw, pg_sslmode=ssl, table=table)
+                          pg_password=pw, pg_sslmode=ssl, table=table, compress_days=max(a.compress_days, 0))
         out(f"Serwer: {a.host}:{a.port}  baza: {a.db}  uzytkownik: {a.user}  sslmode: {ssl}  tabela testowa: {table}")
         out("== 3. Siec i serwer")
         if network(a.host, a.port, 5.0):

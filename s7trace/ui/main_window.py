@@ -163,7 +163,7 @@ class MainWindow(QMainWindow):
         m.addSeparator()
         self._act(m, "Eksport okna → CSV…", lambda: self._cur(lambda t: t.export_window()))
         self._act(m, "Import CSV → wykres…", lambda: self._cur(lambda t: t.import_csv()))
-        self._act(m, "Import z bazy (SQLite / InfluxDB / TimescaleDB) → wykres…", lambda: self._cur(lambda t: t.import_db()))
+        self._act(m, "Przegląd nagrań w bazach (SQLite / InfluxDB / TimescaleDB)…", lambda: self._cur(lambda t: t.import_db()))
         m.addSeparator()
         self._act(m, "Importuj symbole (TIA / Step 7)…", self.import_symbols)
         self._act(m, "Wyczyść symbole", self.clear_symbols)
@@ -190,6 +190,7 @@ class MainWindow(QMainWindow):
         self._act(st, "Diagnostyka połączenia…", lambda: self._cur(lambda t: t.open_diag()), "Ctrl+D")
         self._act(st, "Zapis nagrań w bazach danych (SQLite / InfluxDB / TimescaleDB)…",
                   lambda: self._cur(lambda t: t.edit_store(pick=True)))
+        self._act(st, "Zaległe bufory zapisu do baz…", lambda: self._cur(lambda t: t.open_spools()))
         self._act(st, "Aktywne sesje programu…", self.show_sessions)
         self._act(st, "Wymagania, ograniczenia i blokady…", lambda: self.show_help("Ograniczenia"))
         st.addSeparator()

@@ -54,12 +54,15 @@ Typy: BOOL, BYTE, SINT, USINT, WORD, INT, UINT, DWORD, DINT, UDINT, REAL, LREAL.
   Nazwa pliku (domyślnie `snapshot_{confname}_{ip}_{tab}_{date}_{time}.csv`): `{confname}`, `{ip}`, `{tab}`, `{date}`, `{time}`.
   Ścieżka względna (domyślnie `snapshots`, `rec`) oznacza folder w `Dokumenty\S7Trace` bieżącego użytkownika Windows,
   więc przy wielu kontach każdy ma własne pliki.
-* REC – pełny opis baz danych, trybów, czasów i buforów: [BAZY_DANYCH.md](BAZY_DANYCH.md).
-* REC: cel zapisu (panel „Nagrywanie REC”): plik CSV, SQLite, InfluxDB 1.x / 2.x / 3.x (HTTP, line protocol) lub TimescaleDB
+* REC – pełny opis baz danych, trybów, czasów i buforów: [BAZY_DANYCH.md](BAZY_DANYCH.md). Nagrania w bazach mają tytuł, uwagi, tagi, właściciela
+  i komputer; **Plik → Przegląd nagrań…** pokazuje je z sortowaniem, wyszukiwaniem i filtrem użytkownika, pozwala edytować opis, usuwać do kosza
+  (przywracanie, czas przechowywania w ustawieniach), usuwać trwale, eksportować do CSV i wczytywać na wykres. Kiedy program pyta o nazwę nagrania
+  (na początku / w trakcie / na końcu / wcale) ustawia się w ustawieniach bazy, zakładka „Nagrania i użytkownicy”.
+* REC: cel zapisu (panel „Nagrywanie REC”): plik CSV, SQLite, InfluxDB 1.x / 2.x (HTTP, line protocol) lub TimescaleDB
   (PostgreSQL, `psycopg`); próbki: **tylko zmiany stanu** (domyślnie) albo każda próbka. Zapis do bazy idzie w osobnym wątku
   (paczki, ponawianie, ograniczona kolejka). Odczyt: Plik → Import z bazy → wykres… (lista nagrań + zakres czasu).
   SQLite: tabele `sessions` / `samples` (jeden plik, wiele nagrań); Influx: pomiar `<nazwa>` + `<nazwa>_sessions`; Timescale: hypertable
-  `<tabela>` + `<tabela>_sessions`, kompresja po 7 dniach. Influx nie ma wartości NaN, więc niedostępność sygnału zapisywana jest
+  `<tabela>` + `<tabela>_sessions`, kompresja po N dniach (domyślnie 7, w opcjach; 0 = bez). Influx nie ma wartości NaN, więc niedostępność sygnału zapisywana jest
   w osobnym polu `<sygnał>__ok` (0/1, tylko przy zmianie) i odczyt odtwarza z niej przerwę w krzywej.
   **Ustawienia bazy** (przycisk „...” obok „Zapis do” albo Ustawienia → „Zapis nagrań w bazach danych…”) mają zakładkę
   „Czasy i bufory” z opisem każdego parametru czasowego (wartości domyślne w nawiasach):

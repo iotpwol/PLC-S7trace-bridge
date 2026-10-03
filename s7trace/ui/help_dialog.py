@@ -236,12 +236,15 @@ aby zmienić okno czasu.</li>
         ("Stop", "Kończy połączenie. Dane pozostają na wykresie."),
         ("Pauza / Wznów", "Wstrzymuje widok (zbieranie trwa) i wraca do trybu na żywo."),
         ("● REC", "Ciągły zapis do pliku CSV albo do bazy danych według panelu „Nagrywanie REC”: „Zapis do” (plik CSV, SQLite, "
-         "InfluxDB 1.x / 2.x / 3.x, TimescaleDB; przycisk „...” obok to ustawienia bazy i test połączenia) oraz „Próbki” "
+         "InfluxDB 1.x / 2.x, TimescaleDB; przycisk „...” obok to ustawienia bazy i test połączenia) oraz „Próbki” "
          "(<b>tylko zmiany stanu</b> – domyślnie, albo każda próbka). Przy zapisie zmian wartość trafia do pliku / bazy tylko wtedy, "
          "gdy różni się od poprzedniej (plus pierwsza wartość każdej zmiennej) – to kilkadziesiąt razy mniej danych przy zapisie "
          "godzin i dni; wykres z takiego zapisu odtwarza się dokładnie (krzywa schodkowa). Bazy zapisują w osobnym wątku "
          "(paczki co ok. 0,5 s, ponawianie przy zaniku serwera, w pasku statusu licznik zapisanych wpisów i błędy). "
-         "Odczyt: Plik → Import z bazy → wykres… (lista nagrań, opcjonalnie wybrany zakres czasu; bardzo długie nagrania są "
+         "Każde nagranie w bazie ma tytuł, uwagi, tagi, właściciela (konto Windows) i komputer. Kiedy program pyta o nazwę (na początku, w trakcie, na końcu "
+         "albo wcale) – ustawia się w „...” → zakładka „Nagrania i użytkownicy”. Przegląd, opisy, kosz i usuwanie: Plik → Przegląd nagrań w bazach…; "
+         "zaległe bufory: Ustawienia → Zaległe bufory zapisu do baz…. "
+         "Odczyt: Plik → Przegląd nagrań w bazach… (lista nagrań, opcjonalnie wybrany zakres czasu; bardzo długie nagrania są "
          "zmniejszane do min/max z każdego przedziału; „Zapisz jako CSV…” eksportuje wszystkie wiersze). Wszystkie czasy zapisu "
          "(pełny stan co N minut w trybie zmian – domyślnie 10, wysyłka paczek, ponawianie, limity czasu, bufor na dysku, rotacja "
          "SQLite, limit punktów odczytu) ustawia się w „...” albo w menu Ustawienia → „Zapis nagrań w bazach danych…”, zakładka "

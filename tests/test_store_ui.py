@@ -169,8 +169,8 @@ def test_import_dialog_lists_loads_and_limits_range(app, tmp_path):
     sd.data_dir = lambda: str(tmp_path)
     d = StoreImportDialog(cfg)
     d.refresh()
-    assert d.table.rowCount() == 1 and d.table.item(0, 1).text() == "L1" and d.table.item(0, 2).text() == "10.1.1.1"
-    assert "Tylko zmiany" in d.table.item(0, 4).text()
+    assert d.table.rowCount() == 1 and d.cell(0, "conf") == "L1" and d.cell(0, "ip") == "10.1.1.1"
+    assert "Tylko zmiany" in d.cell(0, "mode")
     assert d.btn_load.isEnabled() and not d.dt0.isEnabled()
     d.chk_range.setChecked(True)
     assert d.dt0.isEnabled() and d.selected_range()[0] is not None
@@ -179,7 +179,7 @@ def test_import_dialog_lists_loads_and_limits_range(app, tmp_path):
     d.load()
     meta, t, v, _ = d.result
     assert 10 <= len(t) <= 22 and t[0] >= (d.selected_range()[0])
-    bad = StoreImportDialog(StoreConfig(kind="influx3", url="http://127.0.0.1:9"))
+    bad = StoreImportDialog(StoreConfig(kind="influx2", url="http://127.0.0.1:9"))
     bad.refresh()
     assert "Błąd" in bad.lbl.text()
 
@@ -187,7 +187,7 @@ def test_import_dialog_lists_loads_and_limits_range(app, tmp_path):
 def test_main_menu_has_the_database_import(app, tmp_path):
     w = MainWindow(config_file=str(tmp_path / "c.json"))
     names = [a.text() for a in w.menuBar().actions()[0].menu().actions()]
-    assert any("Import z bazy" in n for n in names) and any("Import CSV" in n for n in names)
+    assert any("Przegląd nagrań" in n for n in names) and any("Import CSV" in n for n in names)
     w.close()
 
 
@@ -235,7 +235,8 @@ def test_rec_press_with_a_working_server_shows_no_message(app, tmp_path):
 def test_store_dialog_lists_every_time_parameter_with_a_description(app, kind):
     from s7trace.ui.store_dialog import PARAMS_OF
     d = StoreDialog(StoreConfig(), kind)
-    assert list(d.params) == PARAMS_OF[kind]
+    from s7trace.ui.store_dialog import USER_PARAMS
+    assert list(d.params) == PARAMS_OF[kind] + USER_PARAMS
     for name, w in d.params.items():
         label, lo, hi, unit, desc = store.PARAMS[name]
         assert len(desc) > 60 and w.toolTip() == desc and w.minimum() == lo and w.maximum() == hi
@@ -302,7 +303,7 @@ def test_import_dialog_sees_rotated_files_and_exports_csv(app, tmp_path, monkeyp
     _make_db(tmp_path / "rec_2026-10-03.db", datetime(2026, 10, 3, 8, 0, 0))
     d = StoreImportDialog(StoreConfig(kind="sqlite", sqlite_path="rec.db"))
     d.refresh()
-    assert d.table.rowCount() == 2 and d.table.item(0, 0).text().startswith("2026-10-03")        # newest first, both files
+    assert d.table.rowCount() == 2 and d.cell(0, "start").startswith("2026-10-03")        # newest first, both files
     d.table.selectRow(1)
     assert d.btn_csv.isEnabled()
     out = tmp_path / "x.csv"
@@ -322,3 +323,14 @@ def test_import_dialog_thins_out_long_recordings_and_says_so(app, tmp_path):
     d.load()
     meta, t, v, _ = d.result
     assert len(t) < 1700 and v[:, 0].max() == 4999.0 and "zmniejszono z 5000" in d.note
+
+
+def test_compress_days_is_a_timescale_only_option_in_the_dialog(app):
+    d = StoreDialog(StoreConfig(kind="timescale"), "timescale")
+    assert "compress_days" in d.params and d.params["compress_days"].value() == 7
+    d.params["compress_days"].setValue(0)
+    assert d.config().compress_days == 0
+    d._reset_times()
+    assert d.config().compress_days == 7
+    for kind in ("sqlite", "influx1", "influx2"):
+        assert "compress_days" not in StoreDialog(StoreConfig(), kind).params

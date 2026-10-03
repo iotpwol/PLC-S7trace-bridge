@@ -1,4 +1,4 @@
-"""Recording targets: SQLite, InfluxDB 1.x/2.x/3.x (fake HTTP server), TimescaleDB (fake psycopg), change filter."""
+"""Recording targets: SQLite, InfluxDB 1.x/2.x (fake HTTP server), TimescaleDB (fake psycopg), change filter."""
 import csv
 import json
 import os
@@ -201,7 +201,7 @@ def test_network_target_connects_in_the_writer_thread(monkeypatch):
         return fb
 
     monkeypatch.setattr(store, "open_backend", fake_open)
-    rec = DbRecorder(StoreConfig(kind="influx3"), SIGS, START, {})            # does not block / raise
+    rec = DbRecorder(StoreConfig(kind="influx2"), SIGS, START, {})            # does not block / raise
     assert rec.backend is None
     rec.write(0.0, [1, 2, 3])
     orig = rec._stop.wait
@@ -295,20 +295,25 @@ class FakeInflux:
                 auth = self.headers.get("Authorization", "")
                 if u.path in ("/api/v2/write", "/api/v2/query") and auth != "Token " + outer.token:
                     return self._send(401, '{"message":"unauthorized"}')
-                if u.path.startswith("/api/v3") and auth != "Bearer " + outer.token:
-                    return self._send(401, '{"error":"unauthorized"}')
-                if u.path in ("/write", "/api/v2/write", "/api/v3/write_lp"):
+                if u.path in ("/write", "/api/v2/write"):
                     for ln in body.splitlines():
-                        outer.points.append(parse_lp(ln))
+                        outer.put(parse_lp(ln))
+                    return self._send(204, b"")
+                if u.path == "/api/v2/delete":
+                    pred = json.loads(body)["predicate"]
+                    m = re.search(r'_measurement="([^"]+)" AND session="([^"]+)"', pred)
+                    outer.points = [p for p in outer.points if not (p[0] == m.group(1) and p[1].get("session") == m.group(2))]
                     return self._send(204, b"")
                 if u.path == "/query":
                     if "CREATE DATABASE" in q["q"]:
                         return self._send(200, '{"results":[{"statement_id":0}]}')
+                    if q["q"].startswith("DROP SERIES"):
+                        m = re.search(r"FROM \"([^\"]+)\" WHERE \"session\"='([^']+)'", q["q"])
+                        outer.points = [p for p in outer.points if not (p[0] == m.group(1) and p[1].get("session") == m.group(2))]
+                        return self._send(200, '{"results":[{"statement_id":0}]}')
                     return self._send(200, json.dumps(outer.v1(q["q"])))
                 if u.path == "/api/v2/query":
                     return self._send(200, outer.v2(json.loads(body)["query"]), "text/csv")
-                if u.path == "/api/v3/query_sql":
-                    return self._send(200, json.dumps(outer.v3(json.loads(body)["q"])))
                 if u.path in ("/ping", "/health"):
                     return self._send(204, b"")
                 self._send(404, "{}")
@@ -318,6 +323,14 @@ class FakeInflux:
         self.srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
         self.url = f"http://127.0.0.1:{self.srv.server_address[1]}"
         threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+
+    def put(self, pt):
+        """Like InfluxDB: a point with the same measurement, tags and time as a stored one merges its fields."""
+        for p in self.points:
+            if p[0] == pt[0] and p[1] == pt[1] and p[3] == pt[3]:
+                p[2].update(pt[2])
+                return
+        self.points.append(pt)
 
     def close(self):
         self.srv.shutdown()
@@ -348,8 +361,9 @@ class FakeInflux:
             return {"results": [{"statement_id": 0, "series": [{"name": meas, "columns": cols,
                                                                 "values": [[hi] + list(last.values())]}]}]}
         m = re.search(r"\"session\"='([^']+)'", q)
-        t = re.search(r"time >= (\d+) AND time <= (\d+)", q)
-        pts = self.select(meas, m.group(1) if m else None, int(t.group(1)) if t else None, int(t.group(2)) if t else None)
+        t = re.search(r"time >= (\d+) AND time (<=|<) (\d+)", q)
+        pts = self.select(meas, m.group(1) if m else None, int(t.group(1)) if t else None,
+                          (int(t.group(3)) - (t.group(2) == "<")) if t else None)
         if m is None:
             pts.sort(key=lambda p: -p[3])
         if not pts:
@@ -383,24 +397,6 @@ class FakeInflux:
             w.writerow(["", "", "0", iso, p[1]["session"]] + ["" if k not in p[2] else p[2][k] for k in cols])
         return buf.getvalue() + "\n"
 
-    def v3(self, sql):
-        meas = re.search(r'FROM "([^"]+)"', sql).group(1)
-        if "AND time < '" in sql:
-            hi = store.rfc3339_to_us(re.search(r"time < '([^']+)'", sql).group(1)) * 1000
-            sid = re.search(r"session = '([^']+)'", sql).group(1)
-            pts = [p for p in self.select(meas, sid) if p[3] < hi][::-1]
-            return [{"time": store.us_to_rfc3339(p[3] // 1000), "session": sid, **p[2]} for p in pts]
-        m = re.search(r"session = '([^']+)'", sql)
-        t = re.search(r"time >= '([^']+)' AND time <= '([^']+)'", sql)
-        lo = hi = None
-        if t:
-            lo, hi = store.rfc3339_to_us(t.group(1)) * 1000, store.rfc3339_to_us(t.group(2)) * 1000
-        rows = []
-        for p in self.select(meas, m.group(1) if m else None, lo, hi):
-            rows.append({"time": store.us_to_rfc3339(p[3] // 1000)[:-1] + f"{p[3] % 1000:03d}", "session": p[1]["session"],
-                         **p[2]})
-        return rows
-
 
 @pytest.fixture
 def influx():
@@ -412,11 +408,10 @@ def influx():
 INFLUX_CFGS = {
     1: dict(kind="influx1", database="plant", user="u", password="p"),
     2: dict(kind="influx2", org="acme", bucket="plant", token="tok"),
-    3: dict(kind="influx3", database="plant", token="tok"),
 }
 
 
-@pytest.mark.parametrize("ver", [1, 2, 3])
+@pytest.mark.parametrize("ver", [1, 2])
 def test_influx_write_and_read_roundtrip(influx, ver):
     cfg = StoreConfig(url=influx.url, measurement="rec 1", mode="changes", **INFLUX_CFGS[ver])
     rec = DbRecorder(cfg, SIGS, START, {"ip": "10.1.1.1", "tab": "Piec", "conf": "L1"})
@@ -425,18 +420,16 @@ def test_influx_write_and_read_roundtrip(influx, ver):
     assert rec.last_error == "" and rec.written > 40
     # what the protocol looks like on the wire
     paths = [r[1] for r in influx.requests if r[0] == "POST"]
-    assert {1: "/write", 2: "/api/v2/write", 3: "/api/v3/write_lp"}[ver] in paths
-    wr = next(r for r in influx.requests if r[1] in ("/write", "/api/v2/write", "/api/v3/write_lp"))
+    assert {1: "/write", 2: "/api/v2/write"}[ver] in paths
+    wr = next(r for r in influx.requests if r[1] in ("/write", "/api/v2/write"))
     q, headers = wr[2], wr[3]
     if ver == 1:
         assert q == {"db": "plant", "precision": "ns"} and headers["Authorization"].startswith("Basic ")
     if ver == 2:
         assert q == {"org": "acme", "bucket": "plant", "precision": "ns"} and headers["Authorization"] == "Token tok"
-    if ver == 3:
-        assert q == {"db": "plant", "precision": "nanosecond"} and headers["Authorization"] == "Bearer tok"
     assert wr[4].startswith("rec\\ 1_sessions,session=")                    # the session description goes first
     assert any(r[4].startswith("rec\\ 1,session=") for r in influx.requests
-               if r[1] in ("/write", "/api/v2/write", "/api/v3/write_lp"))
+               if r[1] in ("/write", "/api/v2/write"))
     # only changes were written; the constant signal C exactly once
     data = influx.select("rec 1")
     assert sum("C" in p[2] for p in data) == 1 and len(data) < 60
@@ -500,6 +493,8 @@ class FakeCursor:
             raise RuntimeError("extension not available")
         if s.startswith("SELECT id,name"):
             self._rows = self.c.sessions
+        elif "timescaledb_information.jobs" in s:                       # the compression policy of the table
+            self._rows = [] if self.c.policy is None else [(self.c.policy,)]
         elif s.startswith("SELECT version"):
             self._rows = [("PostgreSQL 16.2 (TimescaleDB)",)]
         elif "DISTINCT ON" in s:
@@ -516,13 +511,14 @@ class FakeCursor:
         return list(self._rows)
 
     def fetchone(self):
-        return self._rows[0]
+        return self._rows[0] if self._rows else None
 
 
 class FakeConn:
     def __init__(self, **kw):
         self.kw, self.log, self.no_timescale = kw, [], False
         self.sessions, self.samples, self.carry = [], [], []
+        self.policy = None                          # None: no compression policy yet; True / False: same / another interval
         self.commits = self.rollbacks = 0
         self.closed = False
 
@@ -604,6 +600,65 @@ def test_timescale_without_extension_still_works_and_bad_table_name(pg):
         store.open_backend(StoreConfig(kind="timescale", table="x; DROP TABLE y"))
 
 
+def _compression_sql(pg, **kw):
+    cfg = StoreConfig(kind="timescale", table="rec_samples", **kw)
+    store.open_backend(cfg).close()
+    return [s for s, _ in pg["conn"].log if "compress" in s.lower()]
+
+
+def test_timescale_compression_is_set_up_after_the_configured_days(pg):
+    sql = _compression_sql(pg)                                                        # default: 7 days
+    assert any("timescaledb.compress" in s and "compress_segmentby" in s for s in sql)
+    assert any("add_compression_policy('rec_samples', INTERVAL '7 days'" in s for s in sql)
+    pg.clear()
+    sql = _compression_sql(pg, compress_days=30)
+    assert any("add_compression_policy('rec_samples', INTERVAL '30 days'" in s for s in sql)
+    assert any("remove_compression_policy('rec_samples'" in s for s in sql)           # an old policy is replaced
+
+
+def test_timescale_without_compression_does_not_compress(pg):
+    sql = _compression_sql(pg, compress_days=0)
+    assert not any("add_compression_policy" in s or "timescaledb.compress" in s for s in sql)
+    assert any("remove_compression_policy('rec_samples', if_exists => TRUE)" in s for s in sql)   # an earlier policy is dropped
+    assert any("create_hypertable" in s for s in [x for x, _ in pg["conn"].log])      # still a hypertable
+
+
+def test_timescale_compression_policy_with_the_same_interval_is_left_alone(pg):
+    orig = FakeConn.__init__
+
+    def init(self, **kw):
+        orig(self, **kw)
+        self.policy = True
+    FakeConn.__init__ = init
+    try:
+        sql = _compression_sql(pg, compress_days=7)
+    finally:
+        FakeConn.__init__ = orig
+    assert not any("add_compression_policy" in s or "remove_compression_policy" in s for s in sql)
+
+
+def test_timescale_without_extension_does_not_touch_compression(pg):
+    orig = FakeConn.__init__
+
+    def init(self, **kw):
+        orig(self, **kw)
+        self.no_timescale = True
+    FakeConn.__init__ = init
+    try:
+        sql = _compression_sql(pg, compress_days=7)
+    finally:
+        FakeConn.__init__ = orig
+    assert sql == []                                                                  # plain PostgreSQL: nothing to compress
+
+
+def test_compress_days_is_limited_and_saved():
+    c = StoreConfig.from_dict({"compress_days": -3})
+    assert c.compress_days == 0
+    assert StoreConfig.from_dict({"compress_days": 999999}).compress_days == 3650
+    assert StoreConfig.from_dict(StoreConfig(compress_days=21).to_dict()).compress_days == 21
+    assert StoreConfig().compress_days == 7
+
+
 def test_timescale_without_library_gives_a_clear_message(monkeypatch):
     import builtins
     real = builtins.__import__
@@ -644,7 +699,7 @@ def test_pg8000_connect_arguments_and_ssl(monkeypatch):
 
 
 # ---------------------------------------------------------------- quality field, carry-in, keyframe
-@pytest.mark.parametrize("ver", [1, 2, 3])
+@pytest.mark.parametrize("ver", [1, 2])
 def test_influx_nan_is_stored_as_quality_field_and_read_back(influx, ver):
     cfg = StoreConfig(url=influx.url, mode="changes", keyframe_min=0, **INFLUX_CFGS[ver])
     rec = DbRecorder(cfg, [Signal(name="X")], START, {})
@@ -652,14 +707,14 @@ def test_influx_nan_is_stored_as_quality_field_and_read_back(influx, ver):
         rec.write(i * 0.1, [v])
     rec.close()
     pts = influx.select("s7trace")
-    assert [p[2].get("X__ok") for p in pts] == [None, 0.0, 1.0]                  # only the changes of availability
+    assert [p[2].get("X__ok") for p in pts] == [1.0, 0.0, 1.0]                  # first row + changes of availability
     b = store.open_backend(cfg)
     meta, t, m = b.read(b.sessions()[0]["id"])
     assert m[0, 0] == 1.0 and math.isnan(m[1, 0]) and m[2, 0] == 2.0
     b.close()
 
 
-@pytest.mark.parametrize("ver", [1, 2, 3])
+@pytest.mark.parametrize("ver", [1, 2])
 def test_influx_range_read_has_the_state_from_before_the_range(influx, ver):
     cfg = StoreConfig(url=influx.url, mode="changes", keyframe_min=0, **INFLUX_CFGS[ver])
     rec = DbRecorder(cfg, SIGS, START, {})
@@ -841,4 +896,175 @@ def test_sqlite_reads_a_huge_range_in_buckets(tmp_path, monkeypatch):
         b.read(sid)                                                          # no thinning allowed: refuses
     meta, t, m = b.read(sid, max_points=400)
     assert len(t) < 1000 and m[:, 0].max() == 100.0 and m[:, 0].min() == 0.0  # the spike survived the thinning
+    b.close()
+
+
+# ---------------------------------------------------------------- titles, owner, trash, delete
+def _record_one(cfg, base="", n=60, extra=None):
+    rec = DbRecorder(cfg, SIGS, START, {"tab": "Piec", "conf": "L1", **(extra or {})}, base_dir=base)
+    feed(rec, n)
+    rec.close()
+    return rec
+
+
+def test_new_session_fields_roundtrip_sqlite(tmp_path):
+    cfg = StoreConfig(kind="sqlite", sqlite_path=str(tmp_path / "m.db"))
+    rec = _record_one(cfg, extra={"title": "Rozruch", "notes": "po remoncie", "tags": "piec, test"})
+    b = store.open_backend(cfg)
+    s = b.sessions()[0]
+    assert (s["title"], s["notes"], s["tags"]) == ("Rozruch", "po remoncie", "piec, test")
+    assert s["owner"] == store.current_user() and s["computer"] and s["deleted_us"] is None
+    assert s["keyframe_min"] == 10.0 and s["end_us"]
+    b.update_session(rec.session, {"title": "Nowy", "tags": "a"})
+    assert b.sessions()[0]["title"] == "Nowy" and b.sessions()[0]["notes"] == "po remoncie"     # only what was given changes
+    b.update_session(rec.session, {"deleted_us": 123})
+    assert b.sessions()[0]["deleted_us"] == 123
+    b.update_session(rec.session, {"deleted_us": None})
+    assert b.sessions()[0]["deleted_us"] is None
+    assert b.stats()[rec.session] >= rec.written > 0                       # entries (one per signal value) vs rows
+    b.delete_session(rec.session)
+    assert b.sessions() == [] and b.stats() == {}
+    b.close()
+
+
+def test_sqlite_file_of_an_older_version_gets_the_new_columns(tmp_path):
+    import sqlite3
+    p = tmp_path / "old.db"
+    db = sqlite3.connect(p)
+    db.executescript("""CREATE TABLE sessions(id TEXT PRIMARY KEY, name TEXT, start_us INTEGER, end_us INTEGER, ip TEXT,
+        tab TEXT, conf TEXT, mode TEXT, signals TEXT, fields TEXT);
+        CREATE TABLE samples(session TEXT NOT NULL, sig INTEGER NOT NULL, ts_us INTEGER NOT NULL, value REAL,
+        PRIMARY KEY(session, sig, ts_us)) WITHOUT ROWID;
+        INSERT INTO sessions VALUES('OLD','n',5,NULL,'1.2.3.4','T','L','changes','[]','[]');""")
+    db.commit()
+    db.close()
+    b = store.open_backend(StoreConfig(kind="sqlite", sqlite_path=str(p)))
+    s = b.sessions()[0]
+    assert s["id"] == "OLD" and s["title"] == "" and s["owner"] == "" and s["deleted_us"] is None
+    b.update_session("OLD", {"title": "T"})
+    assert b.sessions()[0]["title"] == "T"
+    b.close()
+
+
+@pytest.mark.parametrize("ver", [1, 2])
+def test_influx_session_metadata_update_and_delete(influx, ver):
+    cfg = StoreConfig(url=influx.url, mode="changes", **INFLUX_CFGS[ver])
+    rec = _record_one(cfg, extra={"title": "T1", "tags": "x"})
+    b = store.open_backend(cfg)
+    s = b.sessions()
+    assert len(s) == 1 and s[0]["title"] == "T1" and s[0]["owner"] == store.current_user() and s[0]["end_us"]
+    assert s[0]["deleted_us"] is None
+    b.update_session(rec.session, {"title": "T2", "notes": "uwaga"})
+    s = b.sessions()
+    assert len(s) == 1 and s[0]["title"] == "T2" and s[0]["notes"] == "uwaga" and s[0]["tags"] == "x"
+    b.update_session(rec.session, {"deleted_us": 99})
+    assert b.sessions()[0]["deleted_us"] == 99
+    b.update_session(rec.session, {"deleted_us": None})
+    assert b.sessions()[0]["deleted_us"] is None
+    b.delete_session(rec.session)
+    assert b.sessions() == [] and not influx.select("s7trace") and not influx.select("s7trace_sessions")
+
+
+def test_a_saved_influxdb3_target_falls_back_to_csv():
+    assert StoreConfig.from_dict({"kind": "influx3", "url": "http://x:8181"}).kind == "csv"      # support was removed
+
+
+def test_recorder_update_info_while_recording_and_at_the_end(tmp_path):
+    cfg = StoreConfig(kind="sqlite", sqlite_path=str(tmp_path / "u.db"), batch_s=0.05)
+    rec = DbRecorder(cfg, SIGS, START, {"title": "start"})
+    rec.write(0.0, [1, 2, 3])
+    rec.update_info(title="w trakcie", notes="n1")
+    time.sleep(0.4)
+    b = store.open_backend(cfg)
+    assert b.sessions()[0]["title"] == "w trakcie" and b.sessions()[0]["notes"] == "n1"        # applied by the thread
+    rec.update_info(tags="końcowe")
+    rec.close()
+    assert b.sessions()[0]["tags"] == "końcowe"                                                # applied at close
+    b.close()
+
+
+def test_update_info_before_the_server_answers_reaches_the_database(influx, flaky, tmp_path):
+    cfg = StoreConfig(url=influx.url, mode="all", spool_mb=5, retry_max_s=1, batch_s=0.05, **INFLUX_CFGS[2])
+    rec = DbRecorder(cfg, [Signal(name="A")], START, {}, base_dir=str(tmp_path))
+    rec.write(0.0, [1.0])
+    rec.update_info(title="przed serwerem")
+    flaky["down"] = False
+    assert _wait(lambda: len(influx.select("s7trace")) == 1)
+    rec.close()
+    b = store.open_backend(cfg)
+    assert b.sessions()[0]["title"] == "przed serwerem"
+    b.close()
+
+
+def test_keyframes_carry_the_availability_field_and_survive_the_spool(influx, tmp_path):
+    cfg = StoreConfig(url=influx.url, mode="changes", keyframe_min=1.0, **INFLUX_CFGS[2])
+    rec = DbRecorder(cfg, [Signal(name="A"), Signal(name="B")], START, {})
+    for i in range(0, 125):
+        rec.write(float(i), [1.0, math.nan if i > 100 else 2.0])
+    rec.close()
+    pts = influx.select("s7trace")
+    key_pts = [p for p in pts if "A__ok" in p[2]]
+    assert len(key_pts) == 3 and all(p[2]["A__ok"] == 1.0 for p in key_pts)         # keyframes at 0 s, 60 s, 120 s say "ok"
+    assert pts[-1][2]["B__ok"] == 0.0 and "B" not in pts[-1][2]
+    sp = store.Spool(str(tmp_path / "k.db"), 1)
+    sp.add([(1, {0: 1.0}), (2, {0: 1.0, 1: math.nan}, True)])
+    last, rows = sp.peek(10)
+    assert len(rows[0]) == 2 and len(rows[1]) == 3 and rows[1][2] is True and math.isnan(rows[1][1][1])
+    sp.close(delete=True)
+
+
+def test_config_fields_for_names_and_users():
+    c = StoreConfig.from_dict({"title_ask": "end", "trash_days": 7, "view_scope": "all", "delete_others": True,
+                               "sqlite_shared": True, "retention_days": 90})
+    assert (c.title_ask, c.trash_days, c.view_scope, c.delete_others, c.sqlite_shared, c.retention_days) == \
+        ("end", 7, "all", True, True, 90)
+    d = StoreConfig.from_dict({"title_ask": "never", "view_scope": "x"})
+    assert d.title_ask == "during" and d.view_scope == "mine" and d.trash_days == 30 and not d.delete_others
+
+
+def test_shared_sqlite_folder_is_used_for_relative_paths(tmp_path):
+    cfg = StoreConfig(kind="sqlite", sqlite_path="g.db", sqlite_shared=True)
+    shared = store.shared_data_dir()
+    assert shared and shared.endswith(os.path.join("S7Trace", "data"))
+    assert store.effective_base(cfg, str(tmp_path)) == shared
+    assert store.effective_base(StoreConfig(kind="sqlite"), str(tmp_path)) == str(tmp_path)
+    rec = DbRecorder(cfg, SIGS, START, {}, base_dir=str(tmp_path))
+    rec.write(0.0, [1, 2, 3])
+    rec.close()
+    assert os.path.exists(os.path.join(shared, "g.db")) and not (tmp_path / "g.db").exists()
+
+
+@pytest.mark.parametrize("ver", [1, 2])
+def test_influx_range_read_uses_the_keyframes_for_the_state_before_the_range(influx, ver):
+    cfg = StoreConfig(url=influx.url, mode="changes", keyframe_min=1.0, **INFLUX_CFGS[ver])
+    rec = DbRecorder(cfg, [Signal(name="A"), Signal(name="B")], START, {})
+    for i in range(0, 301):
+        rec.write(float(i), [7.0, float(i // 100)])                  # A never changes, B steps at 100 s and 200 s
+    rec.close()
+    b = store.open_backend(cfg)
+    sess = b.sessions()[0]
+    assert sess["keyframe_min"] == 1.0
+    n_before = len(influx.requests)
+    meta, t, m = b.read(sess["id"], t0_us=store.to_us(START, 150.0), t1_us=store.to_us(START, 250.0))
+    assert m[0].tolist() == [7.0, 1.0] and m[-1].tolist() == [7.0, 2.0] and not np.isnan(m).any()
+    queries = [r for r in influx.requests[n_before:] if "query" in r[1]]
+    assert not any("LAST(*)" in (r[2].get("q", "") + r[4]) for r in queries)         # the look-back sufficed
+    b.close()
+
+
+@pytest.mark.parametrize("ver", [1, 2])
+def test_influx_reads_a_range_too_big_for_memory_in_slices(influx, ver, monkeypatch):
+    monkeypatch.setattr(store, "MAX_READ_ROWS", 400)
+    cfg = StoreConfig(url=influx.url, mode="all", **INFLUX_CFGS[ver])
+    rec = DbRecorder(cfg, [Signal(name="A")], START, {})
+    for i in range(3000):
+        rec.write(i * 5.0, [5000.0 if i == 1700 else float(i % 9)])                  # 4 hours; one spike
+    rec.close()
+    b = store.open_backend(cfg)
+    sid = b.sessions()[0]["id"]
+    with pytest.raises(StoreError, match="Za dużo"):
+        b.read(sid)                                                                   # no thinning allowed: refuses
+    meta, t, m = b.read(sid, max_points=600)
+    assert 0 < len(t) < 1200 and m[:, 0].max() == 5000.0 and m[:, 0].min() == 0.0 and np.all(np.diff(t) >= 0)
+    assert t[0] == store.to_us(START, 0) and t[-1] >= store.to_us(START, 14990)
     b.close()

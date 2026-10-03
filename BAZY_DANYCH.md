@@ -15,8 +15,7 @@ Spis treści: 1. Jak zapisywane są dane · 2. Dostępne cele zapisu i ich poró
 ### 1.1. Model: nagrania (sesje) i zdarzenia
 
 Każde naciśnięcie **REC** (przy działającym zbieraniu) tworzy **nagranie** (w kodzie: *sesję*) z unikalnym identyfikatorem.
-Opis nagrania (metadane) zawiera: nazwę/kartę, adres IP, nazwę konfiguracji (`{confname}`), czas początku, tryb próbek
-oraz **listę sygnałów** (nazwa, typ, adres, kolor itd. – pełna definicja, żeby przy odczycie odtworzyć wykres).
+Opis nagrania (metadane) zawiera: **tytuł, uwagi i tagi** (nadawane przez użytkownika, p. 7.4), **właściciela** (konto Windows) i **komputer**, z którego powstało, nazwę/kartę, adres IP, nazwę konfiguracji (`{confname}`), czas początku i końca, tryb próbek, interwał pełnego stanu, znacznik kosza oraz **listę sygnałów** (nazwa, typ, adres, kolor itd. – pełna definicja, żeby przy odczycie odtworzyć wykres).
 
 Same dane to **zdarzenia** `(czas, numer sygnału, wartość)`:
 
@@ -41,7 +40,7 @@ wysyłkę i – jeśli włączono – odkłada dane na dysk (p. 6).
 
 ### 1.3. Gdzie ustawia się cel zapisu
 
-W panelu **„Nagrywanie REC”** (lewy panel karty): lista **„Zapis do:”** (Plik CSV, SQLite, InfluxDB 1.x / 2.x / 3.x,
+W panelu **„Nagrywanie REC”** (lewy panel karty): lista **„Zapis do:”** (Plik CSV, SQLite, InfluxDB 1.x / 2.x,
 TimescaleDB), lista **„Próbki:”** (domyślnie *Tylko zmiany stanu*) i przycisk **„...”** (ustawienia bazy). Wybór jest
 zapamiętywany w konfiguracji **każdej karty osobno** (`TabConfig.store`).
 
@@ -55,7 +54,6 @@ zapamiętywany w konfiguracji **każdej karty osobno** (`TabConfig.store`).
 | **SQLite** | jeden plik `.db` (domyślnie `Dokumenty\S7Trace\s7trace.db`) | nie | wbudowana (`sqlite3`) | Plik → Import z bazy |
 | **InfluxDB 1.x** | baza (`database`) na serwerze, HTTP `/write` | tak | wbudowana (`urllib`) | Import z bazy |
 | **InfluxDB 2.x** | bucket w organizacji, HTTP `/api/v2/write`, token | tak | wbudowana | Import z bazy (Flux) |
-| **InfluxDB 3.x** | baza, HTTP `/api/v3/write_lp`, odczyt SQL | tak | wbudowana | Import z bazy (SQL) |
 | **TimescaleDB** | tabele PostgreSQL (hypertable) | tak | `psycopg` albo `pg8000` | Import z bazy |
 
 ### 2.1. Zalety i wady
@@ -72,11 +70,11 @@ zapamiętywany w konfiguracji **każdej karty osobno** (`TabConfig.store`).
 * (−) Brak dostępu sieciowego (plik lokalny; przez udział sieciowy SQLite jest zawodny), jeden zapisujący proces naraz
   na plik, brak wbudowanej kompresji, bardzo duże pliki (dziesiątki GB) trudniej obsługiwać – stąd rotacja.
 
-**InfluxDB 1.x / 2.x / 3.x**
+**InfluxDB 1.x / 2.x**
 * (+) Baza szeregów czasowych zaprojektowana do ciągłego zapisu, kompresja danych, polityki retencji, gotowe wykresy
   (Grafana, Chronograf), dostęp sieciowy z wielu komputerów, wiele programów może zapisywać do jednej bazy.
 * (−) Wymaga serwera i administracji (token/hasło, retencja), **nie ma wartości NaN** (rozwiązanie: pole `__ok`, p. 4.3),
-  różne API w każdej wersji (v1 InfluxQL, v2 Flux, v3 SQL – program obsługuje wszystkie trzy), zapytania odczytu są
+  różne API w każdej wersji (v1 InfluxQL, v2 Flux – program obsługuje obie), zapytania odczytu są
   wolniejsze niż w SQLite przy dużych zakresach, **nie sprawdzono na prawdziwym serwerze** (p. 11).
 
 **TimescaleDB (PostgreSQL)**
@@ -91,7 +89,7 @@ zapamiętywany w konfiguracji **każdej karty osobno** (`TabConfig.store`).
 ### 2.2. Którą bazę wybrać (wskazówka)
 
 * Jedno stanowisko, godziny–dni, bez serwera → **SQLite** (z rotacją dzienną).
-* Wiele stanowisk, wspólny podgląd i Grafana → **InfluxDB** (2.x/3.x) lub **TimescaleDB**.
+* Wiele stanowisk, wspólny podgląd i Grafana → **InfluxDB** (2.x) lub **TimescaleDB**.
 * Szybka wymiana pliku z innymi narzędziami, krótkie nagrania → **CSV** (tryb „zmiany”).
 
 ---
@@ -140,7 +138,7 @@ Lista **„Próbki:”** dotyczy wszystkich celów (także CSV). Domyślnie: **T
 * Błędna ścieżka jest zgłaszana **od razu** przy REC (plik lokalny otwierany synchronicznie).
 * Rotacja pliku: p. 8.
 
-### 4.3. InfluxDB (1.x, 2.x, 3.x)
+### 4.3. InfluxDB (1.x, 2.x)
 
 * Zapis: HTTP, **line protocol**, znaczniki czasu w nanosekundach, paczki do 5000 linii.
 * Pomiar (*measurement*) o nazwie z ustawień (domyślnie `s7trace`): tag `session`, pola = nazwy sygnałów (powtórzone nazwy
@@ -149,14 +147,12 @@ Lista **„Próbki:”** dotyczy wszystkich celów (także CSV). Domyślnie: **T
   * **1.x** – `/write` + `/query` (InfluxQL), baza (`database`), użytkownik i hasło (Basic). Baza jest tworzona, jeśli konto ma
     uprawnienia.
   * **2.x** – `/api/v2/write` + `/api/v2/query` (Flux), organizacja + bucket + token (`Authorization: Token …`).
-  * **3.x** – `/api/v3/write_lp` + `/api/v3/query_sql` (SQL), baza + token (`Bearer`; token może być pusty, gdy serwer nie
-    wymaga logowania).
+  * **3.x – nieobsługiwana.** InfluxDB 3 (Core) nie umożliwia usuwania nagrań, a to jest wymaganie programu, więc obsługę
+    usunięto. Zapisany wcześniej cel „InfluxDB 3.x” po wczytaniu konfiguracji wraca do „Plik CSV”.
 * **Brak NaN w InfluxDB:** line protocol nie ma wartości „brak”. Gdy sygnał staje się nieczytelny, pole z wartością jest
-  pomijane, a **dostępność zapisuje się w osobnym polu `<sygnał>__ok`** (0 = nieczytelny, 1 = znów czytelny) – **tylko przy
-  zmianie dostępności** (nie w każdej próbce). Odczyt zamienia `__ok = 0` na przerwę (NaN) w krzywej.
-* **Odczyt zakresu czasu** (np. godz. 14–15) dla trybu „zmiany” wymaga wartości sprzed zakresu: program wykonuje dodatkowe
-  zapytanie „ostatnia wartość przed początkiem zakresu” (v1: `SELECT LAST(*)`, v2: Flux `last()`, v3: SQL
-  `ORDER BY time DESC`) i wstawia ją na początek, więc krzywe nie zaczynają się od pustego miejsca.
+  pomijane, a **dostępność zapisuje się w osobnym polu `<sygnał>__ok`** (0 = nieczytelny, 1 = znów czytelny) – **przy zmianie dostępności
+  oraz w każdym pełnym stanie (klatce kluczowej)** (nie w każdej próbce). Odczyt zamienia `__ok = 0` na przerwę (NaN) w krzywej.
+* **Odczyt zakresu czasu** (np. godz. 14–15) dla trybu „zmiany” wymaga stanu sprzed zakresu. Program zagląda **wstecz o dwa interwały pełnego stanu** (domyślnie 20 min), bierze najświeższą wartość każdego sygnału (z dokładnym czasem) i wstawia ją na początek zakresu. Dzięki klatkom kluczowym każdy sygnał występuje w tym oknie. Jeśli czegoś w nim brakuje (np. pełny stan był wyłączony), program używa wolniejszego zapytania „ostatnia wartość przed zakresem” (v1: `SELECT LAST(*)`, v2: Flux `last()`).
 
 ### 4.4. TimescaleDB (PostgreSQL)
 
@@ -164,7 +160,9 @@ Lista **„Próbki:”** dotyczy wszystkich celów (także CSV). Domyślnie: **T
   (opis nagrania). Domyślna nazwa tabeli `s7_samples`; dozwolone tylko litery, cyfry i podkreślenia (ochrona przed
   wstrzyknięciem SQL).
 * Tabele i indeks `(session, sig, time DESC)` tworzą się automatycznie. Jeśli rozszerzenie `timescaledb` jest dostępne:
-  **hypertable** po czasie i **kompresja po 7 dniach** (segmentacja `session, sig`). Na zwykłym PostgreSQL wszystko działa
+  **hypertable** po czasie i **kompresja po N dniach** (domyślnie 7, segmentacja `session, sig`; N ustawia się w oknie bazy,
+  zakładka „Czasy i bufory”, pole „Kompresja danych starszych niż”, **0 = bez kompresji**, p. 7.5). Zmiana N przy kolejnym połączeniu
+  zastępuje politykę na serwerze; to, co już skompresowano, zostaje skompresowane. Na zwykłym PostgreSQL wszystko działa
   bez hypertable (błąd tych kroków jest ignorowany).
 * Sterownik: `psycopg` (wersja 3, z `libpq`). Gdy się nie załaduje (np. Windows Server 2016), program używa **`pg8000`**
   (czysty Python, dołączony do paczki). Parametry połączenia: serwer, port (5432), baza, użytkownik, hasło, `sslmode`
@@ -196,9 +194,16 @@ teksty pomocy) są w jednym miejscu: `store.PARAMS`.
 | **Dosyłanie po zatrzymaniu REC** (`close_grace_s`) | 10 s | 0–600 | wszystkie | Po Stop program tyle sekund próbuje jeszcze dostarczyć dane z kolejki; potem porzuca (lub zostawia w buforze na dysku). |
 | **Kolejka w pamięci** (`queue_max`) | 300 000 wpisów | 1 000–50 000 000 | wszystkie | Ile zmian może czekać w pamięci, gdy baza jest daleko w tyle. Po przekroczeniu najstarsze są tracone (licznik „utracono”) – chyba że działa bufor na dysku. |
 | **Bufor na dysku – limit** (`spool_mb`) | 500 MB | 0–100 000 (0 = wył.) | sieciowe | Rozmiar lokalnego bufora na dane, gdy serwer jest niedostępny (p. 6.3). Po przekroczeniu najstarsze dane są tracone. |
+| **Kompresja danych starszych niż** (`compress_days`) | 7 dni | 0–3650 (0 = bez kompresji) | TimescaleDB | Serwer kompresuje fragmenty starsze niż tyle dni (zwykle kilka razy mniej miejsca). Skompresowane dane trudniej usunąć (p. 7.5); 0 = najprostsze usuwanie, ale pełny rozmiar tabeli. |
 | **SQLite: nowy plik po** (`rotate_mb`) | 0 (nigdy) | 0–1 000 000 MB | SQLite | Po przekroczeniu rozmiaru kolejne nagrania idą do nowego pliku (p. 8). |
 | **SQLite: nowy plik każdego dnia** (`rotate_daily`) | wyłączone | tak/nie | SQLite | Pierwsze nagranie danego dnia trafia do pliku z datą w nazwie (p. 8). |
 | **Odczyt: maks. punktów na sygnał** (`read_max_points`) | 200 000 | 1 000–50 000 000 | wszystkie | Powyżej tej liczby wczytywane dane są zmniejszane (p. 7.3). |
+| **Kosz: przechowuj** (`trash_days`) | 30 dni | 0–3650 (0 = bez kosza) | wszystkie | Usunięte nagranie jest ukryte i można je przywrócić; po tylu dniach znika na stałe (p. 7.5). 0 = usunięcie od razu trwałe. |
+| **Automatyczne czyszczenie** (`retention_days`) | wyłączone | 0–36500 | wszystkie | Własne nagrania starsze niż tyle dni są przenoszone do kosza przy otwarciu przeglądu nagrań. |
+| **Nazwa nagrania** (`title_ask`) | w trakcie | na początku / w trakcie / na końcu / nie pytaj | wszystkie | Kiedy program pyta o tytuł, uwagi i tagi (p. 7.4). |
+| **Przegląd nagrań pokazuje** (`view_scope`) | tylko moje | moje / wszystkie | wszystkie | Domyślny filtr użytkownika w przeglądzie (p. 7.6). |
+| **Usuwanie i edycja cudzych nagrań** (`delete_others`) | wyłączone | tak/nie | wszystkie | Bez zaznaczenia można zmieniać tylko własne nagrania (p. 7.6). |
+| **SQLite: wspólny folder** (`sqlite_shared`) | wyłączone | tak/nie | SQLite | Ścieżka względna wskazuje na `ProgramData\S7Trace\data` zamiast Dokumentów konta (p. 7.6). |
 
 Stałe niezmienne w oknie: paczka do 20 000 wierszy na jedną wysyłkę (5000 linii na jedno żądanie InfluxDB), stały limit
 odczytu `MAX_READ_ROWS` = 5 000 000 wpisów w pamięci (p. 7.3), początkowa przerwa ponawiania 1 s.
@@ -243,20 +248,29 @@ połączenie. Czekanie nigdy nie blokuje okna dłużej niż ten czas + kilka sek
 
 ---
 
-## 7. Odczyt i import
+## 7. Przegląd nagrań, odczyt i import
 
-### 7.1. Okno „Plik → Import z bazy (SQLite / InfluxDB / TimescaleDB) → wykres…”
+### 7.1. Okno „Przegląd nagrań” (menu Plik → „Przegląd nagrań w bazach (SQLite / InfluxDB / TimescaleDB)…”)
 
-* Wybierasz **bazę**, „Ustawienia…” (adres, hasła), „Odśwież listę” – tabela nagrań: początek, nazwa/konfiguracja, IP, karta,
-  tryb zapisu, liczba sygnałów (najnowsze na górze).
-* **Tylko zakres czasu:** zaznacz i ustaw od–do (domyślnie ostatnia godzina; po wybraniu nagrania – jego początek i koniec).
-* **Wczytaj** (albo dwuklik) ładuje nagranie na wykres karty (tylko gdy karta jest zatrzymana), odtwarza listę sygnałów i
-  pokazuje w pasku: „Wczytano N próbek z bazy…” (z dopiskiem o zmniejszeniu, jeśli było).
+Okno otwiera się zawsze (także podczas zbierania); **wczytanie na wykres** jest możliwe tylko, gdy karta jest zatrzymana.
+
+* **Baza**, „Ustawienia…” (połączenie, czasy, nagrania i użytkownicy), „Odśwież listę”, „Zaległe bufory…” (widoczny, gdy są takie bufory, p. 7.7).
+* **Szukanie** w tytule, uwagach, tagach, konfiguracji, karcie, IP, użytkowniku i komputerze (bez rozróżniania wielkości liter),
+  filtr **użytkownika** (Moje / Wszystkie / konkretny użytkownik) i pole wyboru **Kosz**.
+* **Tabela** z kolumnami: Początek, Czas trwania, Tytuł, Tagi, Uwagi, Użytkownik, Komputer, Konfiguracja, IP, Karta, Zapis, Sygnały,
+  Wpisy. **Sortowanie** po każdej kolumnie (kliknięcie nagłówka; czas i liczby sortują się liczbowo), domyślnie najnowsze na górze.
+  Liczba wpisów jest podawana dla SQLite i TimescaleDB (InfluxDB nie podaje jej tanio).
+* **Grupuj po dniach:** nagłówek z datą i dniem tygodnia (oraz liczbą nagrań) nad nagraniami z każdego dnia, najnowsze dni na górze. Przy grupowaniu sortowanie po kolumnach jest wyłączone; nagłówków nie da się zaznaczyć.
+* **Tylko zakres czasu:** zaznacz i ustaw od–do (po wybraniu nagrania domyślnie jego początek i koniec).
+* Przyciski: **Właściwości…** (tytuł, uwagi, tagi), **Usuń** (do kosza albo trwale, p. 7.5), **Zapisz jako CSV…**, **Wczytaj**
+  (dwuklik też wczytuje) i – w widoku kosza – **Przywróć**, **Opróżnij kosz**.
+* Pasek pod tabelą: liczba nagrań, nagrań w koszu, liczba wpisów, ostrzeżenie o zaległych buforach.
 
 ### 7.2. Jak odtwarzane są krzywe
 
 Zdarzenia z zakresu + (dla trybu „zmiany”) stan sprzed zakresu są składane w macierz; wartości są przenoszone do przodu
-do następnej zmiany (krzywa schodkowa); przerwy (`NaN`) pozostają przerwami.
+do następnej zmiany (krzywa schodkowa); przerwy (`NaN`) pozostają przerwami. Gdy w zakresie jest zdarzenie dokładnie w chwili
+początku, pierwszeństwo ma ono, a nie stan z wyszukiwania wstecz.
 
 ### 7.3. Długie nagrania: zmniejszanie liczby punktów
 
@@ -264,11 +278,57 @@ do następnej zmiany (krzywa schodkowa); przerwy (`NaN`) pozostają przerwami.
   przedziały i z każdego zachowuje wiersze z **minimum i maksimum każdego sygnału**, pierwszy i ostatni wiersz oraz
   miejsca, gdzie sygnał staje się nieczytelny lub czytelny – **szpilki i przerwy nie znikają**. Pasek statusu podaje „zmniejszono
   z X do Y wierszy (min/max)”.
-* **SQLite** dodatkowo liczy min/max **po stronie bazy**, gdy zakres ma więcej niż 5 000 000 wpisów (żeby nie ładować ich do
-  pamięci). Pozostałe bazy przy zakresie > 5 000 000 wpisów odmawiają z komunikatem „wybierz węższy zakres czasu”.
+* Gdy zakres ma więcej niż 5 000 000 wpisów (stała `MAX_READ_ROWS`), dane nie mieszczą się w pamięci, więc:
+  * **SQLite** i **TimescaleDB** liczą min/max **po stronie bazy** (SQL: `GROUP BY` przedziału, w Timescale `date_bin`, działa też na
+    zwykłym PostgreSQL 14+),
+  * **InfluxDB** (wszystkie wersje) czyta zakres **w plasterkach** (co najmniej 48, każdy min. 1 min), zmniejsza każdy plasterek i
+    skleja wynik, przenosząc stan sygnałów z plasterka do plasterka. Cała treść i tak jest przesyłana przez sieć (wolniej niż w SQL),
+    ale pamięć jest ograniczona. Jeśli jeden plasterek sam przekracza limit, program prosi o węższy zakres.
 * Zmniejszanie dotyczy tylko wczytania na wykres; **eksport do CSV zawsze zapisuje wszystkie wiersze** (p. 9).
 
----
+### 7.4. Tytuł, uwagi i tagi – kiedy program pyta
+
+Ustawienie **„Nazwa nagrania”** (ustawienia bazy → zakładka „Nagrania i użytkownicy”; dotyczy zapisu do baz, nie do CSV):
+
+| Wybór | Zachowanie |
+|---|---|
+| **Na początku** | Po naciśnięciu REC pojawia się okno (tytuł, uwagi, tagi); nagrywanie rusza po „Rozpocznij nagrywanie”. „Anuluj REC” = bez nagrywania. |
+| **W trakcie** (domyślnie) | Nagrywanie rusza od razu; obok pojawia się niemodalne okno – można je wypełnić w dowolnej chwili („Zapisz”), albo pominąć. Dane nie czekają na odpowiedź. |
+| **Na końcu** | Pytanie przy zatrzymaniu REC / Stop (tylko jeśli tytuł nie został nadany wcześniej). „Pomiń” = bez tytułu. |
+| **Nie pytaj** | Tytuł można nadać później: przegląd nagrań → Właściwości… |
+
+Tytuł domyślnie podpowiada nazwę konfiguracji (`{confname}`). Zmiany są zapisywane przez wątek zapisu (także przy chwilowo niedostępnym serwerze:
+opis trafia do bufora na dysku razem z danymi). Dodanie zmiennej w trakcie zapisu zaczyna nowe nagranie z **tym samym tytułem**, bez nowego pytania.
+
+### 7.5. Kosz i usuwanie nagrań
+
+* **Usuń** (przegląd nagrań): po potwierdzeniu (z listą nagrań) nagranie trafia do **kosza** – jest ukryte, ale dane zostają. W widoku
+  „Kosz” można je **przywrócić** albo usunąć **trwale** (też zaznaczone grupą) lub **opróżnić kosz**.
+* Po „Kosz: przechowuj” dniach (domyślnie 30) nagranie z kosza znika na stałe – robi to program przy otwarciu przeglądu. 0 dni = bez kosza,
+  usunięcie jest od razu trwałe. „Automatyczne czyszczenie” przenosi własne nagrania starsze niż N dni do kosza (domyślnie wyłączone).
+* Nagrania, które właśnie trwa w tym programie, nie można usunąć ani edytować w przeglądzie (zmieniasz je oknem „nazwa nagrania”); nagrania innych instancji programu są rozpoznawane tylko po braku czasu końca (kolumna „Czas trwania”).
+* **Co dzieje się w bazie:**
+  * **SQLite:** wiersze są kasowane, plik zmniejszany (`VACUUM`).
+  * **TimescaleDB:** `DELETE` danych i opisu. Dane w skompresowanych fragmentach wymagają TimescaleDB 2.11+ (i są usuwane wolniej); błąd jest pokazywany. Jeśli ważne jest szybkie i pewne usuwanie, ustaw `compress_days` na 0.
+  * **InfluxDB 1.x:** `DROP SERIES` po tagu sesji. **InfluxDB 2.x:** API `/api/v2/delete` z warunkiem na sesję. Wymaga uprawnień do usuwania.
+
+### 7.6. Użytkownicy: czyje są nagrania
+
+* Każde nagranie zapamiętuje **konto Windows** (właściciel) i **komputer**. Stare nagrania bez właściciela są traktowane jak własne.
+* **SQLite** domyślnie leży w `Dokumenty\S7Trace` bieżącego konta – każdy użytkownik ma więc własny, prywatny plik. Opcja **„wspólny folder”**
+  przenosi plik (przy ścieżce względnej) do `ProgramData\S7Trace\data` (z prawem zapisu dla wszystkich kont), żeby kilka kont na jednym komputerze
+  widziało te same nagrania; właściciel rozróżnia, czyje są. Nie używaj wspólnego pliku SQLite przez udział sieciowy.
+* **InfluxDB i TimescaleDB** są ze swej natury wspólne dla wszystkich, którzy mają dostęp do serwera; właściciel w opisie pozwala je rozróżniać.
+* **Przegląd nagrań** pokazuje domyślnie **tylko moje** (ustawienie „Przegląd nagrań pokazuje”; w oknie można przełączyć na Wszystkie albo wybranego
+  użytkownika).
+* **Prawa:** domyślnie można usuwać i edytować tylko **własne** nagrania. Opcja „Pozwól usuwać i edytować nagrania innych użytkowników” to
+  zabezpieczenie przed pomyłką, nie system uprawnień – uprawnieniami rządzi konto bazy po stronie serwera.
+
+### 7.7. Zaległe bufory zapisu
+
+Bufory na dysku (p. 6.3), które nie zostały dosłane przed zamknięciem programu, widać w **Ustawienia → „Zaległe bufory zapisu do baz…”** i w przeglądzie
+nagrań (przycisk „Zaległe bufory…”). Dla każdego: opis nagrania, cel, liczba wpisów, rozmiar i informacja, czy dotyczy bieżącej bazy. **„Wyślij teraz”**
+dosyła bufor od razu (tylko dla bieżącej bazy), **„Usuń bufor”** kasuje go. Bufory trwających nagrań nie są pokazywane.
 
 ## 8. Rotacja plików SQLite
 
@@ -299,23 +359,25 @@ przekazania danych do Excela lub innych narzędzi.
 | Cel zapisu i tryb próbek | panel „Nagrywanie REC”: „Zapis do”, „Próbki” |
 | Ustawienia bazy (połączenie + czasy) | przycisk „...” obok „Zapis do” **albo** Ustawienia → „Zapis nagrań w bazach danych…” (dla bieżącej karty; przy zapisie do CSV pyta, którą bazę ustawić) |
 | Test połączenia | „Testuj połączenie” w ustawieniach bazy; automatycznie przy REC |
-| Odczyt nagrań z bazy | Plik → „Import z bazy (SQLite / InfluxDB / TimescaleDB) → wykres…” |
-| Eksport do CSV | „Zapisz jako CSV…” w oknie importu |
+| Przegląd, opisy, kosz, usuwanie, odczyt nagrań | Plik → „Przegląd nagrań w bazach (SQLite / InfluxDB / TimescaleDB)…” |
+| Zaległe bufory zapisu | Ustawienia → „Zaległe bufory zapisu do baz…” |
+| Eksport do CSV | „Zapisz jako CSV…” w przeglądzie nagrań |
 | Pomoc | F1 → „Przyciski sterujące” → REC |
 
 ---
 
-## 11. Czego nie sprawdzono (stan na 2026-10-03)
+## 11. Czego nie sprawdzono i znane ograniczenia (stan na 2026-10-03)
 
-* **Prawdziwe serwery InfluxDB i TimescaleDB nie były dostępne.** Zapis i odczyt przetestowano na atrapie serwera HTTP
-  (protokół v1/v2/v3, linie protokołu, zapytania) i atrapie `psycopg`. Pierwsze uruchomienie na prawdziwym serwerze może
-  ujawnić różnice w składni zapytań – zwłaszcza zapytania „stan sprzed zakresu” w InfluxDB oraz hypertable/kompresja w
-  TimescaleDB.
-* **`psycopg` / `pg8000` na Windows Server 2016** nie były testowane na tym systemie – uruchom `Test-TimescaleDB.bat` z paczki (p. 11a).
-  Na zwykłym PostgreSQL 16 (Windows) oba sterowniki przeszły pełny cykl; prawdziwego TimescaleDB (hypertable, kompresja) nie było.
-* Pole `__ok` w InfluxDB zapisuje tylko zmiany dostępności; gdy ktoś ręcznie usunie je z bazy, odczyt pokaże ostatnią wartość
-  zamiast przerwy.
-* Wartości są liczbami zmiennoprzecinkowymi: 64-bitowe liczby całkowite powyżej 2^53 tracą dokładność.
+* **Prawdziwe serwery InfluxDB nie były dostępne.** Zapis i odczyt przetestowano na atrapie serwera HTTP (protokół v1/v2, linie protokołu,
+  zapytania, usuwanie, scalanie punktów o tym samym czasie). Pierwsze uruchomienie na prawdziwym serwerze może ujawnić różnice w składni zapytań –
+  zwłaszcza odczyt z zaglądaniem wstecz, `DROP SERIES` (v1) i `/api/v2/delete` (v2).
+* **TimescaleDB:** zapis, odczyt, opis, kosz, usuwanie i odczyt zagregowany sprawdzono na prawdziwym PostgreSQL 16 (sterowniki `psycopg` i
+  `pg8000`), ale **bez rozszerzenia `timescaledb`** – hypertable, kompresja i usuwanie ze skompresowanych fragmentów nie były sprawdzone.
+* **`psycopg` / `pg8000` na Windows Server 2016** – uruchom `Test-TimescaleDB.bat` z paczki (p. 11a).
+* Liczba wpisów w przeglądzie jest podawana tylko dla SQLite i TimescaleDB (przy bardzo dużych tabelach Timescale liczenie może chwilę trwać).
+* Wartości są liczbami zmiennoprzecinkowymi: 64-bitowe liczby całkowite powyżej 2^53 tracą dokładność (w danych ze sterownika praktycznie nie występują).
+* Rotacja SQLite działa w chwili rozpoczęcia nagrania – nagranie wielodniowe nie jest dzielone między pliki.
+* Program nie zastępuje uprawnień serwera: „tylko własne nagrania” to zabezpieczenie przed pomyłką (p. 7.6).
 
 ---
 
@@ -327,7 +389,7 @@ Pyta o adres serwera, port, bazę, użytkownika, hasło i `sslmode`, a potem –
 1. środowisko (wersja Windows, Python, proxy), 2. import obu sterowników (wersje, libpq, błędy ładowania DLL),
 3. DNS i połączenie TCP, 4. logowanie, wersję serwera, uprawnienia, rozszerzenie `timescaledb`,
 5. pełny cykl przez kod programu: zapis nagrania (`DbRecorder`: zmiany, NaN, klatki kluczowe), odczyt całości i porównanie z zapisanym,
-   odczyt zakresu czasu ze stanem sprzed zakresu, hypertable i kompresja, przepustowość zapisu, bufor na dysku przy zaniku serwera
+   odczyt zakresu czasu ze stanem sprzed zakresu, hypertable i kompresja, tytuł/uwagi/kosz/usuwanie i odczyt zagregowany, przepustowość zapisu, bufor na dysku przy zaniku serwera
    i dosyłanie po powrocie, 6. sprzątanie (tabele testowe `s7trace_selftest_…` są usuwane; `--keep` je zostawia).
 
 Wynik: **`diagnoza_timescale.txt`** i `.json` obok `S7Trace.bat` – z czasami kroków, pełnym opisem i tracebackiem każdego błędu oraz
@@ -349,6 +411,9 @@ Kod wyjścia 0 = wszystko OK. Test sprawdzony na prawdziwym PostgreSQL 16.2 (Win
 | Sterownik PostgreSQL | `_psycopg`, `_pg_connect`, `pg_driver_name` |
 | Rejestrator i bufor na dysku | `DbRecorder`, `Spool` |
 | Test połączenia przy REC | `TraceTab._probe_db`, `_on_db_probe` |
-| Okna | `ui/store_dialog.py` (`StoreDialog`, `StoreImportDialog`) |
-| Testy | `tests/test_store.py`, `tests/test_store_ui.py` (atrapy: serwer Influx HTTP, `psycopg`) |
+| Okna | `ui/store_dialog.py` (`StoreDialog`, `StoreImportDialog` = przegląd nagrań, `RecInfoDialog`, `SpoolDialog`) |
+| Metadane, kosz, usuwanie | `Backend.update_session` / `delete_session` / `stats`, `norm_session`, `current_user`, `shared_data_dir` |
+| Zaległe bufory | `scan_spools`, `deliver_spool`, `remove_spool` |
+| Pytania o nazwę | `TraceTab._open_recorder`, `_show_info_dialog`, `_close_recorder(ask=…)` |
+| Testy | `tests/test_store.py`, `tests/test_store_ui.py`, `tests/test_store_manage.py` (przegląd, kosz, pytania o nazwę, bufory), `tests/test_pg_diag.py` (atrapy: serwer Influx HTTP, `psycopg`) |
 | Kontrola paczki | `tools/check_deps.py`, `build-portable.ps1` (sprawdza sterownik PostgreSQL) |
