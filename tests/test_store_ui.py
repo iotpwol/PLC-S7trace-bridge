@@ -97,7 +97,10 @@ def test_sqlite_rec_through_the_tab_and_import_back(app, tmp_path, monkeypatch):
         return QDialog.Accepted if self.result else QDialog.Rejected
 
     monkeypatch.setattr(StoreImportDialog, "exec", fake_exec)
+    asked = []
+    monkeypatch.setattr(type(t2), "_ask_target", lambda self, active: asked.append(active) or "here")
     t2.import_db()
+    assert asked == [False]                                               # this tab already holds data: the user is asked
     assert shown["rows"] == 1
     assert [s.name for s in t2.cfg.signals] == ["A", "B"] and len(t2.buffer) > 3
     t, v = t2.buffer.snapshot()

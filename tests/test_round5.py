@@ -39,18 +39,18 @@ def _tab(ip="10.1.2.3"):
 
 
 # --------------------------------------------------------------------- foldable panels
-def test_left_panel_folds_with_button_and_double_click(app):
+def test_left_panel_folds_with_double_click(app):
     tab = _tab()
     sp = tab.split_h
     wide = sp.sizes()[0]
     assert wide >= 200 and not sp.collapsed
     handle = sp.handle(1)
     assert isinstance(handle, FoldHandle)
-    QTest.mouseClick(handle.btn, Qt.LeftButton)                         # the small button at the top of the bar
+    QTest.mouseDClick(handle, Qt.LeftButton, pos=QPoint(handle.width() // 2, 200))   # double click on the thin bar
     QApplication.processEvents()
     assert sp.collapsed and sp.sizes()[0] == 0 and tab.ui_state["left_collapsed"] is True
     assert sp.sizes()[1] >= tab.width() - 40                            # the chart took the room
-    QTest.mouseClick(handle.btn, Qt.LeftButton)
+    QTest.mouseDClick(handle, Qt.LeftButton, pos=QPoint(handle.width() // 2, 200))
     QApplication.processEvents()
     assert not sp.collapsed and abs(sp.sizes()[0] - wide) <= 3          # back at the old width
     QTest.mouseDClick(handle, Qt.LeftButton, pos=QPoint(handle.width() // 2, 200))   # double click on the blue bar
@@ -77,7 +77,7 @@ def test_overview_strip_folds_down(app):
     tab = _tab()
     sp = tab.plot.split
     assert sp.sizes()[1] >= 48
-    QTest.mouseClick(sp.handle(1).btn, Qt.LeftButton)
+    QTest.mouseDClick(sp.handle(1), Qt.LeftButton, pos=QPoint(300, sp.handle(1).height() // 2))
     QApplication.processEvents()
     assert sp.collapsed and tab.plot.overview_height() == 0 and tab.ui_state["overview_collapsed"] is True
     assert tab.ui_state["overview_h"] >= 48                              # the remembered height is not overwritten by 0

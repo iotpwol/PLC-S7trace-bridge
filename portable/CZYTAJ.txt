@@ -6,7 +6,10 @@ URUCHOMIENIE
   Symulator.bat        - lokalny symulator PLC; w programie wpisz IP 127.0.0.1:1102, rack 0, slot 2
   Diagnoza.bat         - sprawdza Windows, biblioteki Qt i kompletnosc plikow (wynik: diagnoza.txt)
   Test-TimescaleDB.bat - test zapisu/odczytu do TimescaleDB / PostgreSQL (psycopg i pg8000);
-                         pyta o adres serwera, wynik: diagnoza_timescale.txt (wyslij go deweloperowi)
+                         pyta o adres serwera, wynik: diagnoza_timescale.txt (wyslij go deweloperowi);
+                         przy serwerze z rozszerzeniem timescaledb sprawdza tez kompresje i usuwanie
+  Test-InfluxDB.bat    - test zapisu, odczytu i usuwania w InfluxDB 1.x / 2.x; pyta o wersje, adres i
+                         dane logowania, wynik: diagnoza_influx.txt (wyslij go deweloperowi)
 
 INSTALACJA NA INNYM KOMPUTERZE
   Skopiuj / rozpakuj CALY folder S7Trace (np. do C:\Dev\S7Trace - trzymaj sciezke krotka).

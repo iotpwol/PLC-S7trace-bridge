@@ -301,11 +301,16 @@ class FakeInflux:
                     return self._send(204, b"")
                 if u.path == "/api/v2/delete":
                     pred = json.loads(body)["predicate"]
-                    m = re.search(r'_measurement="([^"]+)" AND session="([^"]+)"', pred)
-                    outer.points = [p for p in outer.points if not (p[0] == m.group(1) and p[1].get("session") == m.group(2))]
+                    m = re.search(r'_measurement="([^"]+)"(?: AND session="([^"]+)")?', pred)
+                    outer.points = [p for p in outer.points
+                                    if not (p[0] == m.group(1) and (m.group(2) is None or p[1].get("session") == m.group(2)))]
                     return self._send(204, b"")
                 if u.path == "/query":
                     if "CREATE DATABASE" in q["q"]:
+                        return self._send(200, '{"results":[{"statement_id":0}]}')
+                    if q["q"].startswith("DROP MEASUREMENT"):
+                        name = re.search(r'"([^"]+)"', q["q"]).group(1)
+                        outer.points = [p for p in outer.points if p[0] != name]
                         return self._send(200, '{"results":[{"statement_id":0}]}')
                     if q["q"].startswith("DROP SERIES"):
                         m = re.search(r"FROM \"([^\"]+)\" WHERE \"session\"='([^']+)'", q["q"])
@@ -352,6 +357,16 @@ class FakeInflux:
 
     def v1(self, q):
         meas = re.search(r'FROM "([^"]+)"', q).group(1)
+        if q.startswith("SELECT count(*)"):                                  # how many values the server holds per field
+            pts = self.select(meas, re.search(r"\"session\"='([^']+)'", q).group(1))
+            counts: dict = {}
+            for p in pts:
+                for k in p[2]:
+                    counts[k] = counts.get(k, 0) + 1
+            if not counts:
+                return {"results": [{"statement_id": 0}]}
+            return {"results": [{"statement_id": 0, "series": [{"name": meas, "columns": ["time"] + [f"count_{k}" for k in counts],
+                                                                "values": [[0] + list(counts.values())]}]}]}
         if "LAST(*)" in q:
             hi = int(re.search(r"time < (\d+)", q).group(1))
             last = self.last_before(meas, re.search(r"\"session\"='([^']+)'", q).group(1), hi)
@@ -374,6 +389,13 @@ class FakeInflux:
 
     def v2(self, flux):
         meas = re.search(r'_measurement == "([^"]+)"', flux).group(1)
+        if flux.rstrip().endswith("count()"):
+            counts: dict = {}
+            for p in self.select(meas, re.search(r'r.session == "([^"]+)"', flux).group(1)):
+                for k in p[2]:
+                    counts[k] = counts.get(k, 0) + 1
+            head = ["#datatype,string,long,dateTime:RFC3339,string,long", ",result,table,_time,_field,_value"]
+            return "\n".join(head + [f",,0,2026-01-01T00:00:00Z,{k},{v}" for k, v in counts.items()]) + "\n\n"
         if flux.rstrip().endswith("last()"):
             hi = int(re.search(r"stop: time\(v: (\d+)\)", flux).group(1))
             last = self.last_before(meas, re.search(r'r.session == "([^"]+)"', flux).group(1), hi)

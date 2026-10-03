@@ -16,6 +16,7 @@ from ..core.naming import NAME_OWN, NAME_PREV, new_signal_name
 from ..core.symbols import Symbol
 from ..core.types import (ALL_SOURCES, DEFAULT_COLORS, FORMATS, NODE_SOURCES, SOURCES, TYPES, Signal, address_key,
                           format_value)
+from .dialog_kit import dialog_info
 
 # key, header, default width
 COLS = [
@@ -33,6 +34,8 @@ RED = "background:#9a2a2a; color:#ffffff;"
 YELLOW = "background:#c9b030; color:#000000;"
 
 
+@dialog_info("Dodaj sygnały z symboli",
+             "Zmienne z wczytanego pliku symboli. Zaznacz te, które mają zostać dodane do listy sygnałów.")
 class SymbolPicker(QDialog):
     def __init__(self, symbols: list[Symbol], parent=None):
         super().__init__(parent)
@@ -160,6 +163,8 @@ class _RowFilter(QObject):
         return False
 
 
+@dialog_info("Sygnały do śledzenia",
+             "Lista zmiennych odczytywanych ze sterownika: adres, typ, kolor, skala i położenie na wykresie. Przy aktywnym odczycie lista jest zablokowana.")
 class SignalsDialog(QDialog):
     def __init__(self, signals: list[Signal], locked: bool, symbols: Callable[[], list[Symbol]],
                  opts: dict | None = None, value_provider: Callable[[], list | None] | None = None,

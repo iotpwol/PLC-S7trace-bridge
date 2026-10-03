@@ -370,9 +370,9 @@ przekazania danych do Excela lub innych narzędzi.
 
 * **Prawdziwe serwery InfluxDB nie były dostępne.** Zapis i odczyt przetestowano na atrapie serwera HTTP (protokół v1/v2, linie protokołu,
   zapytania, usuwanie, scalanie punktów o tym samym czasie). Pierwsze uruchomienie na prawdziwym serwerze może ujawnić różnice w składni zapytań –
-  zwłaszcza odczyt z zaglądaniem wstecz, `DROP SERIES` (v1) i `/api/v2/delete` (v2).
+  zwłaszcza odczyt z zaglądaniem wstecz, `DROP SERIES` (v1) i `/api/v2/delete` (v2). Do sprawdzenia na prawdziwym serwerze służy `Test-InfluxDB.bat` (p. 11b).
 * **TimescaleDB:** zapis, odczyt, opis, kosz, usuwanie i odczyt zagregowany sprawdzono na prawdziwym PostgreSQL 16 (sterowniki `psycopg` i
-  `pg8000`), ale **bez rozszerzenia `timescaledb`** – hypertable, kompresja i usuwanie ze skompresowanych fragmentów nie były sprawdzone.
+  `pg8000`), ale **bez rozszerzenia `timescaledb`** – hypertable, kompresja i usuwanie ze skompresowanych fragmentów nie były sprawdzone (służy do tego krok „kompresja” w `Test-TimescaleDB.bat`, p. 11a).
 * **`psycopg` / `pg8000` na Windows Server 2016** – uruchom `Test-TimescaleDB.bat` z paczki (p. 11a).
 * Liczba wpisów w przeglądzie jest podawana tylko dla SQLite i TimescaleDB (przy bardzo dużych tabelach Timescale liczenie może chwilę trwać).
 * Wartości są liczbami zmiennoprzecinkowymi: 64-bitowe liczby całkowite powyżej 2^53 tracą dokładność (w danych ze sterownika praktycznie nie występują).
@@ -397,6 +397,26 @@ wskazówką (np. zły `pg_hba.conf`, DNS, SSL, brak uprawnień). **Hasło nie tr
 Z linii poleceń: `python diagnoza_timescale.py --host … --port … --db … --user … [--sslmode …] [--drivers pg8000] [--keep]`.
 Kod wyjścia 0 = wszystko OK. Test sprawdzony na prawdziwym PostgreSQL 16.2 (Windows) z obydwoma sterownikami; **rozszerzenia
 `timescaledb` tam nie było**, więc hypertable i kompresja nie były jeszcze sprawdzone na prawdziwym TimescaleDB.
+
+**Krok „kompresja” (tylko gdy na serwerze jest rozszerzenie `timescaledb`; bez niego krok jest pomijany):** sprawdza, że polityka kompresji
+na serwerze zgadza się z `compress_days` (14 → 0 → wartość z linii poleceń, `--compress-days`, domyślnie 7); zapisuje dwa nagrania sprzed 30 dni,
+wymusza kompresję ich fragmentów (`compress_chunk` – polityka serwera uruchamia się raz na dobę), podaje liczbę skompresowanych fragmentów
+i rozmiar przed / po; odczytuje oba nagrania i zakres czasu **ze skompresowanych danych** i porównuje z zapisem; usuwa jedno nagranie
+ze skompresowanych danych (wymaga TimescaleDB 2.11+) i sprawdza, że drugie zostało nietknięte. **Ten krok napisano bez dostępu do serwera
+z rozszerzeniem – pierwsze uruchomienie na prawdziwym serwerze może ujawnić różnice między wersjami TimescaleDB** (nazwy widoków i funkcji).
+
+## 11b. Test InfluxDB 1.x / 2.x na docelowym serwerze
+
+Paczka ma **`Test-InfluxDB.bat`** (`app\diagnoza_influx.py`, źródło `tools/diagnoza_influx.py`). Pyta o wersję (1 lub 2), adres, bazę i
+użytkownika (v1) albo organizację, bucket i token (v2). Dane testowe trafiają do osobnego pomiaru `s7trace_selftest_…`; nic innego w bazie nie jest zmieniane.
+Kroki: środowisko, DNS i TCP, wersja serwera (czy zgadza się z wyborem), logowanie i prawo zapisu; zapis nagrania z klatkami kluczowymi
+i bez nich; odczyt całości i porównanie z zapisem; **odczyt zakresu czasu ze stanem sprzed zakresu** – z klatek kluczowych i zapytaniem
+„ostatnia wartość przed zakresem”; odczyt bardzo dużego zakresu w kawałkach (szpilka nie może zniknąć); tytuł / uwagi / kosz
+(punkty o tym samym czasie muszą się scalić); **usuwanie** – serwer sam liczy punkty przed i po (`DROP SERIES` w v1, `/api/v2/delete` w v2),
+wskazane nagranie ma zniknąć, drugie zostać; przepustowość zapisu; sprzątanie (`--keep` zostawia dane). Wynik: `diagnoza_influx.txt` i `.json`
+(token i hasło nie trafiają do raportu), z wskazówkami (zły token, brak uprawnień administratora do `DROP SERIES`, zła nazwa bucketu).
+Z linii poleceń: `python diagnoza_influx.py --version 2 --url … --org … --bucket … --token …` albo `--version 1 --url … --db … --user … --password …`.
+Test sprawdzono wyłącznie na atrapie serwera HTTP – **jego pierwsze uruchomienie na prawdziwym InfluxDB jest właśnie tym brakującym sprawdzeniem.**
 
 ---
 

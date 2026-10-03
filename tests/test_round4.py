@@ -536,7 +536,9 @@ def test_form_labels_visible_in_narrowest_panel(app):
     tab.resize(1200, 700)
     tab.show()
     QApplication.processEvents()
-    assert tab.split_h.sizes()[0] <= 205                                       # the narrowest allowed panel
+    tab.split_h.set_sizes_for(150)                                             # as narrow as the panel allows
+    QApplication.processEvents()
+    assert tab.split_h.sizes()[0] == tab._left_min                              # = what its widgets need
     for field in (tab.sp_window, tab.cb_ylayout, tab.sp_ymin, tab.ed_ip):
         lay = field.parentWidget().layout()
         lab = lay.labelForField(field)

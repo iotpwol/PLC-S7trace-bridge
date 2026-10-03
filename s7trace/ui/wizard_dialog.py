@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (QApplication, QDialog, QHBoxLayout, QHeaderView, 
 
 from ..core import detect
 from ..core.drivers import CONN_LABEL
+from .dialog_kit import dialog_info
 
 STATUS_TXT = {"ok": ("✔ OK", "#2fbf4a"), "fail": ("✖ błąd", "#e04040"), "warn": ("▲ uwaga", "#e0b020"),
               "skip": ("— pominięto", "#8a8a8a")}
@@ -40,6 +41,8 @@ class DetectWorker(QThread):
         self.finished_.emit(res)
 
 
+@dialog_info("Kreator połączenia",
+             "Sprawdza adres sterownika i rozpoznaje, którą metodą (S7, OPC UA, Web API, Modbus) da się go odczytać. Wynik można od razu zastosować.")
 class WizardDialog(QDialog):
     """auto=True: used by Start in automatic mode – closes itself when a working method is found."""
 

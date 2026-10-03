@@ -226,6 +226,126 @@ def check_matrix(t_us, mat, rows) -> int:
     return bad
 
 
+def _pg_scalar(conn, sql, params=None):
+    cur = conn.cursor()
+    cur.execute(sql, params) if params is not None else cur.execute(sql)
+    r = cur.fetchone()
+    return r[0] if r else None
+
+
+def compression_check(s, name: str, mod, cfg, tmp: str, sigs) -> None:
+    """The part that cannot be tested without the timescaledb extension: does the compression policy follow
+    `compress_days`, are old chunks really compressed (by compress_chunk, the policy job runs only once a day), can the
+    data be read back and can one recording be deleted from compressed chunks without touching another one."""
+    from datetime import timedelta
+    from s7trace.core import store
+    from s7trace.core.types import Signal
+    conn = store._pg_connect(mod, cfg, int(cfg.http_timeout_s))
+    try:
+        ver = _pg_scalar(conn, "SELECT extversion FROM pg_extension WHERE extname='timescaledb'")
+        if not ver:
+            s.note("brak rozszerzenia timescaledb na serwerze - kompresja nie istnieje, krok pominiety (zwykly PostgreSQL)")
+            return
+        s.note(f"timescaledb {ver}")
+        if not _pg_scalar(conn, "SELECT count(*) FROM timescaledb_information.hypertables WHERE hypertable_name=%s", (cfg.table,)):
+            raise RuntimeError(f"tabela {cfg.table} nie jest hypertable (create_hypertable nie powiodlo sie)")
+    finally:
+        conn.rollback()
+        conn.close()
+
+    def policy():
+        """The compress_after of the table's compression policy jobs, in days."""
+        c = store._pg_connect(mod, cfg, int(cfg.http_timeout_s))
+        try:
+            cur = c.cursor()
+            cur.execute("SELECT EXTRACT(EPOCH FROM (config->>'compress_after')::interval) / 86400 FROM timescaledb_information.jobs "
+                        "WHERE proc_name='policy_compression' AND hypertable_name=%s", (cfg.table,))
+            return [float(x[0]) for x in cur.fetchall()]
+        finally:
+            c.rollback()
+            c.close()
+
+    # 1. the policy follows compress_days (the backend sets it when it connects); ends with the configured value
+    for days in (14, 0, cfg.compress_days):
+        c2 = type(cfg).from_dict({**cfg.to_dict(), "pg_password": cfg.pg_password, "compress_days": days})
+        store.open_backend(c2, tmp).close()
+        got = policy()
+        s.note(f"compress_days={days}: polityka na serwerze = {[f'{g:g} dni' for g in got] or 'brak'}")
+        if (days == 0 and got) or (days > 0 and got != [float(days)]):
+            raise RuntimeError(f"polityka kompresji nie zgadza sie z compress_days={days}: {got}")
+    # 2. two old recordings (30 days back, so that their chunks are older than any sensible compress_days)
+    old = datetime.now().replace(microsecond=0) - timedelta(days=30)
+    n = 20000
+    ids = ("selftest_comp_del", "selftest_comp_keep")
+    b = store.open_backend(cfg, tmp)
+    try:
+        for sid in ids:
+            b.begin({"id": sid, "name": sid, "title": sid, "owner": store.current_user(), "start_us": store.to_us(old, 0),
+                     "mode": "all", "keyframe_min": 0.0, "signals": [x.to_dict() for x in sigs[:3]], "fields": ["A", "B", "C"]})
+            data = [(store.to_us(old, i * 1.0), {0: float(i % 7), 1: i * 0.5, 2: 7.0}) for i in range(n)]
+            for k in range(0, n, 5000):
+                b.write(data[k:k + 5000])
+            b.end(store.to_us(old, n))
+        s.note(f"zapisano 2 nagrania po {n * 3} wpisow, sprzed 30 dni")
+    finally:
+        b.close()
+    conn = store._pg_connect(mod, cfg, int(cfg.http_timeout_s))
+    try:
+        cur = conn.cursor()
+        before = _pg_scalar(conn, "SELECT pg_total_relation_size(%s::regclass)", (cfg.table,))
+        cur.execute(f"SELECT compress_chunk(c, if_not_compressed => true) FROM show_chunks(%s, older_than => INTERVAL '1 day') c",
+                    (cfg.table,))
+        done = cur.fetchall()
+        conn.commit()
+        s.note(f"compress_chunk: skompresowano fragmentow: {len(done)}")
+        if not done:
+            raise RuntimeError("nie ma fragmentow starszych niz 1 dzien - dane nie trafily do tabeli?")
+        cur.execute("SELECT count(*), count(*) FILTER (WHERE is_compressed) FROM timescaledb_information.chunks "
+                    "WHERE hypertable_name=%s", (cfg.table,))
+        total, comp = cur.fetchone()
+        s.note(f"fragmentow: {total}, skompresowanych: {comp}")
+        if not comp:
+            raise RuntimeError("zaden fragment nie jest oznaczony jako skompresowany")
+        try:
+            cur.execute("SELECT before_compression_total_bytes, after_compression_total_bytes FROM hypertable_compression_stats(%s)",
+                        (cfg.table,))
+            bb, aa = cur.fetchone()
+            s.note(f"rozmiar przed kompresja: {bb / 1e6:.1f} MB, po: {aa / 1e6:.1f} MB (ok. {bb / max(aa, 1):.1f}x mniej)")
+        except Exception as e:
+            conn.rollback()
+            s.note(f"statystyki kompresji niedostepne w tej wersji ({str(e).splitlines()[0][:80]}) - to nie jest blad")
+        conn.rollback()
+    finally:
+        conn.close()
+    # 3. read back from the compressed chunks, 4. delete one recording, keep the other
+    b = store.open_backend(cfg, tmp)
+    try:
+        for sid in ids:
+            meta, t, m = b.read(sid)
+            if len(t) != n or m[-1, 0] != float((n - 1) % 7) or m[-1, 1] != (n - 1) * 0.5 or m[10, 2] != 7.0:
+                raise RuntimeError(f"odczyt ze skompresowanych danych jest inny niz zapisano: {sid}: {len(t)} wierszy")
+        s.note("odczyt ze skompresowanych fragmentow: zgodny z zapisem")
+        lo, hi = store.to_us(old, 5000.0), store.to_us(old, 6000.0)
+        meta, t, m = b.read(ids[1], lo, hi)
+        if not len(t) or t[0] < lo or t[-1] > hi:
+            raise RuntimeError("odczyt zakresu czasu ze skompresowanych danych jest bledny")
+        s.note(f"odczyt zakresu czasu: {len(t)} wierszy")
+        t0 = time.time()
+        try:
+            b.delete_session(ids[0])
+        except Exception as e:
+            raise RuntimeError(f"USUWANIE ze skompresowanych fragmentow nie powiodlo sie (timescaledb {ver}; wymagane 2.11+): {e}") from e
+        s.note(f"usuniecie nagrania ze skompresowanych danych: {time.time() - t0:.2f} s")
+        left = {x["id"] for x in b.sessions()}
+        if ids[0] in left or ids[0] in b.stats():
+            raise RuntimeError("usuniete nagranie (skompresowane) nadal jest w bazie")
+        if ids[1] not in left or b.stats().get(ids[1]) != n * 3:
+            raise RuntimeError(f"usuniecie zniszczylo drugie nagranie: wpisow {b.stats().get(ids[1])} zamiast {n * 3}")
+        s.note("usuwanie: OK, drugie nagranie nietkniete")
+    finally:
+        b.close()
+
+
 def full_cycle(name: str, mod, cfg_base, keep: bool, events: int) -> None:
     from s7trace.core import store
     from s7trace.core.types import Signal
@@ -336,6 +456,8 @@ def full_cycle(name: str, mod, cfg_base, keep: bool, events: int) -> None:
             finally:
                 store.MAX_READ_ROWS = old_max
                 b.close()
+        with Step("kompresja: ustawienia, kompresja starych danych, odczyt i usuwanie ze skompresowanych fragmentow", name) as s:
+            compression_check(s, name, mod, cfg, tmp, sigs)
         with Step(f"przepustowosc zapisu ({events} wpisow)", name) as s:
             b = store.open_backend(cfg, tmp)
             try:

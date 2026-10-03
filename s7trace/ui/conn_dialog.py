@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFileDialog, QForm
 from ..core.config import app_dir
 from ..core.drivers import CONN_TYPES, generate_client_cert
 from .wizard_dialog import DetectWorker
+from .dialog_kit import dialog_info
 
 HINTS = {
     "auto": "Przy każdym Start program sprawdza kolejno: S7comm → OPC UA → Web API → Modbus TCP i używa pierwszej działającej "
@@ -24,6 +25,8 @@ HINTS = {
 }
 
 
+@dialog_info("Metoda połączenia i dane logowania",
+             "Wybiera sposób komunikacji ze sterownikiem (S7, OPC UA, Web API, Modbus) i dane logowania. „Test” sprawdza połączenie, „Kreator” rozpoznaje metodę sam.")
 class ConnectionDialog(QDialog):
     def __init__(self, tab, parent=None):
         super().__init__(parent or tab)

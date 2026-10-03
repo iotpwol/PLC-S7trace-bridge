@@ -4,10 +4,10 @@ from __future__ import annotations
 import json
 import os
 
-from PySide6.QtCore import QByteArray, QSize, QTimer, Qt
+from PySide6.QtCore import QByteArray, QEvent, QSize, QTimer, Qt
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QInputDialog, QMainWindow, QMenu,
-                               QMessageBox, QStackedWidget, QTabBar, QToolButton, QWidget)
+                               QMessageBox, QStackedWidget, QTabBar, QToolButton, QToolTip, QWidget)
 
 from ..core import sessions
 from ..core import symbols as sym
@@ -103,6 +103,7 @@ class MainWindow(QMainWindow):
         bar.tabCloseRequested.connect(self.close_tab)
         bar.tabBarDoubleClicked.connect(self.rename_tab)
         self.tabs = TopTabs(bar, self.stack)
+        bar.installEventFilter(self)                   # the tooltip of a tab lists its connection / recording and database
         plus = QToolButton()
         plus.setText("+")
         plus.setToolTip("Nowa karta (nowe połączenie)")
@@ -367,6 +368,7 @@ class MainWindow(QMainWindow):
     def new_tab(self, cfg: TabConfig | None = None) -> TraceTab:
         tab = TraceTab(cfg or TabConfig(), lambda: self.symbols, self.ui)
         tab.other_tabs = self._other_tabs(tab)
+        tab.new_tab_cb = self.new_tab
         i = self.tabs.addTab(tab, tab.title())
         tab.stateChanged.connect(lambda s, t=tab: self._tab_state(t, s))
         tab.titleChanged.connect(lambda title, t=tab: self._tab_state(t, t.state))
@@ -380,6 +382,15 @@ class MainWindow(QMainWindow):
         self._tab_state(tab, "stopped")
         self.tabs.setCurrentIndex(i)
         return tab
+
+    def eventFilter(self, obj, e):
+        if e.type() == QEvent.ToolTip and obj is self.tabs.tabBar():
+            i = obj.tabAt(e.pos())
+            tab = self.tabs.widget(i) if i >= 0 else None
+            if tab is not None:
+                QToolTip.showText(e.globalPos(), tab.tooltip_html(), obj)
+                return True
+        return super().eventFilter(obj, e)
 
     def _tab_state(self, tab: TraceTab, state: str):
         i = self.tabs.indexOf(tab)

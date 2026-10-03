@@ -1,41 +1,62 @@
-"""Splitter whose one pane can be folded away and brought back: a small arrow button on the handle, or a double click
-on the handle. Used for the settings panel (folds to the left) and the overview strip (folds down)."""
+"""Splitter whose one pane can be folded away and brought back: a double click on the handle. The handle is thin
+and shows itself only while the mouse is over it (or always, when the user chose so in 'Interfejs'). Used for the
+settings panel (folds to the left) and the overview strip (folds down)."""
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal as QtSignal
-from PySide6.QtWidgets import QSizePolicy, QSplitter, QSplitterHandle, QToolButton
+from PySide6.QtGui import QColor, QPainter
+from PySide6.QtWidgets import QSizePolicy, QSplitter, QSplitterHandle
 
-HANDLE = 14                                  # thickness of the handle: room for the button
+HANDLE = 4                                   # thickness of the handle in pixels (it used to be 14 with an arrow button)
+DEFAULT_BAR = "#2a82da"
 
 
 class FoldHandle(QSplitterHandle):
     def __init__(self, orientation, parent: "FoldSplitter"):
         super().__init__(orientation, parent)
-        self.btn = QToolButton(self)
-        self.btn.setAutoRaise(True)
-        self.btn.setFixedSize(HANDLE, HANDLE)
-        self.btn.setCursor(Qt.ArrowCursor)
-        self.btn.clicked.connect(parent.toggle)
-        self.setToolTip("Dwukrotne kliknięcie: zwiń / rozwiń")
-        self.update_arrow()
+        self._hover = False
+        self._drag = False
+        self.setAttribute(Qt.WA_Hover, True)
+        self.update_tip()
 
-    def update_arrow(self) -> None:
+    def update_tip(self) -> None:
         sp: FoldSplitter = self.splitter()
-        if sp.orientation() == Qt.Horizontal:                 # pane on the left folds to the left
-            arrow = Qt.RightArrow if sp.collapsed else Qt.LeftArrow
-            tip = "Pokaż panel ustawień" if sp.collapsed else "Schowaj panel ustawień"
-        else:                                                 # pane at the bottom folds down
-            arrow = Qt.UpArrow if sp.collapsed else Qt.DownArrow
-            tip = "Pokaż wykres przeglądowy" if sp.collapsed else "Schowaj wykres przeglądowy"
-        self.btn.setArrowType(arrow)
-        self.btn.setToolTip(tip)
+        what = "panel ustawień" if sp.orientation() == Qt.Horizontal else "wykres przeglądowy"
+        self.setToolTip(f"Przeciągnij: zmień rozmiar. Dwukrotne kliknięcie: {'pokaż' if sp.collapsed else 'schowaj'} {what}")
 
-    def resizeEvent(self, e):
-        super().resizeEvent(e)
-        if self.orientation() == Qt.Horizontal:               # button at the top of the vertical bar
-            self.btn.move(max((self.width() - HANDLE) // 2, 0), 0)
-        else:                                                 # button at the left end of the horizontal bar
-            self.btn.move(0, max((self.height() - HANDLE) // 2, 0))
+    update_arrow = update_tip                                 # (called when the fold state changes)
+
+    def _visible_bar(self) -> bool:
+        return self._hover or self._drag or self.splitter().bar_always
+
+    def enterEvent(self, e):
+        self._hover = True
+        self.update()
+        super().enterEvent(e)
+
+    def leaveEvent(self, e):
+        self._hover = False
+        self.update()
+        super().leaveEvent(e)
+
+    def mousePressEvent(self, e):
+        self._drag = True
+        self.update()
+        super().mousePressEvent(e)
+
+    def mouseReleaseEvent(self, e):
+        self._drag = False
+        self.update()
+        super().mouseReleaseEvent(e)
+
+    def paintEvent(self, e):
+        if not self._visible_bar():
+            return                                            # invisible until the mouse is over it
+        c = QColor(self.splitter().bar_color)
+        if not (self._hover or self._drag):
+            c.setAlpha(150)                                   # 'always visible' but quieter than under the mouse
+        p = QPainter(self)
+        p.fillRect(self.rect(), c)
 
     def mouseDoubleClickEvent(self, e):
         self.splitter().toggle()
@@ -49,6 +70,8 @@ class FoldSplitter(QSplitter):
         super().__init__(orientation, parent)
         self.fold_index = fold_index
         self.collapsed = False
+        self.bar_color = DEFAULT_BAR              # colour and permanent visibility of the handle ('Interfejs' settings)
+        self.bar_always = False
         self.saved = default_size                 # size of the folding pane when it was last visible
         self._min = 0
         self._policy = QSizePolicy.Preferred
@@ -59,6 +82,19 @@ class FoldSplitter(QSplitter):
 
     def createHandle(self):
         return FoldHandle(self.orientation(), self)
+
+    def set_bar(self, color: str, always: bool) -> None:
+        self.bar_color, self.bar_always = color or DEFAULT_BAR, bool(always)
+        h = self.handle(1)
+        if h is not None:
+            h.update()
+
+    def set_pane_min(self, v: int) -> None:
+        """Smallest width / height of the folding pane; applied at once when it is shown, on unfolding otherwise."""
+        if self.collapsed:
+            self._min = v
+        else:
+            self._set_min(v)
 
     # ---- state
     def _extent(self) -> int:

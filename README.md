@@ -108,8 +108,13 @@ Typy: BOOL, BYTE, SINT, USINT, WORD, INT, UINT, DWORD, DINT, UDINT, REAL, LREAL.
 * Układ osi Y (panel Zakres okna wykresu): „Pasma wg Share” (domyślnie) – każdy sygnał ma własne pasmo, wysokość proporcjonalna do kolumny Share,
   skalowanie do MIN…MAX widocznego okna, oś pokazuje wartości MIN / pośrednie / MAX; „Offset + Gain” – wspólna skala jak dawniej.
   Najwęższe okno czasu to 0,1 s (kółko myszy dalej nie powiększa).
-* Zwijanie paneli: panel ustawień po lewej chowa się do lewej, wykres przeglądowy na dole chowa się w dół — małym przyciskiem
-  ze strzałką na belce rozdzielającej albo dwukrotnym kliknięciem tej belki (stan jest wspólny dla kart i zapamiętany).
+* Zwijanie paneli: panel ustawień po lewej chowa się do lewej, wykres przeglądowy na dole chowa się w dół — dwukrotnym kliknięciem
+  cienkiej belki rozdzielającej (belka pojawia się po najechaniu kursorem; jej kolor i „zawsze widoczna” — Widok → Interfejs;
+  stan zwinięcia jest wspólny dla kart i zapamiętany). Panel ustawień nie jest węższy niż jego zawartość.
+* Pasek statusu: tekst, który się nie mieści, przeciągasz myszą w lewo / prawo; maks. liczbę linii, kolor tła i tekstu ustawisz w Widok → Interfejs.
+* Okna ustawień mają u góry pasek z nazwą funkcji i opisem; gdy nie mieszczą się na ekranie, zmniejszają się i mają paski przewijania.
+* Przebieg z bazy (Plik → Przegląd nagrań) otwiera się w pustej karcie od razu, w karcie z danymi program pyta (nowa / bieżąca karta),
+  przy aktywnym połączeniu zawsze w nowej karcie; karta przyjmuje tytuł przebiegu, a dymek nad kartą pokazuje dane przebiegu / połączenia i bazy.
 * Prawy przycisk na legendzie: Sygnały…, położenie legendy (ta karta), Ukryj legendę.
 * Ikona programu i nazwa „S7Trace” na pasku zadań Windows (własny identyfikator aplikacji zamiast „Python”).
 * Aktywne sesje programu (Ustawienia → Aktywne sesje programu…): kto ma program otwarty na tym komputerze i które karty skanują

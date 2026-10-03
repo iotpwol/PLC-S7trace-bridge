@@ -28,6 +28,9 @@ COLOR_KEYS: dict[str, tuple[str, str]] = {
     "tab_selected": ("Aktywna karta: tło", "#1e66c8"),
     "tab_selected_text": ("Aktywna karta: tekst", "#ffe600"),
     "accent": ("Kolor zaznaczenia", "#2a82da"),
+    "bar": ("Belki zmiany rozmiaru paneli: kolor", "#2a82da"),
+    "status_bg": ("Pasek statusu: tło", "#2b2b2b"),
+    "status_text": ("Pasek statusu: tekst", "#d0d0d0"),
     "plot_bg": ("Tło wykresu", "#000000"),
     "plot_fg": ("Osie i opisy wykresu", "#d0d0d0"),
     # control buttons under the chart
@@ -47,7 +50,7 @@ COLOR_KEYS: dict[str, tuple[str, str]] = {
 }
 
 DARK = {k: v[1] for k, v in COLOR_KEYS.items()}
-DARK.update(profile="dark", font_family="", font_size=9, rec_blink_hz=0.5)
+DARK.update(profile="dark", font_family="", font_size=9, rec_blink_hz=0.5, bar_always=False, status_lines=1)
 
 LIGHT = dict(DARK)
 LIGHT.update(
@@ -58,7 +61,7 @@ LIGHT.update(
     ctl_bg="#e1e1e1", ctl_text="#101010", start_on_bg="#e1e1e1", start_on_text="#8a6d00",
     stop_on_bg="#e1e1e1", stop_on_text="#a01010", pause_on_bg="#f2d600", pause_on_text="#000000",
     rec_on_bg="#ff8c1a", rec_on_text="#ffffff", rec_dot="#e01010", mark_on_bg="#2a82da", mark_on_text="#000000",
-    profile="light")
+    status_bg="#f0f0f0", status_text="#202020", profile="light")
 
 PRESETS = {"Ciemny (domyślny)": DARK, "Jasny": LIGHT}
 
@@ -102,6 +105,11 @@ def normalize(theme: dict | None) -> dict:
             out["rec_blink_hz"] = max(0.1, min(5.0, float(theme.get("rec_blink_hz", 0.5))))
         except (TypeError, ValueError):
             pass
+        out["bar_always"] = bool(theme.get("bar_always", False))      # the resize bars stay visible (not only under the mouse)
+        try:
+            out["status_lines"] = max(1, min(10, int(theme.get("status_lines", 1))))   # most lines of the status bar
+        except (TypeError, ValueError):
+            pass
     return out
 
 
@@ -122,7 +130,8 @@ def list_profiles() -> list[tuple[str, str]]:
 def save_profile(path: str, theme: dict) -> None:
     t = normalize(theme)
     ordered = {"profile": t["profile"], "font_family": t["font_family"], "font_size": t["font_size"],
-               "rec_blink_hz": t["rec_blink_hz"]}
+               "rec_blink_hz": t["rec_blink_hz"], "bar_always": t["bar_always"],
+               "status_lines": t["status_lines"]}
     ordered.update({k: t[k] for k in COLOR_KEYS})
     with open(path, "w", encoding="utf-8") as f:
         json.dump(ordered, f, ensure_ascii=False, indent=2)       # indent -> each parameter on its own line
@@ -198,6 +207,9 @@ QSplitter::handle {{ background: rgba(128,128,128,70); }}
 QSplitter::handle:hover {{ background: {t['accent']}; }}
 QToolTip {{ background: {t['edit_bg']}; color: {t['edit_text']}; border: 1px solid rgba(128,128,128,150); }}
 QScrollArea {{ background: transparent; }}
+QFrame#dlgHeader {{ background: {t['panel_bg']}; border-bottom: 2px solid {t['accent']}; }}
+QLabel#dlgTitle {{ font-weight: bold; font-size: {t['font_size'] + 3}pt; color: {t['text']}; }}
+QLabel#dlgText {{ color: {t['text']}; }}
 """
 
 

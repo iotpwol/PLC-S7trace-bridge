@@ -288,7 +288,11 @@ aby zmienić okno czasu.</li>
         ("GUI lag", "Czas rysowania wykresu [ms] – gdy jest duży, ogranicz okno czasu lub liczbę sygnałów."),
         ("Missed", "Liczba cykli pominiętych, bo odczyt trwał dłużej niż ustawiony okres, i ich odsetek."),
         ("Komunikat", "Bieżący stan: łączenie, utrata połączenia, ścieżka pliku REC / triggera, wynik eksportu."),
-    ], ("Pole", "Znaczenie"))))
+    ], ("Pole", "Znaczenie")) + """
+<p>Tekst, który się nie mieści, <b>chwyć myszą i przeciągnij</b> w lewo / prawo (albo kółkiem myszy): w skrajnych położeniach koniec tekstu
+dochodzi do prawej krawędzi paska, a początek do lewej – tekst nie ucieka poza pasek. W <b>Widok → Interfejs</b> ustawisz
+<b>maksymalną liczbę linii</b> paska (pasek ma wysokość tylko tylu linii, ile potrzebuje tekst; przy większej liczbie linii tekst przeciąga się w górę /
+w dół) oraz jego <b>kolor tła i tekstu</b>.</p>"""))
 
     s.append(("15. Diagnostyka połączenia", """
 <h2>Diagnostyka połączenia (przycisk „Diagnostyka…”, Ustawienia → Diagnostyka połączenia…, Ctrl+D)</h2>
@@ -388,6 +392,8 @@ w starszych próbkach mają przerwę); adres, pole „Pobierz”, kolejność i 
 <li><b>Kolory</b>: tło okna i paneli, tekst, okienka edycyjne, przyciski, tabele, nagłówki, menu, karty (w tym aktywna karta), kolor zaznaczenia,
 wykres oraz <b>przyciski sterujące</b> (Start, Stop, Pauza, REC, znaczniki – tło i tekst w każdym stanie, kolor kropki REC).</li>
 <li><b>Czcionka</b>: rodzaj i rozmiar. <b>REC: częstotliwość migania</b> kropki (domyślnie 0,5 Hz).</li>
+<li><b>Pasek statusu</b>: maksymalna liczba linii, kolor tła i tekstu. <b>Belki zmiany rozmiaru</b> (między panelem ustawień a wykresem i nad
+wykresem przeglądowym): kolor oraz „zawsze widoczne” – domyślnie belka jest cienka i pojawia się dopiero po najechaniu kursorem.</li>
 <li>Zmiany widać na żywo; <b>Anuluj</b> przywraca poprzedni wygląd, <b>Domyślne</b> – ustawienia fabryczne.</li>
 <li><b>Zapisane konfiguracje</b>: „Zapisz jako…” zapisuje wygląd do pliku .json (każdy parametr w osobnej linii) w
 <tt>%APPDATA%\\S7Trace\\interfejs\\</tt>; zapisane wybierasz z listy (także w Widok → Zapisane konfiguracje interfejsu).

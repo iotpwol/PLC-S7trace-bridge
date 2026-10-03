@@ -5,14 +5,17 @@ import os
 from typing import Callable
 
 from PySide6.QtGui import QColor, QFont
-from PySide6.QtWidgets import (QApplication, QColorDialog, QComboBox, QDialog, QFileDialog, QFontComboBox,
+from PySide6.QtWidgets import (QApplication, QCheckBox, QColorDialog, QComboBox, QDialog, QFileDialog, QFontComboBox,
                                QDoubleSpinBox, QFormLayout, QHBoxLayout, QLabel, QMessageBox, QPushButton,
                                QScrollArea, QSpinBox,
                                QVBoxLayout, QWidget)
 
 from . import theme as th
+from .dialog_kit import dialog_info
 
 
+@dialog_info("Interfejs – kolory i czcionka",
+             "Kolory, czcionka, migająca kropka REC i belki zmiany rozmiaru paneli. Zmiany widać od razu; „Anuluj” przywraca poprzedni wygląd.")
 class InterfaceDialog(QDialog):
     """Edits a theme dict; every change is previewed at once through `apply`."""
 
@@ -63,6 +66,17 @@ class InterfaceDialog(QDialog):
         self.rec_hz.setDecimals(2)
         self.rec_hz.setSuffix(" Hz")
         form.addRow("REC: częstotliwość migania:", self.rec_hz)
+        self.status_lines = QSpinBox()
+        self.status_lines.setRange(1, 10)
+        self.status_lines.setSuffix(" lin.")
+        self.status_lines.setToolTip("Największa liczba linii tekstu w pasku statusu na dole. Pasek ma wysokość tylko tylu linii, "
+                                     "ile potrzebuje tekst. Przy 1 linii za długi tekst można przesuwać myszą w lewo i w prawo.")
+        form.addRow("Pasek statusu: maks. linii:", self.status_lines)
+        self.chk_bar = QCheckBox("Belki zmiany rozmiaru zawsze widoczne")
+        self.chk_bar.setToolTip("Belka między panelem ustawień a wykresem oraz nad wykresem przeglądowym służy do zmiany "
+                                "rozmiaru (przeciąganie) i do schowania / pokazania panelu (dwukrotne kliknięcie). "
+                                "Domyślnie jest cienka i widoczna dopiero po najechaniu kursorem.")
+        form.addRow("", self.chk_bar)
         host = QWidget()
         host.setLayout(form)
         scroll = QScrollArea()
@@ -91,6 +105,8 @@ class InterfaceDialog(QDialog):
         self.font_family.currentFontChanged.connect(self._font_changed)
         self.font_size.valueChanged.connect(self._font_changed)
         self.rec_hz.valueChanged.connect(self._font_changed)
+        self.chk_bar.toggled.connect(self._font_changed)
+        self.status_lines.valueChanged.connect(self._font_changed)
 
     # ------------------------------------------------------------------
     def _sync_widgets(self) -> None:
@@ -109,6 +125,12 @@ class InterfaceDialog(QDialog):
         self.font_family.blockSignals(False)
         self.rec_hz.setValue(float(self.theme.get("rec_blink_hz", 0.5)))
         self.rec_hz.blockSignals(False)
+        self.chk_bar.blockSignals(True)
+        self.chk_bar.setChecked(bool(self.theme.get("bar_always", False)))
+        self.chk_bar.blockSignals(False)
+        self.status_lines.blockSignals(True)
+        self.status_lines.setValue(int(self.theme.get("status_lines", 1)))
+        self.status_lines.blockSignals(False)
         self.font_size.blockSignals(False)
 
     def _pick(self, key: str) -> None:
@@ -123,10 +145,12 @@ class InterfaceDialog(QDialog):
         self.theme["font_family"] = self.font_family.currentFont().family()
         self.theme["font_size"] = self.font_size.value()
         self.theme["rec_blink_hz"] = self.rec_hz.value()
+        self.theme["bar_always"] = self.chk_bar.isChecked()
+        self.theme["status_lines"] = self.status_lines.value()
         self._apply(self.theme)
 
     def _load(self, preset: dict, keep_font: bool = True) -> None:
-        font = {k: self.theme[k] for k in ("font_family", "font_size", "rec_blink_hz")}
+        font = {k: self.theme[k] for k in ("font_family", "font_size", "rec_blink_hz", "bar_always", "status_lines")}
         self.theme = th.normalize(preset)
         if keep_font:
             self.theme.update(font)

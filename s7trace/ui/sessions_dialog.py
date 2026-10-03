@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QDialog, QHBoxLayout, QHeaderV
                                QTableWidgetItem, QVBoxLayout)
 
 from ..core import sessions as ss
+from .dialog_kit import dialog_info
 
 STATE_TEXT = {"stopped": "Zatrzymany", "connecting": "Łączenie…", "running": "Skanuje", "reconnecting": "Ponowne łączenie…"}
 COLS = ["Użytkownik", "Sesja Windows", "Uruchomiony", "Karta", "IP sterownika", "Stan", "Skanuje od"]
@@ -25,6 +26,8 @@ def short_time(iso: str | None) -> str:
     return t.strftime("%H:%M:%S") if t.date() == datetime.now().date() else t.strftime("%Y-%m-%d %H:%M")
 
 
+@dialog_info("Aktywne sesje programu",
+             "Kto na tym komputerze uruchomił S7Trace i które sterowniki skanuje – żeby nie odpytywać dwa razy tego samego PLC.")
 class SessionsDialog(QDialog):
     def __init__(self, registry: ss.Registry, parent=None):
         super().__init__(parent)

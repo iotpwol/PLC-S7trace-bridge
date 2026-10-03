@@ -6,12 +6,15 @@ from PySide6.QtWidgets import (QAbstractItemView, QDialog, QHBoxLayout, QLabel, 
                                QTreeWidgetItem, QVBoxLayout)
 
 from ..core.types import DEFAULT_COLORS, Signal
+from .dialog_kit import dialog_info
 
 VARIANT_TO_DTYPE = {"Boolean": "BOOL", "SByte": "SINT", "Byte": "USINT", "Int16": "INT", "UInt16": "UINT",
                     "Int32": "DINT", "UInt32": "UDINT", "Int64": "LREAL", "UInt64": "LREAL", "Float": "REAL",
                     "Double": "LREAL"}
 
 
+@dialog_info("Przeglądarka zmiennych OPC UA",
+             "Drzewo węzłów serwera OPC UA. Zaznacz zmienne, które mają trafić na listę sygnałów do śledzenia.")
 class OpcBrowser(QDialog):
     def __init__(self, host: str, opts: dict, parent=None, first_color: int = 0):
         super().__init__(parent)

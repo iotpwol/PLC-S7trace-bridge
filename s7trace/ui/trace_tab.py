@@ -10,7 +10,7 @@ import time
 from collections import deque
 from datetime import datetime, timedelta
 
-from PySide6.QtCore import QTimer, Qt, Signal as QtSignal
+from PySide6.QtCore import QEvent, QTimer, Qt, Signal as QtSignal
 from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
                                QGroupBox, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMenu, QMessageBox,
@@ -36,7 +36,8 @@ from .signals_dialog import SignalsDialog
 from ..core import ip_history, sessions
 from ..core.store import KIND_LABEL, KINDS, MODE_LABEL, DbRecorder, StoreConfig, test_connection
 from ..core.store import MODES as STORE_MODES            # (planner.MODES = communication modes)
-from .fold_splitter import FoldSplitter
+from .fold_splitter import DEFAULT_BAR, FoldSplitter
+from .pan_label import PanLabel
 from .ip_edit import IpCombo
 
 RACK_SLOT_HELP = (
@@ -151,6 +152,8 @@ class TraceTab(QWidget):
         self._infoRaw.connect(self._on_info)
         self._dbProbe.connect(self._on_db_probe)
         self._probe_box = None
+        self.loaded: dict | None = None                        # a recording from a database shown in this tab
+        self.new_tab_cb = None                                 # set by the main window: opens a new tab (TabConfig -> TraceTab)
         self._rec_info: dict = {}                              # title / notes / tags of the running DB recording
         self._info_dlg = None                                  # the non-modal "name the recording" window
         self.ed_ip.textChanged.connect(self._ip_changed_device)
@@ -172,7 +175,6 @@ class TraceTab(QWidget):
 
         # ---- left panel
         left = QWidget()
-        left.setMinimumWidth(230)
         lv = QVBoxLayout(left)
         lv.setContentsMargins(14, 10, 8, 6)
 
@@ -310,8 +312,8 @@ class TraceTab(QWidget):
         scroll = QScrollArea()
         scroll.setWidget(left)
         scroll.setWidgetResizable(True)
-        scroll.setMinimumWidth(200)
         scroll.setFrameShape(QScrollArea.NoFrame)
+        self._left_min = 230                           # kept up to date by _fit_left_min (content width, screen permitting)
 
         # ---- right side
         right_w = QWidget()
@@ -345,11 +347,7 @@ class TraceTab(QWidget):
         for b in (self.btn_sig, self.btn_diag, self.btn_exp, self.btn_imp):
             bar.addWidget(b)
         right.addLayout(bar)
-        self.lbl_status = QLabel()
-        self.lbl_status.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.lbl_status.setTextFormat(Qt.RichText)
-        self.lbl_status.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)   # a long text must never widen the window
-        self.lbl_status.setMinimumWidth(0)
+        self.lbl_status = PanLabel()                  # right aligned; a long text can be dragged with the mouse
         right.addWidget(self.lbl_status)
 
         self.split_h = FoldSplitter(Qt.Horizontal, 0, 290)   # drag the bar to resize; button / double click folds the panel
@@ -419,6 +417,11 @@ class TraceTab(QWidget):
         hz = max(0.1, float(theme.get("rec_blink_hz", 0.5)))
         self._icon_on, self._icon_off = dot_icon(self._rec_dot), dot_icon(None)
         self._icon_idle = dot_icon(self._rec_idle)
+        bar, always = theme.get("bar", DEFAULT_BAR), bool(theme.get("bar_always", False))
+        self.lbl_status.set_colors(theme.get("status_bg", "#2b2b2b"), theme.get("status_text", "#d0d0d0"))
+        self.lbl_status.set_max_lines(int(theme.get("status_lines", 1)))
+        self.split_h.set_bar(bar, always)                # the thin resize bars: colour and permanent visibility
+        self.plot.split.set_bar(bar, always)
         self.blink.start(int(1000 / (2 * hz)))          # half period = dot on / dot off
         self._blink_tick(reset=True)
 
@@ -477,10 +480,32 @@ class TraceTab(QWidget):
         self.plot.set_overview_collapsed(bool(st.get("overview_collapsed", False)))
         self._fit_layout()
 
+    def _fit_left_min(self) -> None:
+        """The settings panel is never narrower than what its widgets need (fonts / scaling change that), unless that
+        would take more than half of the tab - then the panel scrolls sideways instead."""
+        try:
+            sc = self.split_h.widget(0)
+        except RuntimeError:                                   # the tab is already gone (a queued call)
+            return
+        need = sc.widget().minimumSizeHint().width() + sc.verticalScrollBar().sizeHint().width() + 2 * sc.frameWidth() + 2
+        cap = max(self.width() // 2, 200)
+        new = max(min(need, cap), 200)
+        if new != self._left_min:
+            self._left_min = new
+            self.split_h.set_pane_min(new)
+            if not self.split_h.collapsed and self.split_h.sizes()[0] < new and self.width() > 400:
+                self.split_h.set_sizes_for(new)
+
+    def changeEvent(self, e):
+        super().changeEvent(e)
+        if e.type() in (QEvent.FontChange, QEvent.StyleChange, QEvent.PaletteChange) and hasattr(self, "_left_min"):
+            QTimer.singleShot(0, self._fit_left_min)
+
     def _fit_layout(self) -> None:
+        self._fit_left_min()
         total = self.width()
         if self._want_left and total > 400:
-            w = max(200, min(self._want_left, total - 300))
+            w = max(self._left_min, min(self._want_left, total - 300))
             if not self.split_h.collapsed:
                 self.split_h.set_sizes_for(w)
             if w == self._want_left:                      # the window was still too small (not laid out yet): try again
@@ -751,6 +776,7 @@ class TraceTab(QWidget):
             driver={"type": method, "opts": dict(c.conn)} if method != "s7" else None,
             on_info=lambda d: self._infoRaw.emit(d))
         self.plot.time_source = lambda a=acq: (time.perf_counter() - a.t0) if a.t0 else self.buffer.last_time()
+        self.loaded = None
         self.state = "connecting"
         self.status_msg = f"Łączenie z {c.ip}…"
         self._set_buttons()
@@ -1095,7 +1121,8 @@ class TraceTab(QWidget):
             return
         self._show_loaded(sigs, t, v, f"Zaimportowano {len(t)} próbek z {os.path.basename(path)}")
 
-    def _show_loaded(self, sigs, t, v, message: str) -> None:
+    def _show_loaded(self, sigs, t, v, message: str, info: dict | None = None) -> None:
+        self.loaded = info                                   # what the tab shows (tooltip of the tab); None = a live tab
         self.cfg.signals = sigs
         self._run_signals = [Signal.from_dict(s.to_dict()) for s in sigs]
         self.buffer.load(t, v)
@@ -1107,19 +1134,132 @@ class TraceTab(QWidget):
         self.status_msg = message
         self._update_status()
 
+    def _connected(self) -> bool:
+        return self.state in ("running", "connecting", "reconnecting")
+
+    def _ask_target(self, active: bool) -> str:
+        """'new' / 'here' / '' (cancel): where a recording from the database is opened."""
+        box = QMessageBox(self)
+        box.setWindowTitle("Otwieranie przebiegu z bazy")
+        if active:
+            box.setText("Ta karta ma aktywne połączenie ze sterownikiem, więc przebieg z bazy zostanie otwarty w nowej karcie.")
+            new = box.addButton("Otwórz w nowej karcie", QMessageBox.AcceptRole)
+            here = None
+        else:
+            box.setText("Ta karta zawiera dane. Gdzie otworzyć przebieg z bazy?")
+            new = box.addButton("Nowa karta", QMessageBox.AcceptRole)
+            here = box.addButton("Bieżąca karta (zastąpi dane)", QMessageBox.DestructiveRole)
+        box.addButton("Anuluj", QMessageBox.RejectRole)
+        box.exec()
+        clicked = box.clickedButton()
+        return "new" if clicked is new else ("here" if here is not None and clicked is here else "")
+
+    def _target_for_recording(self):
+        """The tab that receives a recording: this one when it is empty, otherwise the user chooses (a new tab is the only
+        choice while the connection is active). None = cancelled."""
+        active = self._connected()
+        if not active and len(self.buffer) == 0 and getattr(self, "loaded", None) is None:
+            return self
+        answer = self._ask_target(active)
+        if answer == "here":
+            return self
+        if answer == "new":
+            if self.new_tab_cb is None:                      # (a tab outside the main window)
+                return None if active else self
+            cfg = TabConfig()
+            cfg.store = dataclasses.replace(self.cfg.store)
+            return self.new_tab_cb(cfg)
+        return None
+
     def import_db(self):
-        """Plik → Import z bazy → wykres…: a recording (or a time range of it) from SQLite / InfluxDB / TimescaleDB."""
-        from dataclasses import replace
+        """Plik → Przegląd nagrań: a recording (or a time range of it) from SQLite / InfluxDB / TimescaleDB. It opens in
+        this tab when it is empty, otherwise the user chooses the tab; with an active connection it is always a new one."""
         from .store_dialog import StoreImportDialog
-        d = StoreImportDialog(self.cfg.store, self, can_load=self.state == "stopped", base_dir=data_dir())
+        d = StoreImportDialog(self.cfg.store, self, can_load=True, base_dir=data_dir())
         if not d.exec() or d.result is None:
             return
-        meta, t_us, v, used = d.result
-        self.cfg.store = replace(used, kind=self.cfg.store.kind, mode=self.cfg.store.mode)   # keep the connection settings
+        target = self._target_for_recording()
+        if target is not None:
+            target.load_recording(*d.result, note=d.note)
+
+    def load_recording(self, meta: dict, t_us, v, used: StoreConfig, note: str = "") -> None:
+        """Shows a recording read from a database; the tab takes the title of the recording."""
+        self.cfg.store = dataclasses.replace(used, kind=self.cfg.store.kind, mode=self.cfg.store.mode)   # keep the connection settings
         sigs = [Signal.from_dict(s) for s in meta["signals"]]
         self.start_wall = datetime.fromtimestamp(float(t_us[0]) / 1e6)
         t = (t_us - t_us[0]) / 1e6
-        self._show_loaded(sigs, t, v, f"Wczytano {len(t)} próbek z bazy ({meta.get('tab') or meta['id']}){d.note}")
+        name = (meta.get("title") or meta.get("conf") or meta.get("tab") or meta.get("id") or "").strip()
+        self._show_loaded(sigs, t, v, f"Wczytano {len(t)} próbek z bazy ({meta.get('tab') or meta['id']}){note}",
+                          {"meta": meta, "used": used, "samples": len(t)})
+        if name:
+            self.rename(name)
+
+    # ---- the tooltip of the tab: everything about what the tab holds and where it records
+    @staticmethod
+    def _db_rows(c: StoreConfig) -> list[tuple[str, str]]:
+        rows = [("Cel zapisu", KIND_LABEL.get(c.kind, c.kind)), ("Adres / plik", c.describe())]
+        if c.kind == "csv":
+            return rows
+        rows += [("Próbki", MODE_LABEL.get(c.mode, c.mode)),
+                 ("Pełny stan co", f"{c.keyframe_min:g} min" if c.keyframe_min else "wyłączony"),
+                 ("Wysyłanie paczek co", f"{c.batch_s:g} s"), ("Kolejka w pamięci", f"{c.queue_max:,} wpisów".replace(",", " "))]
+        if c.kind in StoreConfig.NETWORK:
+            rows += [("Bufor na dysku", f"{c.spool_mb} MB" if c.spool_mb else "wyłączony"),
+                     ("Limit odpowiedzi serwera", f"{c.http_timeout_s:g} s")]
+        if c.kind == "sqlite":
+            rows += [("Nowy plik", "co dzień" if c.rotate_daily else (f"po {c.rotate_mb} MB" if c.rotate_mb else "nigdy")),
+                     ("Folder", "wspólny (ProgramData)" if c.sqlite_shared else "konto użytkownika")]
+        if c.kind == "timescale":
+            rows.append(("Kompresja", f"po {c.compress_days} dniach" if c.compress_days else "wyłączona"))
+        rows += [("Odczyt: maks. punktów", f"{c.read_max_points:,}".replace(",", " ")),
+                 ("Kosz", f"{c.trash_days} dni" if c.trash_days else "bez kosza")]
+        return rows
+
+    def tooltip_html(self) -> str:
+        esc = html.escape
+        out: list[str] = []
+
+        def sec(title: str) -> None:
+            out.append(f"<tr><td colspan='2' style='padding-top:4px'><u><b>{esc(title)}</b></u></td></tr>")
+
+        def row(k: str, val) -> None:
+            out.append(f"<tr><td>{esc(k)}:&nbsp;</td><td><b>{esc(str(val))}</b></td></tr>")
+
+        def when(us) -> str:
+            return datetime.fromtimestamp(float(us) / 1e6).strftime("%Y-%m-%d %H:%M:%S") if us else "–"
+
+        info = getattr(self, "loaded", None)
+        if info and info.get("meta"):
+            m = info["meta"]
+            sec("Przebieg wczytany z bazy danych")
+            row("Tytuł", m.get("title") or "–")
+            for label, key in (("Uwagi", "notes"), ("Etykiety", "tags"), ("Autor (konto)", "owner"), ("Komputer", "computer")):
+                row(label, m.get(key) or "–")
+            row("Początek", when(m.get("start_us")))
+            row("Koniec", when(m.get("end_us")))
+            row("Tryb zapisu", MODE_LABEL.get(m.get("mode"), m.get("mode") or "–"))
+            if m.get("keyframe_min"):
+                row("Pełny stan co", f"{m['keyframe_min']:g} min")
+            names = [x.get("name", "") for x in m.get("signals", [])]
+            row("Sygnały", f"{len(names)}: " + ", ".join(names[:8]) + (" …" if len(names) > 8 else ""))
+            row("Wczytanych próbek", info.get("samples", 0))
+            row("Sterownik (z zapisu)", " / ".join(x for x in (m.get("ip"), m.get("tab"), m.get("conf")) if x) or "–")
+            sec("Baza danych, z której wczytano")
+            for k, val in self._db_rows(info.get("used") or self.cfg.store):
+                row(k, val)
+        else:
+            sec("Połączenie ze sterownikiem")
+            row("Stan", {"running": "praca", "connecting": "łączenie", "reconnecting": "ponawianie połączenia",
+                         "stopped": "zatrzymana", "error": "błąd"}.get(self.state, self.state))
+            row("Adres IP", self.ed_ip.text() or "–")
+            row("Rack / Slot", f"{self.sp_rack.value()} / {self.sp_slot.value()}")
+            row("Cykl", f"{self.sp_cycle.value()} ms")
+            row("Tryb komunikacji", self.cb_mode.currentText())
+            row("Metoda", re.sub(r"<[^>]+>", "", self.lbl_method.text()) or "–")
+            sec("Baza danych (zapis REC)")
+            for k, val in self._db_rows(self.cfg.store):
+                row(k, val)
+        return f"<b>{esc(self.title())}</b><table cellspacing='0' cellpadding='1'>{''.join(out)}</table>"
 
     def edit_signals(self):
         locked = self.state != "stopped"

@@ -17,6 +17,7 @@ from ..core import store as st
 from ..core.config import data_dir
 from ..core.csvio import write_csv
 from ..core.types import Signal
+from .dialog_kit import dialog_info
 
 DB_KINDS = [k for k in st.KINDS if k != "csv"]
 
@@ -53,6 +54,8 @@ PARAMS_OF["timescale"] = PARAMS_OF["timescale"] + ["compress_days"]
 USER_PARAMS = ["trash_days", "retention_days"]               # shown on the "Nagrania i użytkownicy" tab
 
 
+@dialog_info(lambda d: f"Ustawienia zapisu: {st.KIND_LABEL[d.kind]}",
+             "Gdzie i jak REC zapisuje nagrania: adres i dane bazy, czasy, bufory, rotacja plików oraz zasady nazw, kosza i użytkowników. „Test połączenia” sprawdza serwer.")
 class StoreDialog(QDialog):
     """Settings of one database target. `kind` is fixed by the caller (chosen in the REC panel / import window)."""
 
@@ -293,6 +296,8 @@ class StoreDialog(QDialog):
         super().accept()
 
 
+@dialog_info("Nazwa nagrania",
+             "Tytuł, uwagi i etykiety zapisywane razem z nagraniem w bazie – po nich znajdziesz je w oknie „Przegląd nagrań”.")
 class RecInfoDialog(QDialog):
     """Title, notes and tags of a recording (asked when REC starts / during / ends, and edited in the overview)."""
 
@@ -358,6 +363,8 @@ def fmt_duration(sec: float) -> str:
     return f"{sec // 3600} h {sec % 3600 // 60:02d} min"
 
 
+@dialog_info("Przegląd nagrań",
+             "Nagrania zapisane w bazie danych: sortowanie, wyszukiwanie, opisy, kosz, usuwanie i wczytanie wybranego przebiegu (albo zakresu czasu) na wykres.")
 class StoreImportDialog(QDialog):
     """Przegląd nagrań: the recordings of a database (sort, search, filter by user), their title / notes / tags, the trash,
     deleting, export to CSV and loading a recording (or a time range of it) into the tab."""
@@ -870,6 +877,8 @@ class StoreImportDialog(QDialog):
         self.lbl.setText(f"Zapisano <b>{len(t)}</b> wierszy: {path}")
 
 
+@dialog_info("Zaległe bufory zapisu",
+             "Dane, których nie udało się wysłać do bazy (serwer był niedostępny) i które czekają na dysku. Można je dosłać, zachować albo usunąć.")
 class SpoolDialog(QDialog):
     """Buffers left on disk by recordings that could not deliver everything (the server was away when the program closed)."""
 

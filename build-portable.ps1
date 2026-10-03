@@ -87,6 +87,7 @@ Get-ChildItem "$Out\app" -Recurse -Directory -Filter '__pycache__' | Remove-Item
 Copy-Item README.md "$Out\app\README.md"
 Copy-Item tools\diagnoza.py "$Out\app\diagnoza.py"
 Copy-Item tools\diagnoza_timescale.py "$Out\app\diagnoza_timescale.py"
+Copy-Item tools\diagnoza_influx.py "$Out\app\diagnoza_influx.py"
 Copy-Item portable\* $Out
 
 Write-Host '== 6/6 Kompilacja .pyc (szybszy pierwszy start)'

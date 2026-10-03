@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComb
 
 from ..core import diagnostics as dg
 from ..core.acquisition import parse_host
+from .dialog_kit import dialog_info
 
 RATING_COLOR = {"Bardzo dobre": "#2fbf4a", "Dobre": "#7fcf3a", "Przeciętne": "#e0b020", "Słabe": "#e04040",
                 "Brak połączenia": "#e04040", "Brak danych": "#8a8a8a"}
@@ -94,6 +95,8 @@ class _Table(QTableWidget):
             it.setText(text)
 
 
+@dialog_info("Diagnostyka połączenia",
+             "Pokazuje opóźnienia, utracone cykle, ping i przepustowość połączenia ze sterownikiem – do szukania przyczyn przerw i opóźnień w odczycie.")
 class DiagDialog(QDialog):
     """Non-modal window with the complete link diagnostics of one tab."""
 
