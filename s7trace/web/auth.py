@@ -74,6 +74,8 @@ class UserStore:
         self.db.execute("CREATE TABLE IF NOT EXISTS users(username TEXT PRIMARY KEY, kind TEXT NOT NULL, salt TEXT, hash TEXT,"
                         " role TEXT NOT NULL, disabled INTEGER NOT NULL DEFAULT 0, display TEXT, created_us INTEGER,"
                         " last_login_us INTEGER)")
+        self.db.execute("CREATE TABLE IF NOT EXISTS agent_tokens(name TEXT PRIMARY KEY, hash TEXT NOT NULL UNIQUE, created_us INTEGER,"
+                        " last_us INTEGER)")
         self.db.commit()
         self._fails: dict[tuple[str, str], list[float]] = {}
         self.windows_check = windows_logon                                # replaceable (tests)
@@ -188,6 +190,47 @@ class UserStore:
             self.db.execute("UPDATE users SET last_login_us=? WHERE username=?", (int(time.time() * 1e6), r[0]))
             self.db.commit()
         return self.get(r[0])
+
+    # ---- tokens of desktop programs that report to the server (a random secret; only its hash is stored)
+    def add_agent_token(self, name: str) -> str:
+        name = (name or "").strip()
+        if not re.fullmatch(r"[\w .@\\-]{1,40}", name):
+            raise AuthError("Nazwa tokenu: 1–40 znaków (litery, cyfry, spacja, . _ @ \\ -).")
+        token = secrets.token_urlsafe(32)
+        with self._lock:
+            if self.db.execute("SELECT 1 FROM agent_tokens WHERE lower(name)=lower(?)", (name,)).fetchone():
+                raise AuthError("Token o takiej nazwie już istnieje.")
+            self.db.execute("INSERT INTO agent_tokens(name,hash,created_us) VALUES(?,?,?)",
+                            (name, hashlib.sha256(token.encode()).hexdigest(), int(time.time() * 1e6)))
+            self.db.commit()
+        return token
+
+    def check_agent_token(self, token: str) -> str | None:
+        """The name of the token, or None. (A long random secret: a plain hash lookup is enough.)"""
+        if not token or len(token) > 200:
+            return None
+        h = hashlib.sha256(token.encode()).hexdigest()
+        with self._lock:
+            r = self.db.execute("SELECT name FROM agent_tokens WHERE hash=?", (h,)).fetchone()
+            if r:
+                self.db.execute("UPDATE agent_tokens SET last_us=? WHERE name=?", (int(time.time() * 1e6), r[0]))
+                self.db.commit()
+        return r[0] if r else None
+
+    def list_agent_tokens(self) -> list[dict]:
+        with self._lock:
+            rows = self.db.execute("SELECT name,created_us,last_us FROM agent_tokens ORDER BY lower(name)").fetchall()
+        return [{"name": r[0], "created_us": r[1], "last_us": r[2]} for r in rows]
+
+    def delete_agent_token(self, name: str) -> None:
+        with self._lock:
+            self.db.execute("DELETE FROM agent_tokens WHERE lower(name)=lower(?)", (name,))
+            self.db.commit()
+
+    def mark_login(self, username: str) -> None:
+        with self._lock:
+            self.db.execute("UPDATE users SET last_login_us=? WHERE lower(username)=lower(?)", (int(time.time() * 1e6), username))
+            self.db.commit()
 
     def close(self) -> None:
         with self._lock:

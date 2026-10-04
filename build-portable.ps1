@@ -85,6 +85,7 @@ Copy-Item main.py "$Out\app\main.py"
 Copy-Item s7trace "$Out\app\s7trace" -Recurse
 Get-ChildItem "$Out\app" -Recurse -Directory -Filter '__pycache__' | Remove-Item -Recurse -Force
 Copy-Item README.md "$Out\app\README.md"
+Copy-Item WEB.md "$Out\app\WEB.md"
 Copy-Item tools\diagnoza.py "$Out\app\diagnoza.py"
 Copy-Item tools\diagnoza_timescale.py "$Out\app\diagnoza_timescale.py"
 Copy-Item tools\diagnoza_influx.py "$Out\app\diagnoza_influx.py"

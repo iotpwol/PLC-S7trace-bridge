@@ -1292,7 +1292,7 @@ class DbRecorder:
         meta = {"id": new_session_id(), "name": meta_extra.get("name", ""), "start_us": to_us(start_wall, 0.0),
                 "ip": meta_extra.get("ip", ""), "tab": meta_extra.get("tab", ""), "conf": meta_extra.get("conf", ""),
                 "title": meta_extra.get("title", ""), "notes": meta_extra.get("notes", ""), "tags": meta_extra.get("tags", ""),
-                "owner": current_user(), "computer": platform.node(), "keyframe_min": self._key_s / 60.0,
+                "owner": meta_extra.get("owner") or current_user(), "computer": meta_extra.get("computer") or platform.node(), "keyframe_min": self._key_s / 60.0,
                 "mode": cfg.mode, "signals": [s.to_dict() for s in signals], "fields": self.fields}
         self._begun = False
         self._info: dict = {}

@@ -1,6 +1,7 @@
 """Web mode: accounts (hashing, lockout, last admin), the HTTP server (login, roles, CSRF header, overview, users CRUD,
 SSE stream) and a hosted connection against the snap7 simulator."""
 import http.client
+import os
 import json
 import time
 
@@ -132,7 +133,7 @@ class Client:
 @pytest.fixture
 def srv(tmp_path, monkeypatch):
     monkeypatch.setattr(auth, "ITERATIONS", 1000)
-    app = App(str(tmp_path / "web"), HostManager())
+    app = App(str(tmp_path / "web"), HostManager(str(tmp_path / "web" / "workspaces")))
     s = WebServer(app, "127.0.0.1", 0)
     s.start()
     yield s
@@ -155,13 +156,13 @@ def test_static_pages(srv):
 
 def test_first_run_setup_and_login(srv):
     c = Client(srv)
-    assert c.get("/api/me")[1] == {"user": None, "first_run": True}
+    assert c.get("/api/me")[1] == {"user": None, "first_run": True, "sso": False}
     assert c.get("/api/overview")[0] == 401
     c = _admin(srv)
     assert c.get("/api/me")[1]["role"] == "admin"
     assert Client(srv).post("/api/setup", {"username": "x", "password": "haslo1234"})[0] == 403    # only the first time
     other = Client(srv)
-    assert other.get("/api/me")[1] == {"user": None, "first_run": False}
+    assert other.get("/api/me")[1] == {"user": None, "first_run": False, "sso": False}
     assert other.post("/api/login", {"username": "admin", "password": "zle"})[0] == 400
     assert other.post("/api/login", {"username": "admin", "password": "haslo1234"})[0] == 200
     other.post("/api/logout")
@@ -303,3 +304,100 @@ def test_self_signed_cert_and_cli_adduser(tmp_path, monkeypatch):
     monkeypatch.setattr("getpass.getpass", lambda prompt="": "haslo1234")
     assert main(["--data", str(tmp_path / "d"), "--add-user", "boss"]) == 0
     assert UserStore(str(tmp_path / "d" / "web_users.db")).get("boss")["role"] == "admin"
+
+
+# ---------------------------------------------------------------- own workspace of every account + editing
+def _user(srv, name, role="operator"):
+    srv.app.users.add(name, role, password="haslo1234")
+    c = Client(srv)
+    assert c.post("/api/login", {"username": name, "password": "haslo1234"})[0] == 200
+    return c
+
+
+NEW = {"name": "Linia 1", "ip": "10.0.0.5", "rack": 0, "slot": 1, "cycle_ms": 50,
+       "signals": [{"name": "A", "dtype": "INT", "db": 2, "byte": 4}, {"name": "B", "dtype": "BOOL", "byte": 0, "bit": 3}]}
+
+
+def test_edit_validation():
+    from s7trace.web import editing
+    cfg = TabConfig()
+    assert editing.apply(cfg, NEW, running=False) == ["name", "ip", "rack", "slot", "cycle_ms", "signals"]
+    assert [s.name for s in cfg.signals] == ["A", "B"] and cfg.signals[0].dtype == "INT" and cfg.signals[1].bit == 3
+    assert cfg.signals[0].color != cfg.signals[1].color                  # distinct default colours
+    for bad in ({"rack": 9}, {"slot": "x"}, {"cycle_ms": 1}, {"ip": "a b"}, {"ip": ""}, {"conn_type": "zzz"}, {"mode": "?"},
+                {"signals": []}, {"signals": [{"name": "x", "dtype": "NOPE"}]}, {"signals": [{"name": ""}]},
+                {"signals": [{"name": "a"}, {"name": "A"}]}, {"signals": [{"name": "a", "bit": 8}]},
+                {"signals": [{"name": "a", "color": "red"}]}, {"signals": [{"name": "a", "source": "XX"}]},
+                {"signals": "no"}, {"name": 5}):
+        with pytest.raises(editing.EditError):
+            editing.apply(cfg, bad, running=False)
+    assert cfg.rack == 0 and cfg.slot == 1                               # nothing from a rejected patch is applied
+    with pytest.raises(editing.EditError, match="Zatrzymaj"):
+        editing.apply(cfg, {"ip": "1.1.1.1"}, running=True)
+    assert editing.apply(cfg, {"name": "Nowa", "window_s": 30}, running=True) == ["name", "window_s"]
+    editing.apply(cfg, {"conn": {"username": "u", "password": "tajne", "cert": "C:/x", "evil": 1}}, running=False)
+    assert cfg.conn["username"] == "u" and cfg.conn["password"] == "tajne" and cfg.conn["cert"] == "" and "evil" not in cfg.conn
+    editing.apply(cfg, {"conn": {"password": ""}}, running=False)         # an empty field keeps the stored password
+    assert cfg.conn["password"] == "tajne"
+    v = editing.view(cfg)
+    assert "password" not in v["conn"] and v["conn"]["has_password"] is True
+
+
+def test_workspace_per_account(srv, tmp_path):
+    adm = _admin(srv)
+    ola, jan = _user(srv, "ola"), _user(srv, "DOM\\jan")
+    srv.app.hosts.add(_cfg(1))                                           # shared (no owner)
+    st, d = ola.post("/api/connections", NEW)
+    assert st == 200 and d["owner"] == "ola" and d["can_edit"] and d["state"] == "stopped" and d["signals"] == ["A", "B"]
+    cid = d["id"]
+    names = lambda c: sorted(x["name"] for x in c.get("/api/overview")[1]["connections"])
+    assert names(ola) == ["Linia 1", "Sim"] and names(jan) == ["Sim"]    # own + shared; the other account sees only shared
+    assert names(adm) == ["Linia 1", "Sim"]                              # the administrator sees everything
+    assert jan.get(f"/api/connections/{cid}")[0] == 404 and jan.get(f"/api/connections/{cid}/config")[0] == 404
+    assert jan.post(f"/api/connections/{cid}/start")[0] == 404 and jan.post(f"/api/connections/{cid}/config", {"name": "x"})[0] == 404
+    assert jan.post(f"/api/connections/{cid}/delete")[0] == 404
+    cfg = ola.get(f"/api/connections/{cid}/config")[1]
+    assert cfg["ip"] == "10.0.0.5" and cfg["signals"][0]["name"] == "A" and "sources" in cfg["options"]
+    # editing: validated, saved, the others stay untouched
+    assert ola.post(f"/api/connections/{cid}/config", {"ip": "999 x"})[0] == 400
+    st, d = ola.post(f"/api/connections/{cid}/config", {"name": "Linia 2", "cycle_ms": 100,
+                                                          "signals": [{"name": "Z", "dtype": "REAL", "byte": 8}]})
+    assert st == 200 and d["name"] == "Linia 2" and d["signals"] == ["Z"] and d["cycle_ms"] == 100
+    # the shared connection: everybody (operator) may run it, only the administrator edits it
+    assert jan.get("/api/connections/c1/config")[0] == 403 and jan.post("/api/connections/c1/config", {"name": "x"})[0] == 403
+    assert adm.get("/api/connections/c1/config")[0] == 200
+    assert jan.post("/api/connections", {"name": "x", "ip": "1.2.3.4", "cycle_ms": 2})[0] == 400    # invalid new connection
+    # a viewer cannot create anything
+    viewer = _user(srv, "kasia", "viewer")
+    assert viewer.post("/api/connections", NEW)[0] == 403 and viewer.get("/api/options")[0] == 200
+    # persisted per account and restored by a new manager
+    ws = srv.app.hosts.store_dir
+    assert sorted(os.listdir(ws)) == ["_shared.json", "u_ola.json"]
+    again = HostManager(ws)
+    h = again.get(cid)
+    assert h.owner == "ola" and h.cfg.name == "Linia 2" and h.cfg.signals[0].name == "Z" and again.get("c1").owner == ""
+    assert again.add(TabConfig(), "ola").id != cid                       # ids stay unique after a restart
+    # deleting
+    assert ola.post(f"/api/connections/{cid}/delete")[0] == 200 and ola.get(f"/api/connections/{cid}")[0] == 404
+    assert "u_ola.json" not in os.listdir(ws)
+
+
+def test_workspace_limits_and_running(srv, sim):
+    sim.db1[100] = 1
+    ola = _user(srv, "ola")
+    d = ola.post("/api/connections", {**NEW, "ip": "127.0.0.1:11106", "slot": 2,
+                                      "signals": [{"name": "b0", "dtype": "BOOL", "db": 1, "byte": 100, "bit": 0}]})[1]
+    cid = d["id"]
+    try:
+        assert ola.post(f"/api/connections/{cid}/start")[0] == 200
+        assert _wait(lambda: ola.get(f"/api/connections/{cid}")[1]["state"] == "running")
+        st, err = ola.post(f"/api/connections/{cid}/config", {"ip": "1.1.1.1"})
+        assert st == 400 and "Zatrzymaj" in err["error"]
+        assert ola.post(f"/api/connections/{cid}/config", {"name": "Zmieniona"})[0] == 200    # a name may change while running
+        assert ola.post(f"/api/connections/{cid}/delete")[0] == 400                          # but not the deletion
+    finally:
+        ola.post(f"/api/connections/{cid}/stop")
+        _wait(lambda: ola.get(f"/api/connections/{cid}")[1]["state"] == "stopped")
+    for _ in range(srv.app.hosts.MAX_PER_USER - 1):
+        assert ola.post("/api/connections", NEW)[0] == 200
+    assert ola.post("/api/connections", NEW)[0] == 400                   # per-account limit

@@ -5,8 +5,8 @@ rem Pierwsze konto (administrator) tworzy sie w przegladarce. Opis: WEB.md
 cd /d "%~dp0"
 set CFG=%1
 if "%CFG%"=="" (
-  "python\python.exe" -m s7trace.web --host 0.0.0.0 --tls
+  "python\python.exe" -m s7trace.web --host 0.0.0.0 --tls --sso
 ) else (
-  "python\python.exe" -m s7trace.web --config %CFG% --host 0.0.0.0 --tls
+  "python\python.exe" -m s7trace.web --config %CFG% --host 0.0.0.0 --tls --sso
 )
 pause

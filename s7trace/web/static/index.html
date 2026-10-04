@@ -12,6 +12,8 @@
   <nav id="nav" hidden>
     <button data-view="overview" class="on">Przegląd</button>
     <button data-view="chart">Podgląd na żywo</button>
+    <button data-view="recs">Nagrania</button>
+    <button data-view="targets" id="nav-targets" hidden>Cele zapisu</button>
     <button data-view="users" id="nav-users" hidden>Użytkownicy</button>
   </nav>
   <span class="spacer"></span>
@@ -26,28 +28,141 @@
       <label>Użytkownik <input id="l-user" autocomplete="username" required></label>
       <label>Hasło <input id="l-pass" type="password" autocomplete="current-password" required></label>
       <button type="submit" id="l-submit">Zaloguj</button>
+      <button type="button" id="l-sso" hidden>Zaloguj kontem Windows (SSO)</button>
       <div id="l-error" class="error"></div>
     </form>
   </section>
   <section id="overview" hidden>
-    <h2>Połączenia i sterowniki</h2>
-    <table id="t-conn"><thead><tr><th>Nazwa</th><th>Adres IP</th><th>Rack/Slot</th><th>Stan</th><th>Sterownik</th>
-      <th>Nazwa stacji</th><th>Nazwa modułu</th><th>Metoda</th><th>Uruchomił</th><th>Ogląda</th><th></th></tr></thead><tbody></tbody></table>
+    <h2>Połączenia i sterowniki <button id="new-conn" hidden>+ Nowe połączenie</button></h2>
+    <p class="muted" id="ws-hint"></p>
+    <table id="t-conn"><thead><tr><th>Nazwa</th><th>Właściciel</th><th>Adres IP</th><th>Rack/Slot</th><th>Stan</th><th>Sterownik</th>
+      <th>Nazwa stacji</th><th>Nazwa modułu</th><th>Metoda</th><th>Uruchomił</th><th>Ogląda</th><th>Uwagi</th><th></th></tr></thead><tbody></tbody></table>
+    <h2>Programy okienkowe zgłoszone do serwera</h2>
+    <table id="t-agents"><thead><tr><th>Użytkownik</th><th>Komputer</th><th>Adres</th><th>Uruchomiony</th><th>Karty (sterownik · stan)</th></tr></thead><tbody></tbody></table>
     <h2>Zalogowani użytkownicy</h2>
     <table id="t-sess"><thead><tr><th>Użytkownik</th><th>Konto</th><th>Rola</th><th>Komputer (adres)</th><th>Przeglądarka</th>
       <th>Zalogowany</th><th>Aktywność</th><th>Ogląda</th></tr></thead><tbody></tbody></table>
+  </section>
+  <section id="editor" hidden>
+    <h2 id="e-title">Połączenie</h2>
+    <p class="muted" id="e-note"></p>
+    <form id="e-form">
+      <div class="grid">
+        <label>Nazwa <input id="e-name" maxlength="64"></label>
+        <label>Adres IP (ew. :port) <input id="e-ip" maxlength="100" required></label>
+        <label>Rack <input id="e-rack" type="number" min="0" max="7"></label>
+        <label>Slot <input id="e-slot" type="number" min="0" max="31"></label>
+        <label>Cykl [ms] <input id="e-cycle" type="number" min="5" max="60000"></label>
+        <label>Okno czasu [s] <input id="e-window" type="number" min="1" max="86400"></label>
+        <label>Sposób połączenia <select id="e-type"></select></label>
+        <label>Tryb odczytu <select id="e-mode"></select></label>
+      </div>
+      <div class="inline" style="margin:8px 0"><button type="button" id="e-detect">Kreator: rozpoznaj sterownik</button>
+        <button type="button" id="e-apply" hidden>Zastosuj zalecenia</button><span id="e-detmsg" class="muted"></span></div>
+      <pre id="e-report" hidden></pre>
+      <h3>Sygnały</h3>
+      <table id="e-sig"><thead><tr><th>Nazwa</th><th>Źródło</th><th>Typ</th><th>DB</th><th>Bajt</th><th>Bit</th><th>Węzeł / zmienna</th>
+        <th>Share</th><th>Kolor</th><th>Pobieraj</th><th>Wykres</th><th>Opis</th><th></th></tr></thead><tbody></tbody></table>
+      <h3>Wyzwalacz (trigger)</h3>
+      <div class="grid" id="e-trig">
+        <label>Włączony <input id="t-enabled" type="checkbox"></label>
+        <label>Sygnał <select id="t-signal"></select></label>
+        <label>Warunek <select id="t-mode"></select></label>
+        <label>A <input id="t-a" type="number" step="any"></label>
+        <label>B (dla „between”) <input id="t-b" type="number" step="any"></label>
+        <label>Histereza <input id="t-h" type="number" step="any" min="0"></label>
+        <label>Przedtrigger [s] <input id="t-pre" type="number" step="any" min="0"></label>
+        <label>Akcja <select id="t-action"></select></label>
+        <label>Nazwa pliku zapisu <input id="t-file" maxlength="120"></label>
+      </div>
+      <h3>REC</h3>
+      <div class="grid" id="e-rec">
+        <label>Cel zapisu <select id="r-target"></select></label>
+        <label>Tryb <select id="r-mode"><option value="changes">tylko zmiany</option><option value="all">wszystkie próbki</option></select></label>
+        <label>Nazwa pliku CSV <input id="r-file" maxlength="120"></label>
+      </div>
+      <p class="muted">Znaczniki w nazwach plików: {confname} {ip} {tab} {date} {time}. Pliki CSV trafiają do folderu konta na serwerze
+        (lista i pobieranie: „Podgląd na żywo” → Pliki); „sqlite” to plik konta, pozostałe cele konfiguruje administrator.</p>
+      <div class="inline" style="margin-top:8px"><button type="button" id="e-add">+ Sygnał</button>
+        <button type="submit" id="e-save">Zapisz</button><button type="button" id="e-cancel">Wróć</button>
+        <button type="button" id="e-delete">Usuń połączenie</button><span id="e-error" class="error"></span></div>
+    </form>
   </section>
   <section id="chart" hidden>
     <div class="bar"><select id="c-conn"></select>
       <label>Okno <select id="c-sec"><option value="30">30 s</option><option value="60" selected>60 s</option>
         <option value="300">5 min</option><option value="900">15 min</option></select></label>
       <span id="c-state" class="muted"></span></div>
+    <div class="bar" id="c-ctl"><span id="c-trig" class="muted"></span>
+      <button id="c-rearm" hidden>Wznów (uzbrój wyzwalacz)</button>
+      <input id="c-title" placeholder="nazwa nagrania (opcjonalnie)" maxlength="200" hidden>
+      <button id="c-rec" hidden>● REC</button><span id="c-recinfo" class="muted"></span>
+      <button id="c-files">Pliki</button></div>
+    <div id="c-filelist" hidden></div>
     <canvas id="canvas" width="1200" height="520"></canvas>
     <div id="c-legend" class="legend"></div>
+  </section>
+  <section id="recs" hidden>
+    <h2>Przegląd nagrań</h2>
+    <div class="bar"><select id="rv-src"></select>
+      <input id="rv-q" type="search" placeholder="szukaj (tytuł, tagi, właściciel, połączenie, sygnał)">
+      <label><input type="checkbox" id="rv-trash"> kosz</label><button id="rv-refresh">Odśwież</button>
+      <span id="rv-msg" class="muted"></span></div>
+    <table id="t-recs"><thead><tr><th>Tytuł</th><th>Start</th><th>Czas</th><th>Właściciel</th><th>Komputer</th><th>Połączenie</th>
+      <th>Sygnały</th><th>Tagi</th><th></th></tr></thead><tbody></tbody></table>
+    <div id="rv-edit" class="inline" hidden>
+      <input id="rv-title" placeholder="tytuł" maxlength="200"><input id="rv-notes" placeholder="uwagi" maxlength="500">
+      <input id="rv-tags" placeholder="tagi (po przecinku)" maxlength="500"><button id="rv-save">Zapisz opis</button>
+      <button id="rv-cancel">Anuluj</button></div>
+    <div id="rv-view" hidden>
+      <div class="bar"><b id="rv-name"></b><span id="rv-info" class="muted"></span><button id="rv-all">Cały przebieg</button>
+        <a id="rv-csv" href="#" download>CSV (widoczny zakres)</a><span class="muted">Przeciągnij myszą po wykresie, aby przybliżyć zakres.</span></div>
+      <canvas id="rv-canvas" width="1200" height="480"></canvas><div id="rv-legend" class="legend"></div>
+    </div>
+  </section>
+  <section id="targets" hidden>
+    <h2>Cele zapisu nagrań (bazy danych)</h2>
+    <p class="muted">Definiuje administrator. Użytkownicy wybierają cel po nazwie w ustawieniach REC połączenia i nie widzą haseł ani tokenów.
+      Cele „csv” (plik konta) i „sqlite” (plik konta) są wbudowane.</p>
+    <table id="t-targets"><thead><tr><th>Nazwa</th><th>Rodzaj</th><th>Opis</th><th>Sekrety</th><th></th></tr></thead><tbody></tbody></table>
+    <h3 id="g-title">Nowy cel</h3>
+    <form id="g-form" class="grid2">
+      <label>Nazwa <input id="g-name" maxlength="40" required></label>
+      <label>Rodzaj <select id="g-kind"><option value="timescale">TimescaleDB / PostgreSQL</option><option value="influx2">InfluxDB 2.x</option>
+        <option value="influx1">InfluxDB 1.x</option><option value="sqlite">SQLite (wspólny plik serwera)</option></select></label>
+      <label data-k="sqlite">Plik SQLite <input data-f="sqlite_path" value="s7trace.db"></label>
+      <label data-k="influx1 influx2">Adres (URL) <input data-f="url" value="http://localhost:8086"></label>
+      <label data-k="influx1">Baza <input data-f="database" value="s7trace"></label>
+      <label data-k="influx1">Użytkownik <input data-f="user"></label>
+      <label data-k="influx1">Hasło <input data-f="password" type="password" placeholder="(bez zmian)"></label>
+      <label data-k="influx2">Organizacja <input data-f="org"></label>
+      <label data-k="influx2">Bucket <input data-f="bucket" value="s7trace"></label>
+      <label data-k="influx2">Token <input data-f="token" type="password" placeholder="(bez zmian)"></label>
+      <label data-k="influx1 influx2">Pomiar <input data-f="measurement" value="s7trace"></label>
+      <label data-k="timescale">Serwer <input data-f="host" value="localhost"></label>
+      <label data-k="timescale">Port <input data-f="port" type="number" value="5432"></label>
+      <label data-k="timescale">Baza <input data-f="pg_database" value="s7trace"></label>
+      <label data-k="timescale">Użytkownik <input data-f="pg_user" value="postgres"></label>
+      <label data-k="timescale">Hasło <input data-f="pg_password" type="password" placeholder="(bez zmian)"></label>
+      <label data-k="timescale">SSL <select data-f="pg_sslmode"><option>prefer</option><option>disable</option><option>require</option></select></label>
+      <label data-k="timescale">Tabela <input data-f="table" value="s7_samples"></label>
+      <label data-k="timescale">Kompresja po N dniach (0 = brak) <input data-f="compress_days" type="number" value="7" min="0"></label>
+      <label data-k="timescale influx1 influx2 sqlite">Kto widzi nagrania <select data-f="view_scope"><option value="mine">tylko swoje</option><option value="all">wszyscy widzą wszystkie</option></select></label>
+      <label data-k="timescale influx1 influx2 sqlite">Zmieniać cudze nagrania <input data-f="delete_others" type="checkbox"></label>
+      <label data-k="timescale influx1 influx2 sqlite">Kosz: dni (0 = kasuj od razu) <input data-f="trash_days" type="number" value="30" min="0"></label>
+      <label data-k="timescale influx1 influx2 sqlite">Auto-kosz po N dniach (0 = nigdy) <input data-f="retention_days" type="number" value="0" min="0"></label>
+      <div class="inline"><button type="submit">Zapisz cel</button><button type="button" id="g-new">Nowy</button><span id="g-msg" class="error"></span></div>
+    </form>
   </section>
   <section id="users" hidden>
     <h2>Konta użytkowników</h2>
     <table id="t-users"><thead><tr><th>Konto</th><th>Rodzaj</th><th>Rola</th><th>Ostatnie logowanie</th><th>Stan</th><th></th></tr></thead><tbody></tbody></table>
+    <h3>Tokeny programów okienkowych</h3>
+    <p class="muted">Program okienkowy (Ustawienia → Serwer Web) zgłasza serwerowi swoją sesję z takim tokenem; w zamian ostrzega przed
+      skanowaniem sterownika, który skanuje ktoś inny. Token pokazuje się tylko raz – skopiuj go od razu.</p>
+    <table id="t-tokens"><thead><tr><th>Nazwa</th><th>Utworzony</th><th>Ostatnie użycie</th><th></th></tr></thead><tbody></tbody></table>
+    <form id="k-form" class="inline"><input id="k-name" placeholder="nazwa (np. Hala 1)" maxlength="40" required><button type="submit">Utwórz token</button>
+      <span id="k-error" class="error"></span></form>
     <h3>Nowe konto</h3>
     <form id="u-form" class="inline">
       <input id="u-name" placeholder="nazwa (np. jan.kowalski albo DOMENA\jan)" required>

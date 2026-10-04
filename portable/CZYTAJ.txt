@@ -5,6 +5,12 @@ URUCHOMIENIE
   S7Trace-debug.bat    - to samo z oknem konsoli (gdy program sie nie uruchamia - pokaze blad)
   Symulator.bat        - lokalny symulator PLC; w programie wpisz IP 127.0.0.1:1102, rack 0, slot 2
   Diagnoza.bat         - sprawdza Windows, biblioteki Qt i kompletnosc plikow (wynik: diagnoza.txt)
+  Web-Serwer.bat       - serwer trybu Web (HTTPS, port 8080): polaczenia ze sterownikami na tym komputerze,
+                         uzytkownicy loguja sie przegladarka (https://<adres-serwera>:8080). Opcjonalnie:
+                         Web-Serwer.bat plik_konfiguracji.json. Pierwsze konto (administrator) tworzy sie
+                         w przegladarce. Przegladarka ostrzeze o certyfikacie samopodpisanym (to normalne).
+                         Port 8080 trzeba odblokowac w zaporze Windows. Jest tez logowanie
+                         kontem Windows (SSO, opcja --sso). Opis: app\WEB.md
   Test-TimescaleDB.bat - test zapisu/odczytu do TimescaleDB / PostgreSQL (psycopg i pg8000);
                          pyta o adres serwera, wynik: diagnoza_timescale.txt (wyslij go deweloperowi);
                          przy serwerze z rozszerzeniem timescaledb sprawdza tez kompresje i usuwanie

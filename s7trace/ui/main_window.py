@@ -9,7 +9,7 @@ from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QInputDialog, QMainWindow, QMenu,
                                QMessageBox, QStackedWidget, QTabBar, QToolButton, QToolTip, QWidget)
 
-from ..core import render_cfg, sessions
+from ..core import render_cfg, sessions, web_agent
 from ..core import symbols as sym
 from ..core.config import TabConfig, app_dir, load_app_config, save_app_config, symbols_path
 from ..core.naming import suggest_config_name
@@ -88,6 +88,7 @@ class MainWindow(QMainWindow):
         cfg = load_app_config(self.config_file)
         self.ui: dict = cfg.get("ui") if isinstance(cfg.get("ui"), dict) else {}
         self.theme = th.normalize(self.ui.get("theme"))
+        self.web_cfg = web_agent.normalize(self.ui.get("web_server"))         # Ustawienia -> Serwer Web
         self.render_cfg = render_cfg.normalize(self.ui.get("render"))      # Ustawienia -> Renderowanie wykresu
 
         self.stack = QStackedWidget()
@@ -146,7 +147,12 @@ class MainWindow(QMainWindow):
         self._heartbeat = QTimer(self)
         self._heartbeat.setInterval(int(sessions.HEARTBEAT_S * 1000))
         self._heartbeat.timeout.connect(self.registry.publish)
+        self._heartbeat.timeout.connect(self._refresh_agent_payload)
         self._heartbeat.start()
+        self._agent_payload: dict = {}
+        self._reporter = None
+        self._refresh_agent_payload()
+        self._start_reporter()
         self._autosave = QTimer(self)
         self._autosave.setInterval(20000)
         self._autosave.timeout.connect(self._save_config)
@@ -199,6 +205,7 @@ class MainWindow(QMainWindow):
         st.addSeparator()
         self._act(st, "Interfejs (kolory, czcionki)…", self.edit_interface)
         self._act(st, "Renderowanie wykresu (odświeżanie, punkty, obciążenie CPU)…", self.edit_render)
+        self._act(st, "Serwer Web (zgłaszanie sesji i wspólny rejestr)…", self.edit_web_server)
         self.menu_saved = st.addMenu("Zapisane konfiguracje interfejsu")
         self.menu_saved.aboutToShow.connect(self._fill_saved_menu)
         self.menu_profile = st.addMenu("Profil kolorów")
@@ -255,6 +262,26 @@ class MainWindow(QMainWindow):
         self.render_cfg = render_cfg.normalize(cfg)
         for i in range(self.tabs.count()):
             self.tabs.widget(i).apply_render(self.render_cfg)
+
+    # ---------------------------------------------------------- reporting to the web server
+    def _refresh_agent_payload(self) -> None:
+        """Built in the GUI thread (the reporter thread only reads the finished dict)."""
+        self._agent_payload = {"id": self.registry.id, "user": self.registry.user, "host": self.registry.host, "pid": os.getpid(),
+                               "started": self.registry.started, "tabs": self._session_tabs()}
+
+    def _start_reporter(self) -> None:
+        if self._reporter is not None:
+            self._reporter.stop()
+        self._reporter = web_agent.WebReporter(lambda: self._agent_payload, self.web_cfg)
+        sessions.REMOTE = self._reporter if self.web_cfg["enabled"] else None
+        self._reporter.start()
+
+    def edit_web_server(self) -> None:
+        from .web_server_dialog import WebServerDialog
+        dlg = WebServerDialog(self.web_cfg, self)
+        if dlg.exec():
+            self.web_cfg = dlg.result_cfg()
+            self._start_reporter()
 
     def edit_render(self) -> None:
         dlg = RenderDialog(self.render_cfg, self._apply_render, self)
@@ -464,6 +491,7 @@ class MainWindow(QMainWindow):
         self.ui["geometry"] = bytes(self.saveGeometry().toBase64()).decode()
         self.ui["theme"] = self.theme
         self.ui["render"] = self.render_cfg
+        self.ui["web_server"] = self.web_cfg
         return {"tabs": [self.tabs.widget(i).to_config().to_dict() for i in range(self.tabs.count())],
                 "current": self.tabs.currentIndex(), "ui": self.ui}
 
@@ -575,6 +603,10 @@ class MainWindow(QMainWindow):
     # ---------------------------------------------------------- close
     def closeEvent(self, e):
         self._heartbeat.stop()
+        if self._reporter is not None:
+            self._reporter.stop()
+        if sessions.REMOTE is self._reporter:
+            sessions.REMOTE = None
         self.registry.close()                                     # the session disappears from the list at once
         if sessions.REGISTRY is self.registry:
             sessions.REGISTRY = None

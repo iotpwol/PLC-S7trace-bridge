@@ -170,5 +170,14 @@ class Registry:
 REGISTRY: Registry | None = None          # set by the main window; None = no registry (tests, no writable folder)
 
 
+REMOTE = None                             # a core.web_agent.WebReporter when the program reports to the web server
+
+
 def others_scanning(ip: str) -> list[dict]:
-    return REGISTRY.others_scanning(ip) if REGISTRY else []
+    """Other programs (this computer's registry) and, when reporting to the web server, programs on other computers and the
+    server itself that scan the same PLC."""
+    out = REGISTRY.others_scanning(ip) if REGISTRY else []
+    if REMOTE is not None:
+        own = tuple(s["id"] for s in REGISTRY.sessions()) if REGISTRY else ()
+        out = out + REMOTE.others_scanning(ip, own)
+    return out

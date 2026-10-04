@@ -49,12 +49,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--tls", action="store_true", help="HTTPS z certyfikatem samopodpisanym")
     p.add_argument("--cert", default="", help="własny certyfikat PEM (z --key) zamiast samopodpisanego")
     p.add_argument("--key", default="")
+    p.add_argument("--sso", action="store_true", help="logowanie kontem Windows bez hasła (Negotiate / Kerberos / NTLM, tylko Windows)")
     p.add_argument("--autostart", action="store_true", help="uruchom wszystkie połączenia od razu")
     p.add_argument("--add-user", metavar="NAZWA", help="dodaj konto administratora (hasło zostanie zapytane) i zakończ")
     a = p.parse_args(argv)
 
     folder = a.data or os.path.join(data_dir(), "web")
-    hosts = HostManager()
+    hosts = HostManager(os.path.join(folder, "workspaces"))
     for path in a.config:
         ids = hosts.load_config(path)
         print(f"Wczytano {len(ids)} połączeń z {path}")
@@ -69,6 +70,10 @@ def main(argv: list[str] | None = None) -> int:
         print("Konto administratora dodane.")
         return 0
 
+    if a.sso:
+        from . import sso
+        app.sso = sso.available()
+        print("Logowanie SSO (konto Windows): " + ("włączone" if app.sso else "niedostępne na tym systemie"))
     tls = None
     if a.cert and a.key:
         tls = (a.cert, a.key)

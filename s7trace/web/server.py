@@ -5,6 +5,7 @@ controllers, a live chart over Server-Sent Events and the administration of acco
 """
 from __future__ import annotations
 
+import base64
 import json
 import mimetypes
 import os
@@ -12,10 +13,17 @@ import secrets
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from .auth import KIND_LABEL, ROLE_LABEL, AuthError, UserStore, role_allows
+from ..core.config import TabConfig
+from . import editing
+from . import files
+from . import sso
+from .agents import Agents, host_of
 from .hosted import HostManager
+from .recordings import Library, RecError
+from .targets import TargetError, Targets
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 SESSION_IDLE_S = 8 * 3600
@@ -74,12 +82,27 @@ class App:
         os.makedirs(data_dir, exist_ok=True)
         self.users = UserStore(os.path.join(data_dir, "web_users.db"))
         self.sessions = WebSessions()
-        self.hosts = hosts or HostManager()
+        self.targets = Targets(os.path.join(data_dir, "web_targets.json"))
+        self.hosts = hosts or HostManager(os.path.join(data_dir, "workspaces"))
+        h = self.hosts                                              # where the connections write files / find the targets
+        h.files_root, h.data_dir = h.files_root or os.path.join(data_dir, "files"), h.data_dir or data_dir
+        h.targets = h.targets or self.targets
+        self.library = Library(h.files_root, h.data_dir, h.targets)
+        self.agents = Agents()                                      # desktop programs that report to the server
+        self.sso = False                                            # single sign-on with the Windows account (--sso)
         self.started = time.time()
+        self.detect_busy: set[str] = set()                          # sessions with a wizard run in progress
+
+    def server_scans(self) -> list[dict]:
+        """PLCs scanned by the connections hosted on this server right now."""
+        return [{"ip": host_of(h.cfg.ip), "user": h.started_by or h.owner, "computer": "serwer Web", "title": h.name,
+                 "since": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(h.started_us / 1e6)) if h.started_us else None,
+                 "kind": "server", "agent": h.id} for h in self.hosts.all() if h.state in ("connecting", "running", "reconnecting")]
 
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "S7TraceWeb"
+    _neg = None                                                # the SSPI exchange of this connection (NTLM needs the same connection)
     protocol_version = "HTTP/1.1"
     app: App
 
@@ -143,16 +166,35 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/me":
                 s = self.app.sessions.get(self._token())
                 return self._json({"user": s["username"], "role": s["role"], "kind": s["kind"]} if s else {"user": None,
-                                  "first_run": self.app.users.count() == 0})
+                                  "first_run": self.app.users.count() == 0, "sso": self.app.sso})
+            if path == "/api/sso":
+                return self._sso()
             if path == "/api/overview":
                 return self._overview()
+            if path == "/api/options":                                   # lists for the editor of a new connection
+                if self._session("viewer") is not None:
+                    self._json({"options": editing.view(TabConfig(), None, self.app.targets.names())["options"]})
+                return
+            if path.startswith("/api/recordings"):
+                return self._recordings_get(path, q)
+            if path == "/api/targets":                                   # recording targets: names for users, details for admins
+                s = self._session("viewer")
+                if s is not None:
+                    self._json({"targets": self.app.targets.listing(s["role"] == "admin")})
+                return
             if path == "/api/users":
                 return self._users_list()
+            if path == "/api/agent-tokens":
+                if self._session("admin") is not None:
+                    self._json({"tokens": self.app.users.list_agent_tokens()})
+                return
             if path.startswith("/api/connections/"):
                 return self._connection_get(path.split("/")[3:], q)
             self._error(404, "Nie ma takiej strony.")
         except (BrokenPipeError, ConnectionResetError):
             pass
+        except ValueError as e:                                   # RecError, a bad number in the query ...
+            self._error(400, str(e))
 
     def _static(self, name: str):
         full = os.path.normpath(os.path.join(STATIC, name))
@@ -165,15 +207,21 @@ class Handler(BaseHTTPRequestHandler):
         s = self._session("viewer")
         if s is None:
             return
-        hosts = [h.describe() for h in self.app.hosts.all()]
+        hosts = [h.describe(s["username"], s["role"]) for h in self.app.hosts.visible(s["username"], s["role"])]
         viewers: dict[str, list[str]] = {}
         for w in self.app.sessions.listing():
             if w["viewing"]:
                 viewers.setdefault(w["viewing"], []).append(w["username"])
         for h in hosts:
             h["viewers"] = sorted(set(viewers.get(h["id"], [])))
+        agents = self.app.agents.listing()
+        scans = self.app.agents.scans()
+        for h, c in zip(hosts, self.app.hosts.visible(s["username"], s["role"])):
+            host = host_of(c.cfg.ip)                                  # the same PLC scanned by a desktop program elsewhere
+            h["others"] = [f"{x['user']} ({x['computer']})" for x in scans if x["ip"] == host]
         self._json({"now": time.time(), "uptime_s": time.time() - self.app.started, "connections": hosts,
-                    "sessions": self.app.sessions.listing(), "me": {"user": s["username"], "role": s["role"]}})
+                    "sessions": self.app.sessions.listing(), "me": {"user": s["username"], "role": s["role"]},
+                    "agents": [{k: v for k, v in a.items() if k not in ("token", "seen")} for a in agents if a["live"]]})
 
     def _users_list(self):
         if self._session("admin") is None:
@@ -186,14 +234,23 @@ class Handler(BaseHTTPRequestHandler):
         if s is None:
             return
         host = self.app.hosts.get(parts[0]) if parts else None
-        if host is None:
+        if host is None or not host.can_view(s["username"], s["role"]):
             return self._error(404, "Nie ma takiego połączenia.")
         what = parts[1] if len(parts) > 1 else ""
+        if what == "config":
+            if not host.can_edit(s["username"], s["role"]):
+                return self._error(403, "Brak uprawnień do edycji tego połączenia.")
+            return self._json({**editing.view(host.cfg, host.web, self.app.targets.names()), "state": host.state,
+                               "recording": host.recorder is not None})
         if what == "series":
-            return self._json(host.series(float(q.get("seconds", 60)), since=float(q["since"]) if "since" in q else None))
+            span = (float(q["from"]), float(q["to"])) if "from" in q and "to" in q else None
+            return self._json(host.series(float(q.get("seconds", 60)), since=float(q["since"]) if "since" in q else None,
+                                          span=span))
+        if what == "files":
+            return self._files(host, parts[2:])
         if what == "stream":
             return self._stream(host, s, float(q.get("seconds", 60)))
-        self._json(host.describe())
+        self._json(host.describe(s["username"], s["role"]))
 
     def _stream(self, host, session, seconds: float):
         """Server-Sent Events: the last `seconds` at once, then the new samples about ten times per second."""
@@ -235,6 +292,8 @@ class Handler(BaseHTTPRequestHandler):
             if self.headers.get(CSRF_HEADER) != "1":
                 return self._error(403, "Brak nagłówka zabezpieczającego.")
             d = self._body()
+            if path == "/api/agent/report":                           # a desktop program (token instead of a login)
+                return self._agent_report(d)
             if path == "/api/login":
                 return self._login(d)
             if path == "/api/logout":
@@ -245,12 +304,22 @@ class Handler(BaseHTTPRequestHandler):
                     return self._error(403, "Konta już istnieją.")
                 self.app.users.add(str(d.get("username", "")), "admin", "local", str(d.get("password", "")))
                 return self._login(d)
+            if path == "/api/connections":
+                return self._connection_create(d)
             if path.startswith("/api/connections/"):
-                return self._connection_post(path.split("/")[3:])
+                return self._connection_post(path.split("/")[3:], d)
             if path == "/api/users":
                 return self._users_post(d)
+            if path == "/api/targets":
+                return self._targets_post(d)
+            if path == "/api/agent-tokens":
+                return self._agent_tokens_post(d)
+            if path == "/api/detect":
+                return self._detect(d)
+            if path == "/api/recordings":
+                return self._recordings_post(d)
             self._error(404, "Nie ma takiej operacji.")
-        except AuthError as e:
+        except (AuthError, TargetError) as e:
             self._error(400, str(e))
         except ValueError as e:
             self._error(400, str(e))
@@ -265,21 +334,242 @@ class Handler(BaseHTTPRequestHandler):
         self._json({"user": user["username"], "role": user["role"]},
                    headers={"Set-Cookie": f"{COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict{secure}"})
 
-    def _connection_post(self, parts: list[str]):
+    def _connection_create(self, d: dict):
         s = self._session("operator")
         if s is None:
             return
+        cfg = TabConfig()
+        patch = {k: v for k, v in d.items() if k in ("name", "ip", "rack", "slot", "cycle_ms", "conn_type", "conn", "mode",
+                                                   "window_s", "signals", "trigger", "rec")}
+        try:
+            web = {}
+            editing.apply(cfg, patch, running=False, web=web, targets=self.app.targets.names())
+            host = self.app.hosts.add(cfg, s["username"], web)
+        except editing.EditError as e:
+            return self._error(400, str(e))
+        self._json(host.describe(s["username"], s["role"]))
+
+    def _connection_post(self, parts: list[str], d: dict):
+        s = self._session("operator")
+        if s is None:
+            return
+        user, role = s["username"], s["role"]
         host = self.app.hosts.get(parts[0]) if parts else None
-        if host is None:
+        if host is None or not host.can_view(user, role):
             return self._error(404, "Nie ma takiego połączenia.")
         action = parts[1] if len(parts) > 1 else ""
-        if action == "start":
-            host.start(s["username"])
-        elif action == "stop":
-            host.stop()
+        if action in ("start", "stop"):
+            if not host.can_run(user, role):
+                return self._error(403, "Brak uprawnień do tego połączenia.")
+            host.start(user) if action == "start" else host.stop()
+        elif action in ("config", "delete"):
+            if not host.can_edit(user, role):
+                return self._error(403, "Brak uprawnień do edycji tego połączenia.")
+            try:
+                if action == "delete":
+                    self.app.hosts.remove(host.id)
+                    return self._json({"ok": True})
+                changed = editing.apply(host.cfg, d, running=host.state != "stopped", web=host.web,
+                                        recording=host.recorder is not None, targets=self.app.targets.names())
+            except editing.EditError as e:
+                return self._error(400, str(e))
+            self.app.hosts.save(host.owner)
+            if "trigger" in changed:
+                host.reload_trigger()
+            host.version += 1
+        elif action == "trigger":
+            if not host.can_run(user, role):
+                return self._error(403, "Brak uprawnień do tego połączenia.")
+            if d.get("action") != "rearm":
+                return self._error(400, "Nieznana operacja wyzwalacza.")
+            host.rearm()
+        elif action == "rec":
+            if not host.can_run(user, role):
+                return self._error(403, "Brak uprawnień do tego połączenia.")
+            what = d.get("action")
+            if what == "start":
+                host.rec_start(user, d, self.client_address[0])
+            elif what == "stop":
+                host.rec_stop()
+            elif what == "info":
+                host.rec_info_update(d)
+            else:
+                return self._error(400, "Nieznana operacja REC.")
+        elif action == "files":
+            if not host.can_edit(user, role):
+                return self._error(403, "Brak uprawnień do plików tego połączenia.")
+            path = files.resolve(self.app.hosts.files_root, host.owner, str(d.get("kind", "")), str(d.get("name", "")))
+            if path is None:
+                return self._error(404, "Nie ma takiego pliku.")
+            os.remove(path)
+            return self._json({"ok": True})
         else:
             return self._error(404, "Nie ma takiej operacji.")
-        self._json(host.describe())
+        self._json(host.describe(user, role))
+
+    def _files(self, host, rest: list[str]):
+        """The CSV files (trigger snapshots and recordings) of the account that owns the connection."""
+        root = self.app.hosts.files_root
+        rest = [unquote(x) for x in rest]
+        if not rest:
+            return self._json({"files": files.listing(root, host.owner)})
+        path = files.resolve(root, host.owner, rest[0], rest[1] if len(rest) > 1 else "")
+        if path is None:
+            return self._error(404, "Nie ma takiego pliku.")
+        with open(path, "rb") as f:
+            body = f.read()
+        name = os.path.basename(path).replace('"', "_")
+        self._send(200, body, "text/csv; charset=utf-8", {"Content-Disposition": f'attachment; filename="{name}"'})
+
+    # ---- recordings stored in databases ("Przegląd nagrań" in the browser)
+    def _recordings_get(self, path: str, q: dict):
+        s = self._session("viewer")
+        if s is None:
+            return
+        user, role, lib = s["username"], s["role"], self.app.library
+        if path == "/api/recordings/sources":
+            return self._json({"sources": [{"id": x.id, "label": x.label, "kind": x.kind} for x in lib.sources(user, role)]})
+        src = lib.resolve(q.get("source", "sqlite"), user, role)
+        num = lambda k: float(q[k]) if k in q and q[k] != "" else None
+        if path == "/api/recordings":
+            return self._json({"recordings": lib.listing(src, user, role, q.get("trash") == "1"),
+                               "trash_days": src.cfg.trash_days})
+        if path == "/api/recordings/data":
+            return self._json(lib.read(src, q.get("id", ""), user, role, num("from"), num("to"),
+                                       min(int(q.get("points", 6000)), 20000)))
+        if path == "/api/recordings/csv":
+            name, data = lib.csv_bytes(src, q.get("id", ""), user, role, num("from"), num("to"))
+            return self._send(200, data, "text/csv; charset=utf-8", {"Content-Disposition": f'attachment; filename="{name}"'})
+        self._error(404, "Nie ma takiej strony.")
+
+    def _recordings_post(self, d: dict):
+        s = self._session("operator")
+        if s is None:
+            return
+        lib = self.app.library
+        src = lib.resolve(str(d.get("source", "sqlite")), s["username"], s["role"])
+        lib.change(src, str(d.get("id", "")), s["username"], s["role"], str(d.get("action", "")), d.get("fields"))
+        self._json({"ok": True})
+
+    def finish(self):
+        if self._neg is not None:
+            try:
+                self._neg.close()
+            except Exception:
+                pass
+            self._neg = None
+        super().finish()
+
+    def _sso(self):
+        """Negotiate (Kerberos / NTLM) with the Windows account of the browser user; the account must be registered."""
+        if not self.app.sso:
+            return self._error(404, "Logowanie kontem Windows (SSO) jest wyłączone na tym serwerze.")
+        if self.headers.get(CSRF_HEADER) != "1":
+            return self._error(403, "Brak nagłówka zabezpieczającego.")
+        auth = self.headers.get("Authorization") or ""
+        if not auth.lower().startswith("negotiate "):
+            if self._neg is not None:
+                self._neg.close()
+                self._neg = None
+            return self._send(401, json.dumps({"error": "Przeglądarka nie przesłała konta Windows."}).encode(),
+                              headers={"WWW-Authenticate": "Negotiate"})
+        try:
+            token = base64.b64decode(auth[10:].strip(), validate=True)
+        except ValueError:
+            return self._error(400, "Niepoprawny token.")
+        if self._neg is None:
+            self._neg = sso.Negotiate()
+        status, out, name = self._neg.step(token)
+        back = {"WWW-Authenticate": "Negotiate " + sso.b64(out)} if out else {}
+        if status == "continue":
+            return self._send(401, json.dumps({"error": "Negocjacja…"}).encode(), headers=back or {"WWW-Authenticate": "Negotiate"})
+        self._neg.close()
+        self._neg = None
+        if status != "ok" or not name:
+            return self._send(403, json.dumps({"error": "Uwierzytelnienie kontem Windows nie powiodło się."}).encode(), headers=back)
+
+        def lookup(n):
+            u = self.app.users.get(n)
+            return u if u and u["kind"] == "windows" and not u["disabled"] else None
+        acc = sso.match_account(name, lookup)
+        if acc is None:
+            return self._send(403, json.dumps({"error": f"Konto Windows {name} nie jest zarejestrowane w S7Trace Web – "
+                                                        "poproś administratora o dodanie go (rodzaj: konto Windows / AD)."},
+                                              ensure_ascii=False).encode(), headers=back)
+        self.app.users.mark_login(acc["username"])
+        token = self.app.sessions.create(acc, self.client_address[0], self.headers.get("User-Agent") or "")
+        secure = "; Secure" if getattr(self.server, "tls", False) else ""
+        self._json({"user": acc["username"], "role": acc["role"]},
+                   headers={**back, "Set-Cookie": f"{COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict{secure}"})
+
+    def _agent_report(self, d: dict):
+        name = self.app.users.check_agent_token(self.headers.get("X-S7Trace-Agent") or "")
+        if name is None:
+            return self._error(401, "Nieprawidłowy token programu.")
+        self.app.agents.report(d, self.client_address[0], name)
+        aid = str(d.get("id", ""))[:64]
+        self._json({"scans": self.app.agents.scans(exclude=aid) + self.app.server_scans(), "server_time": time.time()})
+
+    def _agent_tokens_post(self, d: dict):
+        if self._session("admin") is None:
+            return
+        act, name = d.get("action"), str(d.get("name", ""))
+        if act == "add":
+            return self._json({"ok": True, "token": self.app.users.add_agent_token(name)})      # shown once, never stored in clear
+        if act == "delete":
+            self.app.users.delete_agent_token(name)
+            return self._json({"ok": True})
+        raise AuthError("Nieznana operacja.")
+
+    def _detect(self, d: dict):
+        """The connection wizard: probes the address (S7 / OPC UA / Web API / Modbus) from the server and recommends a method."""
+        s = self._session("operator")
+        if s is None:
+            return
+        from ..core import detect
+        from ..core.config import conn_defaults
+        ip = str(d.get("ip", "")).strip()
+        if not editing._HOST.fullmatch(ip):
+            raise AuthError("Adres IP: dozwolone cyfry, litery, kropki i dwukropek (port).")
+        rack, slot = editing._num(d, "rack", 0, 7, "Rack"), editing._num(d, "slot", 0, 31, "Slot")
+        kind = d.get("conn_type", "auto")
+        if kind not in editing.CONN_KINDS:
+            raise AuthError("Nieznany sposób połączenia.")
+        opts = {k: v for k, v in (d.get("conn") or {}).items() if k in conn_defaults() and k not in ("cert", "key")}
+        key = s["username"].lower()
+        if key in self.app.detect_busy:
+            raise AuthError("Poprzednie rozpoznawanie jeszcze trwa.")
+        self.app.detect_busy.add(key)
+        try:
+            res = detect.run_detection(ip, opts, rack, slot, None if kind == "auto" else [kind], bool(d.get("first")))
+        finally:
+            self.app.detect_busy.discard(key)
+        self._json({"steps": [{"key": x.key, "title": x.title, "status": x.status, "detail": x.detail, "ms": round(x.ms, 1)} for x in res.steps],
+                    "methods": res.methods, "recommended": res.recommended, "advice": res.advice,
+                    "info": {k: v for k, v in res.info.items() if isinstance(v, (str, int, float))}, "rack": res.rack, "slot": res.slot,
+                    "report": detect.format_result(res)})
+
+    def _targets_post(self, d: dict):
+        if self._session("admin") is None:
+            return
+        act, name = d.get("action"), str(d.get("name", ""))
+        if act in ("add", "update"):
+            self.app.targets.put(name, d.get("fields") or {})
+        elif act == "delete":
+            self.app.targets.delete(name)
+        elif act == "test":
+            from ..core.store import test_connection
+            c = self.app.targets.get(name)
+            if c is None:
+                return self._error(404, "Nie ma takiego celu.")
+            base = os.path.join(self.app.data_dir, "dbs") if c.kind == "sqlite" else self.app.data_dir
+            try:
+                return self._json({"ok": True, "message": test_connection(c, base, c.test_timeout_s)})
+            except Exception as e:
+                return self._json({"ok": False, "message": str(e) or type(e).__name__})
+        else:
+            raise AuthError("Nieznana operacja.")
+        self._json({"ok": True})
 
     def _users_post(self, d: dict):
         if self._session("admin") is None:
@@ -318,6 +608,12 @@ class WebServer(ThreadingHTTPServer):
             ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
             ctx.load_cert_chain(*tls)
             self.socket = ctx.wrap_socket(self.socket, server_side=True)
+
+    def handle_error(self, request, client_address):
+        """A browser that closes the page / a TLS probe is no news (the default prints a traceback to the console)."""
+        import sys
+        if not isinstance(sys.exc_info()[1], (ConnectionError, OSError, TimeoutError)):
+            super().handle_error(request, client_address)
 
     @property
     def url(self) -> str:
