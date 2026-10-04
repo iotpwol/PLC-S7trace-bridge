@@ -1,147 +1,423 @@
-# Tryb Web (etapy 1, 2a, 2b, 2c i 3)
+# S7Trace – tryb Web: pełny opis
 
-Centralny serwer S7Trace: **jeden komputer** trzyma połączenia ze sterownikami (odczyt w osobnym procesie, jak w programie
-okienkowym), a **wielu użytkowników** loguje się do niego przeglądarką z innych komputerów. Etap 1: logowanie, przegląd
-kto jest zalogowany i jakie są połączenia, podgląd wykresu na żywo, Start/Stop połączeń i zarządzanie kontami.
-Etap 2a: **własna przestrzeń każdego konta** i edycja połączeń oraz sygnałów w przeglądarce.
-Etap 2b: **wyzwalacz i REC** (CSV, SQLite, bazy z listy administratora) oraz pliki konta.
-Etap 2c: **przegląd nagrań z baz** (lista, wykres z przybliżaniem, CSV, opis, kosz).
-Etap 3: **kreator połączenia**, **rejestr programów okienkowych** z ostrzeżeniami o skanowaniu tego samego sterownika, **logowanie SSO**.
+Dokument opisuje serwer Web S7Trace od uruchomienia po szczegóły działania: co robi, jak i dlaczego tak, jakie ma ograniczenia, co zostało
+sprawdzone (i czym), a co trzeba jeszcze sprawdzić na prawdziwym sprzęcie. Stan: commit `8d7fffd` i późniejsze (2026-10-04).
 
-## Uruchomienie
+Spis treści: 1. Po co i jak to działa · 2. Uruchomienie · 3. Pierwsze kroki · 4. Konta, role, logowanie · 5. Przestrzeń konta i edycja
+połączeń · 6. Podgląd na żywo · 7. Wyzwalacz · 8. REC, pliki, cele zapisu · 9. Przegląd nagrań · 10. Kreator połączenia ·
+11. Programy okienkowe zgłaszają sesje · 12. Logowanie SSO · 13. Co gdzie leży na dysku · 14. Bezpieczeństwo · 15. Ograniczenia i różnice
+względem programu okienkowego · 16. Co zostało sprawdzone · 17. Co trzeba sprawdzić na prawdziwym sprzęcie · 18. Dodatek: API.
 
-Z paczki: `Web-Serwer.bat [plik_konfiguracji.json]` (nasłuch na wszystkich interfejsach, HTTPS z certyfikatem samopodpisanym).
-Z kodu (`.venv`):
+---
 
+## 1. Po co i jak to działa
+
+**Problem.** Program okienkowy S7Trace jest jedną instancją na komputer (jedną sesją Windows). Gdy ten sam sterownik chce oglądać wiele
+osób, każda otwierałaby własne połączenie (S7 ma ograniczoną liczbę połączeń na CPU i każdy skan go obciąża), a przebiegi i konfiguracje
+byłyby rozproszone po komputerach.
+
+**Rozwiązanie – centralny serwer.** Jeden komputer („serwer”) uruchamia proces `python -m s7trace.web`. To on łączy się ze sterownikami
+i zbiera dane; użytkownicy otwierają stronę w zwykłej przeglądarce (Edge, Chrome, Firefox), logują się własnym kontem i widzą to, do czego
+mają prawo. Dlaczego tak:
+
+- **Akwizycja nie zależy od przeglądarki.** Odczyt trwa w osobnym procesie potomnym (ten sam mechanizm co w programie okienkowym:
+  `ProcAcquirer`), więc zamknięcie karty nie przerywa ani wyzwalacza, ani nagrywania.
+- **Jedno połączenie z PLC, wielu widzów.** Obciążenie sterownika nie rośnie z liczbą oglądających.
+- **Własna przestrzeń konta + wspólny rejestr.** Każdy ma swoje połączenia i pliki, a administrator widzi kto jest zalogowany, z jakiego
+  komputera, jakie połączenia są otwarte i z którymi sterownikami (IP, nazwa stacji, moduł).
+- **Tylko biblioteka standardowa Pythona** (`http.server`, SQLite, `ctypes`), bez nowych zależności i bez bibliotek z internetu
+  (wykres to czysty `canvas`, brak CDN) – paczka przenośna nie rośnie, działa w sieciach bez dostępu do internetu i na
+  Windows Server 2016 (do którego przypięty jest PySide6 6.7.3).
+- **Dane na żywo przez Server-Sent Events** (jednokierunkowy strumień HTTP) – wystarcza do podglądu, przechodzi przez proste proxy
+  i nie wymaga WebSocketów; polecenia idą zwykłymi żądaniami JSON.
+
+Schemat: `przeglądarka ⇄ HTTP(S) ⇄ serwer Web ⇄ proces akwizycji ⇄ sterownik PLC`. Serwer to osobny byt od programu okienkowego –
+może działać na tym samym komputerze, ale nie musi; program okienkowy zostaje bez zmian (z opcjonalnym zgłaszaniem sesji, p. 11).
+
+---
+
+## 2. Uruchomienie
+
+### 2.1. Z paczki przenośnej (zalecane na serwerze)
+1. Rozpakuj cały folder `S7Trace` pod krótką ścieżką (np. `C:\Dev\S7Trace`). Nic się nie instaluje.
+2. Uruchom **`Web-Serwer.bat`** (opcjonalnie z plikiem konfiguracji: `Web-Serwer.bat moja_konfiguracja.json`).
+   Skrypt startuje `python -m s7trace.web --host 0.0.0.0 --tls --sso` – serwer słucha na wszystkich interfejsach, port **8080**, HTTPS
+   z certyfikatem samopodpisanym, logowanie SSO włączone.
+3. Odblokuj port **8080/TCP** w Zaporze Windows na serwerze.
+4. Na komputerze użytkownika wejdź na `https://<adres-serwera>:8080` i zaakceptuj ostrzeżenie o certyfikacie samopodpisanym
+   (jest normalne – certyfikat nie jest wystawiony przez znany urząd; zob. p. 14).
+
+### 2.2. Z kodu (środowisko deweloperskie)
 ```
-.venv\Scripts\python -m s7trace.web --config <konfiguracja.json> [--host 0.0.0.0] [--port 8080] [--data <folder>] [--tls] [--sso] [--autostart]
-.venv\Scripts\python -m s7trace.web --add-user admin        # dodaje administratora (hasło pytane w konsoli) i kończy
+.venv\Scripts\python -m s7trace.web [opcje]
 ```
 
-- `--config` – zwykły plik konfiguracji S7Trace (z `%APPDATA%\S7Trace` albo zapisany z programu); **każda zakładka = jedno
-  połączenie** na serwerze. Można podać kilka razy.
-- `--host` – domyślnie `127.0.0.1` (tylko ten komputer). `0.0.0.0` udostępnia serwer w sieci – wtedy używaj `--tls`
-  (albo własnego `--cert`/`--key`), bo inaczej hasła idą otwartym tekstem.
-- `--data` – konta (`web_users.db`) i certyfikat; domyślnie `<Dokumenty>\S7Trace\web`.
-- `--autostart` – uruchamia wszystkie połączenia od razu.
-
-Przy pierwszym wejściu w przeglądarce (nie ma jeszcze kont) strona prosi o utworzenie pierwszego administratora.
-
-## Konta i role
-
-| Rola | Co może |
+| Opcja | Znaczenie |
 |---|---|
-| podgląd (viewer) | przegląd, wykres na żywo |
-| operator | + Start / Stop połączeń |
-| administrator | + zakładka „Użytkownicy” (dodawanie, role, blokowanie, hasła, usuwanie) |
+| `--config plik.json` | Plik konfiguracji S7Trace (z `%APPDATA%\S7Trace` lub zapisany z programu). **Każda zakładka = jedno wspólne połączenie** serwera. Można podać kilka razy. Połączenia są importowane raz (te same nazwa+adres+rack+slot nie dublują się po ponownym starcie). |
+| `--host adres` | Adres nasłuchu. Domyślnie **`127.0.0.1`** (tylko ten komputer – bezpieczny domyślnie). `0.0.0.0` udostępnia serwer w sieci. |
+| `--port N` | Port, domyślnie 8080. |
+| `--data folder` | Folder danych serwera (p. 13). Domyślnie `<Dokumenty>\S7Trace\web` użytkownika, który uruchamia serwer. |
+| `--tls` | HTTPS z certyfikatem samopodpisanym (tworzony przy pierwszym uruchomieniu w folderze danych, ważny 10 lat). |
+| `--cert plik.pem --key plik.pem` | Własny certyfikat (np. z firmowego urzędu) zamiast samopodpisanego. |
+| `--sso` | Włącza logowanie kontem Windows bez hasła (p. 12). Tylko Windows. |
+| `--autostart` | Uruchamia wszystkie połączenia od razu po starcie serwera (jako użytkownik „autostart”). Bez tego po restarcie połączenia są zatrzymane. |
+| `--add-user NAZWA` | Dodaje konto administratora (hasło pytane w konsoli) i kończy – np. gdy zgubiono hasło ostatniego administratora. |
 
-Dwa rodzaje kont: **konto programu** (hasło zapisane jako PBKDF2-SHA256, 200 tys. iteracji) i **konto Windows / Active
-Directory** (`DOMENA\jan`, `jan@domena`, albo samo `jan` = konto lokalne serwera) – hasło sprawdza sam Windows
-(`LogonUserW`), serwer go nie zapisuje; konto musi być wcześniej dodane przez administratora (to ono dostaje rolę).
-Po 5 błędnych hasłach para (konto, adres) jest blokowana na 60 s. Nie da się usunąć / zablokować / zdegradować ostatniego
-administratora.
+**Dlaczego domyślnie `127.0.0.1` i HTTP:** serwer bez ochrony transportu nie powinien być widoczny w sieci przez przypadek. Udostępniasz go
+świadomie (`--host 0.0.0.0`) i wtedy używasz `--tls`, bo inaczej hasła idą otwartym tekstem.
 
-## Własna przestrzeń konta (etap 2a)
+### 2.3. Zatrzymanie i restart
+`Ctrl+C` w oknie serwera (albo zamknięcie okna) zatrzymuje połączenia i zamyka nagrania. Po restarcie:
+konta, połączenia (konfiguracje), pliki, nagrania w bazach i tokeny programów **zostają**; **znikają**: zalogowane sesje (trzeba się zalogować
+ponownie), stan uruchomienia połączeń (są zatrzymane, chyba że `--autostart`), bufory przebiegu w pamięci, lista zgłoszonych programów
+okienkowych (wróci w ciągu kilku sekund) i znaczniki wyzwalacza. Przy twardym zabiciu procesu trwające nagranie zostaje „niezamknięte”
+(w bazie bez czasu końca, CSV niedokończony – dane do tego momentu są zapisane).
 
-Każde konto ma na serwerze swoje połączenia (odpowiednik zakładek programu okienkowego), zapisane osobno w
-`<folder danych>\workspaces\u_<konto>.json`. Połączenia bez właściciela (z `--config`, plik `_shared.json`) są **wspólne**.
+---
 
-| Kto | Widzi | Edytuje | Start / Stop |
-|---|---|---|---|
-| podgląd | wspólne | nic | nic |
-| operator | swoje + wspólne | swoje | swoje + wspólne |
-| administrator | wszystkie | wszystkie | wszystkie |
+## 3. Pierwsze kroki
 
-- „+ Nowe połączenie” i „Edytuj” (strona Przegląd): nazwa, adres IP (ew. `:port`), rack, slot, cykl, okno czasu, sposób
-  połączenia (S7 / OPC UA / Web API / Modbus), tryb odczytu oraz tabela sygnałów (nazwa, źródło, typ, DB, bajt, bit,
-  węzeł, share, kolor, pobieraj, wykres, opis). Pola, których tabela nie pokazuje (wzmocnienie, offset, format), zostają bez zmian.
-- Zmiany adresu, cyklu, trybu i sygnałów są możliwe tylko przy zatrzymanym połączeniu; nazwę i okno czasu można zmienić zawsze.
-  Połączenie można usunąć tylko zatrzymane. Limit: 30 połączeń na konto, 200 sygnałów na połączenie.
-- Serwer sprawdza każdą wartość (typy, zakresy, długości, unikalność nazw sygnałów); odrzucona zmiana nie zmienia nic.
-  Hasła do OPC UA / Web API nigdy nie wracają do przeglądarki; zapisują się na serwerze tylko przy „zapamiętaj hasło”.
-  Ścieżki certyfikatów na serwerze (`cert`, `key`) przeglądarka nie ustawia.
-- Po usunięciu konta jego połączenia zostają w pliku (widzi je administrator).
+1. Wejdź na adres serwera. Gdy nie ma jeszcze żadnego konta, strona prosi o utworzenie **pierwszego administratora** (nazwa + hasło min. 8 znaków).
+   Ta możliwość działa tylko wtedy, gdy kont jest zero (potem `/api/setup` zwraca 403).
+2. Jako administrator wejdź w „Użytkownicy” i dodaj konta osób (p. 4).
+3. Każdy operator tworzy swoje połączenie: „Przegląd” → „+ Nowe połączenie” (p. 5) – albo administrator przygotowuje wspólne połączenia
+   plikiem `--config`.
+4. „Start” na liście połączeń → „Podgląd” / „Podgląd na żywo”.
 
-## Wyzwalacz i REC w przeglądarce (etap 2b)
+---
 
-Ustawienia w edytorze połączenia (sekcje „Wyzwalacz” i „REC”), obsługa na stronie „Podgląd na żywo”. Działają na serwerze, więc
-nie zależą od otwartej przeglądarki: wyzwalacz i nagrywanie trwają, gdy użytkownik zamknie kartę.
+## 4. Konta, role, logowanie
 
-- **Wyzwalacz** – ta sama maszyna stanów co w programie okienkowym (warunki `==`, `>`, `<`, `between`, zbocza; histereza,
-  przedtrigger, akcje „Pauza”, „Zapis CSV”, „Pauza + zapis CSV”). Przy „Pauza” wykres wszystkich przeglądających zamraża okno
-  wokół wyzwolenia (czerwona przerywana linia „T”) do przycisku „Wznów (uzbrój wyzwalacz)”. Zapis CSV trafia do folderu konta
-  (`<folder danych>\files\u_<konto>\snapshots`). Wyzwalacz można zmieniać także przy działającym połączeniu.
-- **REC** – przycisk „● REC / ■ Stop REC” (operator i administrator); nagrywanie kończy się też samo przy zatrzymaniu połączenia.
-  Cele zapisu: **csv** (plik w `...\u_<konto>\rec`), **sqlite** (plik `recordings.db` w folderze konta) oraz **cele z listy
-  administratora** (TimescaleDB, InfluxDB 1.x / 2.x, wspólny SQLite). Tryb „tylko zmiany” / „wszystkie próbki”, szablon nazwy pliku
-  CSV, nazwa i uwagi nagrania (przy celach bazodanowych, pole obok przycisku REC). Nagranie w bazie ma właściciela = konto
-  w przeglądarce i komputer „Web <adres klienta>”. Ustawień REC nie da się zmienić w trakcie nagrywania.
-- **Pliki** – przycisk „Pliki” pokazuje CSV konta (zapisy triggera i nagrania do CSV): pobieranie, a dla właściciela / administratora
-  usuwanie. Przeglądarka nie wybiera ścieżek, tylko szablon nazwy ({confname} {ip} {tab} {date} {time}, bez `\ / : * ? " < > |`);
-  pliki innych kont są niedostępne.
-- **Cele zapisu (administrator)** – zakładka „Cele zapisu”: nazwa, rodzaj i parametry bazy (adres, baza, użytkownik, hasło / token,
-  kompresja TimescaleDB…), przycisk „Test”. Hasła i tokeny zostają na serwerze (`web_targets.json` w folderze danych – chroń ten
-  folder uprawnieniami systemu) i nigdy nie wracają do przeglądarki; użytkownik widzi tylko nazwę i opis celu.
+### 4.1. Rodzaje kont
+- **Konto programu** – nazwa + hasło. Hasło jest zapisywane wyłącznie jako skrót PBKDF2-SHA256 (200 000 iteracji, losowa sól 16 B).
+  Minimum 8 znaków. Nazwa 1–64 znaków (litery, cyfry, `_ . @ \ -`), unikalna bez względu na wielkość liter.
+- **Konto Windows / AD** – nazwa w postaci `DOMENA\jan`, `jan@domena` albo samo `jan` (konto lokalne serwera). Hasło **nie jest zapisywane**:
+  sprawdza je sam Windows (`LogonUserW`), albo konto loguje się przez SSO (p. 12). Konto musi być **wcześniej dodane** przez administratora –
+  stąd bierze rolę; sam fakt posiadania konta w domenie nie daje wstępu.
 
-## Przegląd nagrań w przeglądarce (etap 2c)
+### 4.2. Role
+| Rola | Przegląd i wykres na żywo | Start/Stop | Tworzenie i edycja połączeń | Trigger, REC | Przegląd nagrań | Użytkownicy, tokeny, cele zapisu |
+|---|---|---|---|---|---|---|
+| **podgląd** (viewer) | tylko wspólne połączenia | nie | nie | nie | tak, tylko odczyt | nie |
+| **operator** | swoje + wspólne | swoje + wspólne | swoje | swoje + wspólne (start/stop REC, wznowienie triggera); ustawienia – tylko swoich | tak (swoje) | nie |
+| **administrator** | wszystkie | wszystkie | wszystkie | wszystkie | wszystkie źródła | tak |
 
-Zakładka „Nagrania” (dla każdego zalogowanego) pokazuje nagrania zapisane w bazach – odpowiednik okna „Przegląd nagrań” programu
-okienkowego.
+### 4.3. Zabezpieczenia logowania
+- Po **5 błędnych hasłach** para (konto, adres klienta) jest blokowana na **60 s** (także dla właściwego hasła w tym czasie).
+- Dla nieistniejącego konta serwer wykonuje podobne obliczenia jak dla istniejącego i odpowiada tym samym komunikatem – nie ujawnia,
+  które konta istnieją.
+- Nie da się **usunąć, zablokować ani zdegradować ostatniego administratora**.
+- Zablokowanie konta, zmiana hasła i usunięcie konta kończą jego trwające sesje.
+- Sesja: losowy token (`secrets.token_urlsafe`), ciasteczko `HttpOnly; SameSite=Strict` (+ `Secure` przy TLS), wygasa po **8 godzinach
+  bezczynności**; otwarty wykres podtrzymuje sesję.
+- Każdy POST wymaga nagłówka `X-S7Trace: 1` (ochrona przed CSRF – formularz z obcej strony go nie ustawi, a przeglądarka zablokuje
+  żądanie z obcego źródła z własnym nagłówkiem).
 
-- **Źródła:** „Moje nagrania” (plik SQLite konta – cel REC `sqlite`), „Wspólne połączenia” (SQLite wspólnych połączeń; widoczne
-  dla wszystkich), cele z listy administratora, a dla administratora także pliki SQLite innych kont.
-- **Kto co widzi i zmienia:** we własnym pliku wszystko. We wspólnym pliku i w celach bazodanowych administrator widzi i zmienia
-  wszystko; pozostali widzą swoje nagrania (albo wszystkie, gdy administrator ustawi cel na „wszyscy widzą wszystkie”) i zmieniają
-  swoje (albo cudze, gdy cel ma „zmieniać cudze nagrania”). Rola „podgląd” tylko czyta. Nagrania, które właśnie trwają, nie
-  da się zmienić ani usunąć.
+### 4.4. Zarządzanie kontami (administrator, zakładka „Użytkownicy”)
+Dodanie konta (rodzaj, rola, hasło), zmiana roli, zablokowanie/odblokowanie, nowe hasło (tylko konta programu), usunięcie. Jeśli ktoś
+zapomni hasła: administrator ustawia nowe; gdy zapomni ostatni administrator: `python -m s7trace.web --add-user ...` na serwerze.
+
+---
+
+## 5. Przestrzeń konta i edycja połączeń
+
+### 5.1. Własna przestrzeń konta – dlaczego
+Każde konto ma **swoje połączenia** (odpowiednik zakładek programu okienkowego), zapisane osobno w `<folder danych>\workspaces\u_<konto>.json`.
+Inni użytkownicy ich nie widzą (odpowiedź „nie ma takiego połączenia”, bez ujawniania istnienia). Połączenia z `--config` nie mają właściciela
+i są **wspólne** (`_shared.json`): widzą je wszyscy, uruchamia operator i administrator, edytuje tylko administrator.
+Po usunięciu konta jego połączenia zostają w pliku i widzi je administrator.
+
+### 5.2. Co można ustawić (przycisk „+ Nowe połączenie” / „Edytuj”)
+- Nazwa, adres IP (ew. `:port`, np. `127.0.0.1:1102`), rack, slot, cykl [ms], okno czasu [s].
+- **Sposób połączenia:** automatycznie, S7comm (snap7), OPC UA, Web API (S7-1200/1500), Modbus TCP; **tryb odczytu** (bloki / pojedyncze /
+  multi-read); parametry sterowników nie-S7 (porty, login, tryb zabezpieczeń…).
+- **Tabela sygnałów:** nazwa, źródło (I, Q, M, DB, OPC, WEB, MBH/MBI/MBC/MBD), typ (BOOL … LREAL), DB, bajt, bit, węzeł/zmienna (OPC UA/Web API),
+  Share (wysokość pasa), kolor, „Pobieraj”, „Wykres”, opis. Pola, których tabela nie pokazuje (wzmocnienie, offset, sposób wyświetlania),
+  zostają bez zmian.
+- Sekcje **Wyzwalacz** i **REC** (p. 7, 8) oraz przycisk **Kreator** (p. 10).
+
+### 5.3. Reguły i limity
+- Zmiany adresu, rack/slot, cyklu, trybu, sposobu połączenia i sygnałów – **tylko przy zatrzymanym połączeniu** (działający proces odczytu
+  ich nie przejmie). Nazwę, okno czasu i ustawienia wyzwalacza można zmieniać zawsze; ustawień REC nie da się zmienić w trakcie nagrywania.
+- Usunąć można tylko zatrzymane połączenie. Limity: **30 połączeń na konto**, **200 sygnałów na połączenie**.
+- **Walidacja po stronie serwera** (nie ufamy przeglądarce): typy, zakresy (rack 0–7, slot 0–31, cykl 5–60000 ms, DB/bajt 0–65535, bit 0–7,
+  Share 0,1–100), długości tekstów, kolor `#rrggbb`, unikalne nazwy sygnałów (bez względu na wielkość liter), adres tylko ze znaków
+  dozwolonych. Odrzucona zmiana nie zmienia **nic** (wszystko albo nic).
+- Hasła OPC UA / Web API **nigdy nie wracają do przeglądarki**; na serwerze zapisują się w pliku konta tylko przy zaznaczeniu „zapamiętaj hasło”
+  (bez tego po restarcie serwera trzeba je podać ponownie). Ścieżki certyfikatów (`cert`, `key`) przeglądarka nie ustawia.
+
+---
+
+## 6. Podgląd na żywo
+
+- Strona „Przegląd”: tabela połączeń (nazwa, właściciel, adres, rack/slot, stan z komunikatem, rodzina/model/firmware CPU, nazwa stacji,
+  nazwa modułu, metoda, kto i kiedy uruchomił, kto ogląda, uwagi) oraz tabela zalogowanych użytkowników (konto, rodzaj konta, rola, adres
+  komputera, przeglądarka, od kiedy, bezczynność, co ogląda). Odświeża się co 3 s. Dane o sterowniku (model, numer zamówieniowy, firmware,
+  nazwa stacji, nazwa modułu) serwer odczytuje po każdym (ponownym) połączeniu tą samą procedurą co kreator w programie okienkowym.
+- Strona „Podgląd na żywo”: wybór połączenia i okna (30 s, 1, 5, 15 min). Dane płyną strumieniem SSE ok. 10 razy na sekundę
+  (najpierw ostatnie N sekund, potem nowe próbki). Wykres: **po jednym pasie na sygnał**, skalowanym do min…maks widocznego okna,
+  krzywa schodkowa (wartość trzyma się do kolejnej zmiany), legenda z kolorami. Jeśli kolory sygnałów się powtarzają (np. wszystkie
+  domyślne), przeglądarka użyje własnej palety.
+- Serwer wysyła do 4000 punktów na zapytanie (przerzedzanie równomierne); brakujące odczyty (przerwa w łączności) to przerwa w linii.
+- Przy rozłączeniu proces odczytu sam ponawia połączenie (stan „ponawianie”); wykres pokazuje przerwę.
+
+---
+
+## 7. Wyzwalacz (trigger)
+
+Ta sama maszyna stanów co w programie okienkowym (`TriggerEngine`): warunki `==`, `>`, `<`, `between`, zbocze narastające/opadające, histereza,
+przedtrigger, akcje **Pauza**, **Zapis CSV**, **Pauza + zapis CSV**. Działa **na serwerze**, w wątku odbierającym próbki, więc nie zależy
+od otwartej przeglądarki i nie traci próbek.
+
+- Stany: wyłączony → uzbrojony → zbieranie próbek po wyzwoleniu (okno − przedtrigger) → (po akcji) uzbrojony albo wstrzymany.
+- **Zapis CSV:** zakres `[t − przedtrigger, t − przedtrigger + okno czasu]` z bufora trafia do pliku konta w `files\u_<konto>\snapshots`.
+- **Pauza:** wykres każdego przeglądającego zamraża okno wokół wyzwolenia (czerwona linia „T”) aż do „Wznów (uzbrój wyzwalacz)”
+  (wstrzymanie dotyczy wyzwalacza i widoku, nie akwizycji ani REC). Znaczniki „T” widać też przy akcji „Zapis CSV” (do 20 ostatnich zdarzeń).
+- Zmiana ustawień wyzwalacza podczas pracy restartuje maszynę stanów (uzbraja od nowa).
+- Nazwa pliku: szablon ze znacznikami `{confname} {ip} {tab} {date} {time}` (bez ścieżek i znaków `\ / : * ? " < > |`);
+  folder jest zawsze folderem konta. `{confname}` = nazwa konfiguracji albo nazwa połączenia (serwer nigdy nie pyta w oknie dialogowym).
+
+---
+
+## 8. REC, pliki, cele zapisu
+
+### 8.1. REC
+Przycisk „● REC / ■ Stop REC” (operator, administrator) na stronie podglądu. Nagrywanie działa na serwerze, nie wymaga otwartej przeglądarki,
+kończy się samo przy zatrzymaniu połączenia (i przy zamknięciu serwera). Wymaga stanu „praca”.
+
+| Cel | Gdzie trafiają dane |
+|---|---|
+| `csv` | plik CSV w `files\u_<konto>\rec` (format jak w programie okienkowym – da się go tam wczytać) |
+| `sqlite` | plik `recordings.db` w folderze konta |
+| nazwa celu z listy administratora | TimescaleDB / PostgreSQL, InfluxDB 1.x, InfluxDB 2.x lub wspólny plik SQLite (p. 8.3) |
+
+Tryb **„tylko zmiany”** (domyślny; zapis tylko zmienionych wartości + pełny stan co N minut) albo **„wszystkie próbki”**. Dla celów bazodanowych
+w polu obok przycisku REC można podać **nazwę nagrania**, a w trakcie – zmienić ją (uwagi i tagi też przez API/ przegląd nagrań).
+Nagranie w bazie ma jako właściciela konto z przeglądarki i jako komputer „Web <adres klienta>”. Dla baz sieciowych działa ten sam mechanizm
+niezawodności co w programie okienkowym (kolejka w pamięci, **bufor na dysku** w `<folder danych>\spool`, ponawianie, dosyłanie po powrocie serwera
+bazy); błąd zapisu widać przy przycisku REC.
+
+### 8.2. Pliki konta
+Przycisk „Pliki” na stronie podglądu: lista CSV (zapisy triggera i nagrania do CSV), pobieranie, a dla właściciela/administratora usuwanie.
+Przeglądarka nigdy nie wybiera ścieżki, tylko szablon nazwy; próby wyjścia poza folder (`..`, ukryte pliki, obce foldery) kończą się „nie ma
+takiego pliku”. Pliki konta są niedostępne dla innych kont.
+
+### 8.3. Cele zapisu (administrator)
+Zakładka „Cele zapisu”: nazwa, rodzaj (TimescaleDB / InfluxDB 2.x / InfluxDB 1.x / SQLite wspólny), parametry połączenia, kompresja TimescaleDB,
+widoczność nagrań, kosz, auto-kosz, przycisk **Test**. **Dlaczego tak:** hasła i tokeny baz nie powinny trafiać do każdego użytkownika; wpisuje
+je raz administrator, a użytkownicy wybierają cel po nazwie i widzą tylko nazwę i opis (np. „TimescaleDB db1:5432 / s7trace”). Parametry czasowe
+i niezawodnościowe (partie, ponawianie, bufor, rotacja SQLite…) mają wartości domyślne jak w programie okienkowym; zmienia się je w pliku
+`web_targets.json` (nazwy pól jak w `StoreConfig`). Opis baz i ich parametrów: `BAZY_DANYCH.md`.
+
+---
+
+## 9. Przegląd nagrań (zakładka „Nagrania”)
+
+Odpowiednik okna „Przegląd nagrań” programu okienkowego.
+
+- **Źródła:** „Moje nagrania” (SQLite konta), „Wspólne połączenia” (SQLite wspólnych połączeń – widoczne dla wszystkich), cele z listy administratora,
+  a dla administratora pliki SQLite innych kont. Nagrania zapisane w CSV są w „Plikach”, nie w tym przeglądzie.
 - **Lista:** tytuł, uwagi, start, czas trwania, właściciel, komputer, połączenie, sygnały, tagi; wyszukiwanie po wszystkim naraz.
-- **Wczytaj:** wykres z pasami (jak na żywo), długie nagrania są zmniejszane do ok. 6000 punktów metodą min/maks (szczyty nie
-  znikają); przeciągnięcie myszą po wykresie przybliża wybrany zakres, „Cały przebieg” wraca. **CSV** pobiera każdy wiersz
-  nagrania albo widocznego zakresu (format jak w programie okienkowym, da się go wczytać w programie).
-- **Opis:** tytuł, uwagi, tagi. **Kosz:** „Do kosza” → zakładka „kosz” → „Przywróć” / „Usuń trwale”; kosz opróżnia się sam po
-  `Kosz: dni` celu (domyślnie 30), a „Auto-kosz” celu przenosi własne stare nagrania do kosza. Przy `Kosz: 0` usuwanie jest od razu.
-- Ustawienia widoczności, kosza i auto-kosza ma formularz celu w zakładce „Cele zapisu”.
+- **Wczytaj:** wykres z pasami jak na żywo; długie nagrania zmniejszane do ok. 6000 punktów metodą min/maks (szczyty nie znikają); przeciągnięcie
+  myszą po wykresie przybliża zakres (serwer czyta wtedy ten zakres dokładniej), „Cały przebieg” wraca. W nagraniach „tylko zmiany” ostatnia
+  wartość trzyma się do końca zakresu.
+- **CSV:** wszystkie wiersze nagrania lub widocznego zakresu (bez przerzedzania), format zgodny z programem okienkowym.
+- **Opis:** tytuł, uwagi, tagi (właściciela nie da się zmienić).
+- **Kosz:** „Do kosza” → zakładka „kosz” → „Przywróć” / „Usuń trwale” (trwale tylko z kosza). Kosz opróżnia się sam po `Kosz: dni` celu (domyślnie 30,
+  0 = kasuj od razu), „Auto-kosz” celu przenosi własne stare nagrania do kosza. Zasady sprzątania wykonują się przy otwarciu listy.
+- **Kto co widzi i zmienia:** we własnym pliku wszystko; we wspólnym pliku i w celach bazodanowych administrator wszystko, pozostali swoje
+  (albo wszystkie, gdy cel ma „wszyscy widzą wszystkie”) i zmieniają swoje (albo cudze, gdy cel ma „zmieniać cudze”); „podgląd” tylko czyta;
+  trwające nagranie jest zablokowane. Nagranie spoza zasięgu użytkownika jest dla niego „nie do odczytania”, nie tylko ukryte na liście.
+- Bazy InfluxDB 3 nie są obsługiwane (usunięte z programu – nie da się w nich usuwać nagrań).
 
-## Kreator, rejestr programów okienkowych, logowanie SSO (etap 3)
+---
 
-- **Kreator połączenia** – w edytorze przycisk „Kreator: rozpoznaj sterownik”: serwer sprawdza adres (ping, port, S7comm, OPC UA,
-  Web API, Modbus – albo tylko wybraną metodę), pokazuje raport i zalecenie; „Zastosuj zalecenia” ustawia sposób połączenia,
-  rack, slot i (gdy puste) nazwę połączenia. Dostępny dla operatora i administratora (serwer łączy się z podanym adresem, więc
-  nie dawaj tej roli komuś, komu nie ufasz w sieci); jedno rozpoznawanie naraz na konto.
-- **Rejestr programów okienkowych** – administrator tworzy na stronie „Użytkownicy” **token programu**. W programie okienkowym
-  Ustawienia → „Serwer Web (zgłaszanie sesji i wspólny rejestr)…”: adres serwera, token, „Test połączenia”. Program co ok. 5 s
-  zgłasza serwerowi: Windows-użytkownika, komputer i swoje karty (adres sterownika, stan). Strona „Przegląd” pokazuje tabelę
-  „Programy okienkowe zgłoszone do serwera”, a przy połączeniu serwera kolumnę „Uwagi” („także: jan (PC-HALA)”), gdy ten sam
-  sterownik skanuje program okienkowy. W drugą stronę program przed Startem ostrzega, gdy sterownik skanuje ktoś na innym komputerze
-  albo połączenie serwera (to samo okno ostrzeżenia co dla innego użytkownika tego komputera). Serwer niedostępny = program działa
-  bez zmian i bez ostrzeżeń z serwera. Token jest tajemnicą (zapisany w konfiguracji programu użytkownika; na serwerze tylko
-  jego skrót); „Sprawdzaj certyfikat” odznacz tylko przy certyfikacie samopodpisanym.
-- **Logowanie SSO kontem Windows** – serwer uruchomiony z `--sso` (tylko Windows; `Web-Serwer.bat` ma tę opcję) pokazuje na stronie
-  logowania przycisk „Zaloguj kontem Windows (SSO)”. Przeglądarka przesyła konto przez Negotiate (Kerberos / NTLM, SSPI), hasło nie
-  przechodzi przez serwer. Konto musi być wcześniej dodane przez administratora (rodzaj „konto Windows / AD”, np. `DOMENA\jan`;
-  dla konta lokalnego serwera można podać samo `jan`) – stamtąd bierze się rola. Zablokowane lub niezarejestrowane konto dostaje
-  czytelny komunikat. Przeglądarka musi chcieć wysłać poświadczenia: adres serwera w strefie „Intranet” (Edge / Chrome) albo
-  zezwolenie na uwierzytelnianie zintegrowane; przy zwykłej nazwie komputera (bez kropek) zwykle działa od razu.
+## 10. Kreator połączenia
 
-## Co widać na stronie „Przegląd”
+W edytorze przycisk „Kreator: rozpoznaj sterownik”. Serwer sprawdza podany adres: ping, port S7 (102), S7comm, OPC UA, Web API, Modbus (albo tylko
+wybraną metodę), odczytuje dane urządzenia i pokazuje raport z zaleceniem („Zalecana metoda…”, uwagi o PUT/GET, optymalizowanych DB itp.).
+„Zastosuj zalecenia” ustawia sposób połączenia, rack, slot i – jeśli pole puste – nazwę połączenia z nazwy stacji. Zapis dopiero przyciskiem „Zapisz”.
 
-- **Połączenia i sterowniki:** nazwa, adres IP, rack/slot, stan, rodzina i model CPU z firmware, nazwa stacji, nazwa modułu,
-  metoda (S7comm / OPC UA / Web API / Modbus), kto uruchomił i kiedy, kto aktualnie ogląda.
-- **Zalogowani użytkownicy:** konto, rodzaj konta, rola, adres komputera, przeglądarka, od kiedy zalogowany, bezczynność,
-  które połączenie ogląda.
+Ograniczenia: dostęp operator/administrator; **jedno rozpoznawanie naraz na konto**; serwer łączy się z podanym adresem, więc nie dawaj tej roli
+osobom, którym nie ufasz w sieci (mogą użyć serwera do sprawdzania adresów, które on widzi, a oni nie).
 
-## Bezpieczeństwo (w skrócie)
+---
 
-Ciasteczko sesji `HttpOnly; SameSite=Strict` (+ `Secure` przy TLS), każdy POST wymaga nagłówka `X-S7Trace: 1` (ochrona przed
-CSRF), sesja wygasa po 8 h bezczynności. Serwer używa tylko biblioteki standardowej (`http.server`, Server-Sent Events).
+## 11. Programy okienkowe zgłaszają sesje (wspólny rejestr)
 
-## Czego jeszcze nie ma / co nie było sprawdzone
+**Po co:** żeby administrator widział na jednej stronie, kto uruchomił S7Trace (konto Windows, komputer) i które sterowniki skanuje – także na innych
+komputerach – oraz żeby przed Startem pojawiło się ostrzeżenie, gdy ktoś już skanuje ten sam sterownik.
 
-- Zweryfikowane: testy (`tests/test_web.py`, `tests/test_web_rec.py`, symulator snap7; bazy sieciowe tylko na atrapach / SQLite) i ręcznie w przeglądarce (logowanie, przegląd, Start/Stop,
-  wykres, użytkownicy).
-- **Nie sprawdzone:** logowanie kontem Windows/AD na prawdziwej domenie, praca z wielu komputerów naraz, certyfikat TLS
-  w różnych przeglądarkach, Windows Server 2016.
-- **SSO:** serwer i protokół sprawdzone testem z prawdziwym SSPI na tym komputerze (konto lokalne); NIE sprawdzone w prawdziwej
-  przeglądarce z domeną Active Directory / Kerberos (wbudowana przeglądarka narzędzi testowych nie wysyła poświadczeń).
-- Zgłaszanie sesji programu okienkowego: sprawdzone testem (serwer + reporter) i na stronie; nie sprawdzone na dwóch prawdziwych komputerach.
-- Etapy późniejsze: brak zaplanowanych.
+1. Administrator: „Użytkownicy” → „Tokeny programów okienkowych” → „Utwórz token” (pokazuje się **raz**, na serwerze zostaje tylko jego skrót SHA-256).
+2. W programie okienkowym: Ustawienia → „Serwer Web (zgłaszanie sesji i wspólny rejestr)…”: włącz, adres serwera (np. `https://serwer:8080`), token,
+   „Sprawdzaj certyfikat” (odznacz tylko przy certyfikacie samopodpisanym), „Test połączenia”.
+3. Program co ok. 5 s wysyła: użytkownika Windows, nazwę komputera, PID, czas uruchomienia i swoje karty (tytuł, adres, stan, od kiedy). Dane budowane są
+   w wątku GUI, wysyła je osobny wątek – brak serwera nigdy nie przeszkadza programowi.
+4. Serwer pokazuje programy na stronie „Przegląd” (tabela „Programy okienkowe zgłoszone do serwera”; aktywne = zgłosiły się w ciągu 20 s) oraz kolumnę
+   „Uwagi” przy połączeniach serwera („także: jan (PC-HALA-1)”), gdy ten sam adres skanuje program okienkowy.
+5. W odpowiedzi serwer odsyła programowi listę sterowników skanowanych przez innych (programy na innych komputerach i połączenia serwera). Program
+   dołącza ją do dotychczasowego ostrzeżenia „sterownik jest już skanowany” (to samo okno co dla innego użytkownika tego samego komputera). Odpowiedź
+   starsza niż 30 s nie jest używana. Własne sesje na tym samym komputerze nie dublują się.
+
+Token jest tajemnicą programu: zapisany w konfiguracji programu użytkownika (`%APPDATA%\S7Trace\config.json`). Usunięcie tokenu w serwerze natychmiast
+odcina program (pierwsze zgłoszenie dostaje 401).
+
+---
+
+## 12. Logowanie SSO kontem Windows (`--sso`)
+
+Na stronie logowania pojawia się „Zaloguj kontem Windows (SSO)”. Przeglądarka przesyła konto Windows protokołem **Negotiate** (Kerberos lub NTLM),
+serwer weryfikuje je przez **SSPI** (`secur32.dll`, `ctypes`) – hasło nigdy nie przechodzi przez serwer ani przez stronę.
+
+- Konto musi być **zarejestrowane** (rodzaj „konto Windows / AD”, np. `DOMENA\jan`; dla konta lokalnego serwera można wpisać samo `jan`). Stąd bierze się rola.
+- Zablokowane lub niezarejestrowane konto dostaje czytelny komunikat („Konto Windows … nie jest zarejestrowane w S7Trace Web…”) – nie 401, by przeglądarka
+  nie zapętlała się w oknie hasła.
+- Wymagany nagłówek `X-S7Trace` także dla tego żądania (przeciw logowaniu z obcej strony).
+- Negocjacja NTLM wymaga tego samego połączenia TCP dla całej wymiany – serwer trzyma stan SSPI w obsłudze połączenia (stąd „Connection keep-alive”).
+- Po stronie przeglądarki: adres serwera musi być w strefie **„Intranet”** (Edge/Chrome na Windows), a dla Firefoksa w
+  `network.negotiate-auth.trusted-uris`; w innym razie przeglądarka nie wyśle poświadczeń i strona pokaże podpowiedź.
+- Tylko Windows. Na innych systemach opcja jest niedostępna (serwer to zgłasza przy starcie).
+
+---
+
+## 13. Co gdzie leży na dysku (folder danych serwera)
+
+| Ścieżka | Zawartość | Wrażliwość |
+|---|---|---|
+| `web_users.db` | konta (skróty haseł), tokeny programów (skróty) | wysoka – chroń uprawnieniami |
+| `web_targets.json` | cele zapisu **z hasłami/tokenami baz (jawnie)** | **bardzo wysoka** – dostęp tylko dla konta serwisowego |
+| `web_cert.pem`, `web_key.pem` | certyfikat i klucz prywatny TLS (przy `--tls`) | wysoka |
+| `workspaces\u_<konto>.json`, `_shared.json` | połączenia kont (konfiguracje; hasła tylko przy „zapamiętaj”) | średnia |
+| `files\u_<konto>\snapshots`, `\rec`, `recordings.db` | pliki CSV i SQLite konta; `files\_shared\…` dla wspólnych połączeń | dane pomiarowe |
+| `dbs\` | wspólne pliki SQLite celów | dane pomiarowe |
+| `spool\` | bufory dyskowe nagrań do baz sieciowych | dane pomiarowe |
+
+Zalecenie: folder danych na dysku serwera dostępny tylko dla konta, na którym działa serwer. Kopia zapasowa = kopia całego folderu (przy zatrzymanym serwerze).
+
+---
+
+## 14. Bezpieczeństwo – podsumowanie
+
+**Co jest zrobione:** hasła tylko jako PBKDF2; blokada po błędach; ochrona ostatniego administratora; ciasteczka `HttpOnly`/`SameSite=Strict`/`Secure`;
+nagłówek przeciw CSRF; uprawnienia sprawdzane **na serwerze** przy każdym żądaniu (przeglądarka tylko ukrywa przyciski); walidacja każdej wartości;
+brak ścieżek od przeglądarki (szablony nazw, wybór celu po nazwie); zabezpieczenie przed wyjściem poza folder; sekrety baz i haseł połączeń nie wracają
+do przeglądarki; tokeny programów trzymane jako skróty; certyfikat TLS (własny lub samopodpisany); domyślny nasłuch tylko lokalny; brak śladów stosu w konsoli
+dla zamkniętych połączeń; nagłówki `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`.
+
+**Czego nie ma / na co uważać:**
+- Certyfikat samopodpisany daje szyfrowanie, ale nie potwierdza tożsamości serwera (przeglądarka ostrzega). W firmie lepiej użyć własnego certyfikatu
+  (`--cert/--key`) wystawionego przez firmowy urząd.
+- To prosty serwer wątkowy (jedna wątek na połączenie, także na każdy otwarty wykres): przeznaczony do **sieci zakładowej**, nie do wystawiania
+  do internetu. Do dostępu zdalnego użyj VPN lub zwrotnego proxy z uwierzytelnianiem (patrz temat „dostęp zdalny” w notatkach projektu).
+- Brak dwuskładnikowego logowania, brak dziennika audytu zmian (poza tym, co widać w tabelach: kto uruchomił, kto ogląda), brak blokady konta globalnie (blokada
+  jest per konto+adres).
+- Wizard i połączenia serwera wykonują połączenia sieciowe z serwera – rola operatora oznacza zaufanie.
+- `web_targets.json` zawiera hasła jawnie – to kompromis świadomy (serwer musi je znać, żeby łączyć się z bazą).
+
+---
+
+## 15. Ograniczenia i różnice względem programu okienkowego
+
+Tryb Web **nie zastępuje** programu okienkowego, tylko go uzupełnia. Czego w przeglądarce nie ma (lub działa inaczej):
+
+- Wykres: pasy na sygnał skalowane do min…maks okna; **brak** układu „offset” (Offset Y / Gain / Auto Y), przełącznika „Punkty”, kursorów i pomiarów,
+  przesuwania i powiększania wykresu na żywo (są tylko okna czasu 30 s…15 min), podglądu przeglądowego, przeciągania legendy, motywów i profili kolorów,
+  stałej skali BOOL 0…1 (BOOL skaluje się jak inne sygnały). Powiększanie istnieje tylko w przeglądzie nagrań.
+- Brak importu symboli TIA, okna diagnostyki połączenia/PING/czasu PLC, edycji formatu wyświetlania wartości, wzmocnienia i offsetu (zachowywane, ale
+  nieedytowalne), wartości bieżących w tabeli sygnałów, edycji sygnałów **w trakcie** pracy połączenia (w programie okienkowym można dodać sygnał w locie).
+- REC: brak pytania o nazwę „na początku / na końcu” (nazwa przy starcie lub w trakcie); parametry czasowe baz tylko przez plik celu.
+- Nagrania w CSV nie mają przeglądu w przeglądarce (lista + pobranie w „Plikach”).
+- Wspólne połączenia serwera są rozliczane jako „uruchomione przez” osobę, która nacisnęła Start; wszyscy operatorzy mogą je zatrzymać.
+- Serwer jest **jedną instancją**: brak klastra, brak przełączania awaryjnego; jego awaria = brak akwizycji i nagrywania do czasu restartu
+  (z `--autostart` połączenia wracają same, ale nagranie trzeba włączyć ponownie).
+- Połączenia nie wznawiają się same po restarcie bez `--autostart`; REC nigdy nie wznawia się samo.
+- Czasy w tabelach pokazuje przeglądarka w strefie czasowej użytkownika; znaczniki czasu nagrań w bazach to mikrosekundy epoki Unix (jak w programie okienkowym).
+- Wydajność: przy wielu równoległych wykresach i szybkich cyklach obciążenie rośnie z liczbą otwartych strumieni (każdy to osobny wątek serwera i
+  JSON ~10×/s). Nie zmierzono granicy – patrz p. 17.
+
+---
+
+## 16. Co zostało sprawdzone
+
+### 16.1. Testy automatyczne (40 testów webowych w 4 plikach; cały zestaw projektu: 343 testy przechodzą + 1 pominięty; jeden test z poprzednich prac, `tests/test_diag.py::test_process_acquirer_collects_diagnostics`, bywa niestabilny w pełnych przebiegach przy dużym obciążeniu – nie dotyczy trybu Web)
+Uruchomienie: `.venv\Scripts\python -m pytest tests/test_web.py tests/test_web_rec.py tests/test_web_recordings.py tests/test_web_more.py -q`.
+Testy używają prawdziwego serwera HTTP na porcie losowym i symulatora PLC snap7 (`s7trace.sim`), z `urllib/http.client` jako przeglądarką.
+
+| Plik | Co jest sprawdzone |
+|---|---|
+| `test_web.py` (19) | haszowanie haseł, role, blokada po błędach, ostatni administrator, konta Windows (z podstawionym sprawdzaniem hasła), pliki statyczne i zabezpieczenie przed `..`, konfiguracja pierwszego administratora, nagłówek CSRF, zarządzanie kontami i role, lista sesji, dane urządzenia w przeglądzie, start/stop prawdziwego połączenia z symulatorem, strumień SSE i śledzenie oglądających, walidacja edycji, przestrzenie kont (widoczność, 404 dla cudzych, wspólne, zapis i odczyt po restarcie, limity, nie edytowanie w trakcie pracy), certyfikat samopodpisany, `--add-user` |
+| `test_web_rec.py` (11) | szablony i ścieżki plików, bezpieczeństwo ścieżek, cele zapisu (sekrety, walidacja), edycja wyzwalacza i REC, wyzwalacz z pauzą i zapisem CSV na prawdziwych próbkach (zawartość pliku, ponowne uzbrojenie), akcja bez pauzy, REC do CSV (zawartość), REC kończący się z połączeniem, REC do SQLite z właścicielem/komputerem/tytułem, nieznany cel, pełny przepływ HTTP (start/stop REC, trigger, pliki, pobranie, usunięcie, brak dostępu innych) i cele zapisu przez HTTP |
+| `test_web_recordings.py` (5) | własny plik: lista, odczyt z przerzedzaniem i zakresem, CSV, edycja, kosz, przywracanie, usuwanie trwałe; rozdzielenie kont; widok administratora; wspólny plik i rola „podgląd”; reguły celów (widoczność, zmiana cudzych); sprzątanie kosza |
+| `test_web_more.py` (5) | kreator na symulatorze (i na martwym porcie, walidacja, uprawnienia), tokeny i zgłoszenia programów, reporter i ostrzeżenie przed Startem (`sessions.REMOTE`), **logowanie SSO przez prawdziwe SSPI tego komputera** (konto niezarejestrowane → 403, zarejestrowane → sesja z rolą, zablokowane → 403, bez nagłówka → 403), dopasowanie nazw kont |
+
+### 16.2. Sprawdzone ręcznie w przeglądarce (wbudowana przeglądarka, serwer + symulator)
+Założenie pierwszego administratora, logowanie/wylogowanie, tworzenie połączenia w edytorze, Start, wykres na żywo, blokada pól strukturalnych przy działającym
+połączeniu, trigger „rising edge” z „Pauza + zapis CSV” (zamrożone okno, linia „T”, „Wznów”), REC do CSV i do SQLite, lista plików, strona „Cele zapisu”,
+przegląd nagrań (lista, wczytanie, przybliżanie, zmiana tytułu, kosz i przywracanie), kreator na symulatorze i „Zastosuj zalecenia”, tabela programów
+okienkowych i kolumna „Uwagi” (reporter z osobnego procesu), komunikat błędu przy przycisku SSO.
+
+### 16.3. Sprawdzone na paczce przenośnej
+Z wnętrza paczki (osadzony Python 3.12) serwer uruchomił się z `--tls --sso`, wygenerował certyfikat i odpowiadał przez HTTPS (`/api/me`, `/`, `/static/app.js`).
+
+---
+
+## 17. Co trzeba sprawdzić na prawdziwym sprzęcie (nie było możliwe na komputerze deweloperskim)
+
+Kolejność wg ryzyka:
+
+1. **Prawdziwy sterownik** (S7-1200/1500, S7-300/400): start połączenia, odczyt wszystkich typów (REAL, DINT…), zachowanie przy utracie sieci (ponawianie),
+   kreator na prawdziwym urządzeniu (OPC UA / Web API / Modbus wymagają realnych serwerów), poprawność nazwy stacji/modułu w tabeli.
+2. **Prawdziwe bazy:** TimescaleDB (z rozszerzeniem: kompresja, usuwanie z skompresowanych chunków), PostgreSQL ze sterownikiem `psycopg`/`pg8000` w paczce na
+   Windows Server 2016, InfluxDB 1.x i 2.x. Do tego służą `Test-TimescaleDB.bat` i `Test-InfluxDB.bat` z paczki oraz przycisk „Test” w „Cele zapisu”
+   (w testach te bazy działają tylko na atrapach lub były sprawdzane wcześniej wyłącznie na lokalnym PostgreSQL bez rozszerzenia).
+3. **SSO i konta Windows/AD na domenie:** logowanie hasłem konta domenowego (`LogonUserW`), SSO przeglądarką (Kerberos z SPN usługi, strefa Intranet,
+   Edge/Chrome/Firefox). Test SSO przeszedł tylko na koncie lokalnym przez NTLM; wbudowana przeglądarka narzędzi nie wysyła poświadczeń, więc przycisk w przeglądarce
+   nie był przetestowany końcowo.
+4. **Praca wielu komputerów naraz:** kilku użytkowników z różnych komputerów, wiele równoległych wykresów, zachowanie sesji, blokady po błędach z różnych adresów.
+5. **Zgłaszanie sesji z prawdziwych programów okienkowych na dwóch komputerach** (token, ostrzeżenie przed Startem, zachowanie przy utracie sieci do serwera).
+6. **TLS w przeglądarkach i zaporze:** ostrzeżenia o certyfikacie, własny certyfikat firmowy, dostęp przez port 8080 przy włączonej Zaporze Windows.
+7. **Windows Server 2016** (docelowy serwer): start `Web-Serwer.bat`, SSPI, certyfikaty, polskie znaki w nazwach, ścieżki w profilu użytkownika serwisowego
+   (folder danych w jego Dokumentach – warto wskazać `--data` na stały folder).
+8. **Wydajność i długotrwałość:** ile wykresów i połączeń jednocześnie, szybkie cykle (≤ 25 ms) z wieloma przeglądającymi, wielogodzinne nagrania do baz,
+   zużycie pamięci bufora przy wielu połączeniach.
+9. **Uprawnienia plików:** czy folder danych (z hasłami w `web_targets.json`) jest dostępny tylko dla konta serwisowego.
+
+---
+
+## 18. Dodatek: skrót API (dla integracji i testów)
+
+Wszystkie odpowiedzi to JSON (poza plikami CSV, strumieniem SSE i plikami statycznymi). POST wymaga nagłówka `X-S7Trace: 1` i ciasteczka sesji
+(poza `/api/agent/report`, który zamiast sesji używa nagłówka `X-S7Trace-Agent: <token>`). Błędy: `{"error": "komunikat po polsku"}` z kodem 400/401/403/404.
+
+| Metoda i ścieżka | Rola | Działanie |
+|---|---|---|
+| GET `/`, `/static/*` | – | strona i zasoby |
+| GET `/api/me` | – | kim jestem; przy braku sesji: `first_run`, `sso` |
+| POST `/api/setup` | – (tylko przy 0 kont) | pierwszy administrator + zalogowanie |
+| POST `/api/login`, `/api/logout` | – | logowanie (konto programu lub Windows z hasłem), wylogowanie |
+| GET `/api/sso` | – (+ nagłówek) | Negotiate (SSPI); tylko z `--sso` |
+| GET `/api/overview` | podgląd | połączenia (widoczne dla mnie), sesje, programy okienkowe, kolumna „others” |
+| GET `/api/options` | podgląd | listy do edytora nowego połączenia |
+| POST `/api/connections` | operator | utworzenie połączenia w mojej przestrzeni |
+| GET `/api/connections/<id>` | podgląd | opis połączenia (stan, urządzenie, trigger, REC) |
+| GET `/api/connections/<id>/config` | edycja | pełna konfiguracja do edytora |
+| POST `/api/connections/<id>/config` | edycja | zmiana konfiguracji (walidacja „wszystko albo nic”) |
+| POST `/api/connections/<id>/delete` | edycja | usunięcie (tylko zatrzymane) |
+| POST `/api/connections/<id>/start`, `/stop` | operator (uruchamianie) | start/stop |
+| POST `/api/connections/<id>/trigger` | operator | `{"action":"rearm"}` |
+| POST `/api/connections/<id>/rec` | operator | `{"action":"start"|"stop"|"info", "title":…}` |
+| GET `/api/connections/<id>/series` | podgląd | dane: `seconds`, `since`, albo `from`+`to` |
+| GET `/api/connections/<id>/stream` | podgląd | strumień SSE (`seconds`) |
+| GET `/api/connections/<id>/files[/<rodzaj>/<nazwa>]` | podgląd | lista / pobranie pliku CSV konta |
+| POST `/api/connections/<id>/files` | edycja | usunięcie pliku |
+| GET `/api/recordings/sources`, `/api/recordings`, `/api/recordings/data`, `/api/recordings/csv` | podgląd | źródła, lista, odczyt, CSV |
+| POST `/api/recordings` | operator | `update` / `trash` / `restore` / `purge` |
+| GET/POST `/api/targets` | podgląd (lista) / admin (zmiany, test) | cele zapisu |
+| POST `/api/detect` | operator | kreator połączenia |
+| GET/POST `/api/users` | admin | konta |
+| GET/POST `/api/agent-tokens` | admin | tokeny programów okienkowych |
+| POST `/api/agent/report` | token programu | zgłoszenie sesji programu okienkowego |
+
+Kod: `s7trace/web/` (`server.py` – HTTP, `auth.py` – konta, `hosted.py` – połączenia/trigger/REC, `editing.py` – walidacja, `files.py`, `targets.py`,
+`recordings.py`, `agents.py`, `sso.py`, `static/` – strona), strona programu okienkowego: `s7trace/core/web_agent.py`, `s7trace/ui/web_server_dialog.py`.
