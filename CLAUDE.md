@@ -64,6 +64,6 @@ Ten projekt bywa edytowany z więcej niż jednego komputera na przemian. `git pu
 
 **Aktualny stan:**
 
-- `PL-LAP-00354` (Windows 11) — **brak aktywnych zmian** (ostatni push: 2026-10-04, `19e5e9b` znaczniki + wyszukiwarka danych (desktop i Web), zapis roboczy, foldery użytkownika; wcześniej `337439a` opis trybu Web, `8d7fffd` tryb Web etapy 2–3, `f7c100a` etap 1).
+- `PL-LAP-00354` (Windows 11) — **brak aktywnych zmian** (ostatni push: 2026-10-04, `0faf4e7` menu „Znaczniki” + osobny rząd przycisków; wcześniej `19e5e9b` znaczniki + wyszukiwarka danych (desktop i Web), zapis roboczy, foldery użytkownika; wcześniej `337439a` opis trybu Web, `8d7fffd` tryb Web etapy 2–3, `f7c100a` etap 1).
 
 **Zasada:** na początku sesji sprawdź tę listę i `ListAgents`; jeśli inny komputer ma „w trakcie edycji”, powiedz o tym przed commitem/push. Po realnym `git push` zaktualizuj swój wpis.
