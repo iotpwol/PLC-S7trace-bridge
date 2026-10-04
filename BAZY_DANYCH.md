@@ -363,7 +363,7 @@ przekazania danych do Excela lub innych narzędzi.
 | Zaległe bufory zapisu | Ustawienia → „Zaległe bufory zapisu do baz…” |
 | Eksport do CSV | „Zapisz jako CSV…” w przeglądzie nagrań |
 | Pomoc | F1 → „Przyciski sterujące” → REC |
-| Znaczniki, zapis znaczników, wyszukiwarka | przyciski „Znaczniki…”, „Zapisz znaczniki”, „Szukaj…” pod wykresem; prawy przycisk na wykresie i na znaczniku (patrz rozdz. 13) |
+| Znaczniki, zapis znaczników, wyszukiwarka | menu **Znaczniki** (Dodaj znacznik teraz, Lista znaczników…, Zapisz znaczniki…, Wyszukiwarka danych…) oraz rząd przycisków „Znaczniki:” pod wykresem („Dodaj znacznik”, „Lista znaczników…”, „Zapisz znaczniki”, „Szukaj w danych…”); prawy przycisk na wykresie i na znaczniku (patrz rozdz. 13) |
 | Folder plików CSV (snapshot, REC), baza znaczników | `Dokumenty\S7Trace` bieżącego użytkownika (patrz 13.9) |
 
 ---
@@ -493,6 +493,8 @@ zaimportowanego pliku CSV (program zapamiętuje w CSV czas rozpoczęcia).
 
 ### 13.4. Obsługa na wykresie (program okienkowy)
 
+- **Gdzie to jest:** menu **Znaczniki** w pasku menu (skróty: Ctrl+Shift+M dodaj znacznik teraz, Ctrl+M lista, Ctrl+Shift+S zapisz, Ctrl+F wyszukiwarka) i osobny rząd przycisków **„Znaczniki:”** pod wykresem (pod rzędem Start / Stop / REC). Znacznik w dowolnym miejscu zakładasz **prawym przyciskiem myszy na wykresie**.
+
 - **Prawy przycisk na wykresie**: „Dodaj znacznik (punkt) tutaj…”, „Dodaj znacznik zakresu czasu tutaj…”, „Znacznik zakresu z kursorów V1–V2…” (gdy są ustawione oba
   kursory pionowe), „Zapisz znaczniki”, „Lista znaczników…”, „Szukaj w danych…”, przełącznik „Pokaż też znaczniki z innych połączeń”.
 - **Najechanie kursorem na znacznik** otwiera **dymek** z tytułem, czasem, priorytetem, przebiegami, grupą, opisem, uwagami, autorem i datami.
@@ -500,7 +502,7 @@ zaimportowanego pliku CSV (program zapamiętuje w CSV czas rozpoczęcia).
   zakres zachowuje długość, a środek trafia w kliknięte miejsce); **ukryj / pokaż nazwę na wykresie**; grupy; cofnięcie niezapisanej zmiany; usunięcie; „Pokaż na liście”.
 - **Przeciąganie myszą**: punkt – za linię; zakres – za brzeg (zmiana początku lub końca) albo za wnętrze (przesunięcie całości).
 - Domyślnie widać znaczniki **tej karty** (połączenia) z widocznego zakresu czasu; znaczniki niezwiązane z żadną kartą widać zawsze.
-- Przycisk „Znaczniki…” otwiera **listę**: wyszukiwanie po tekście (tytuł, opis, uwagi, autor, grupa – bez względu na wielkość liter i polskie znaki), filtry
+- Przycisk „Lista znaczników…” otwiera **listę**: wyszukiwanie po tekście (tytuł, opis, uwagi, autor, grupa – bez względu na wielkość liter i polskie znaki), filtry
   (priorytet, kolor, autor, grupa, zakres czasu / dat, tylko widoczny zakres, ta karta / wszystkie połączenia), sortowanie (wg czasu znacznika, ostatniej zmiany,
   priorytetu), kolumny: czas, tytuł, rodzaj, priorytet, dotyczy, grupa, autor, połączenie, zmieniono, stan; dwuklik albo „Przejdź do punktu” wraca na wykres
   (w razie potrzeby otwiera nagranie z bazy).
@@ -525,7 +527,7 @@ adnotacją „niezapisany” w dymku), ale **nie ma go jeszcze w pliku**. Trwał
 5. Zmianę pojedynczego znacznika można cofnąć („Cofnij zmiany tego znacznika”, w liście „Cofnij zmianę”); usunięty znacznik trafia do wykazu „do usunięcia”
    i do chwili zapisu można go przywrócić. Zmiana, która przywraca stan zapisany, sama znika z wykazu. Nowy znacznik usunięty przed zapisem nie zostawia śladu.
 
-### 13.7. Wyszukiwarka danych („Szukaj…”)
+### 13.7. Wyszukiwarka danych („Szukaj w danych…”)
 
 Źródło: **bieżący odczyt na wykresie** (próbki z pamięci karty) albo **wybrane nagranie z bazy** (SQLite / InfluxDB / TimescaleDB; lista nagrań z bieżących ustawień bazy).
 

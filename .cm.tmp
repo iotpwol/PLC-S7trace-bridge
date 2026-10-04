@@ -1,0 +1,9 @@
+Markers: own menu "Znaczniki" and a separate button row under the chart
+
+- Menu Znaczniki (add now, list, save, search) with shortcuts Ctrl+Shift+M / Ctrl+M /
+  Ctrl+Shift+S / Ctrl+F; the entries are removed from the View menu.
+- Second row of buttons "Znaczniki:" (Dodaj znacznik, Lista znacznikow, Zapisz znaczniki,
+  Szukaj w danych) so they are no longer squeezed into the first row.
+- F1 help, BAZY_DANYCH.md, README, WEB.md use the new names.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

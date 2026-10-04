@@ -429,7 +429,7 @@ Kod: `s7trace/web/` (`server.py` – HTTP, `auth.py` – konta, `hosted.py` – 
 
 ## 19. Znaczniki na wykresach i wyszukiwarka wartości
 
-Ta sama funkcja istnieje w programie okienkowym (przycisk „Znaczniki…”, „Zapisz znaczniki”, „Szukaj…”) i w przeglądarce; oba korzystają z tego samego
+Ta sama funkcja istnieje w programie okienkowym (menu „Znaczniki” i rząd przycisków „Znaczniki:” pod wykresem) i w przeglądarce; oba korzystają z tego samego
 modelu (`core/markers.py`, `core/marker_draft.py`, `core/search.py`), ale **mają osobne bazy**: program okienkowy – `Dokumenty\S7Trace\markers.db`
 (konto Windows), serwer Web – `web_markers.db` w folderze danych serwera. Znaczniki nie leżą w nagraniach, więc kasowanie nagrania ich nie usuwa.
 

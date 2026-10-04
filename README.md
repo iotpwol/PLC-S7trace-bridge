@@ -51,7 +51,7 @@ Typy: BOOL, BYTE, SINT, USINT, WORD, INT, UINT, DWORD, DINT, UDINT, REAL, LREAL.
   priorytetem, stylem linii, przezroczystością obszaru, autorem i datami założenia / modyfikacji; dla wszystkich albo wybranych przebiegów; grupy
   znaczników, dymek przy najechaniu, przeciąganie myszą, ukrywanie nazwy na wykresie. Zmiany są robocze do polecenia **Zapisz znaczniki** (okno
   z wykazem nowych / zmienionych / usuwanych; przypomnienie przy zamykaniu wykresu). Znaczniki trzymane są w osobnej bazie SQLite, wyszukiwarka
-  (przycisk **Szukaj…**) znajduje sygnały po wartościach i godzinach w bieżących danych albo w nagraniu z bazy. Szczegóły: [BAZY_DANYCH.md](BAZY_DANYCH.md), rozdz. 13 (pełny opis: rodzaje, parametry, obsługa, zapis, wyszukiwarka) i [WEB.md](WEB.md), rozdz. 19.
+  (menu **Znaczniki**, rząd przycisków „Znaczniki:” pod wykresem, Ctrl+F) znajduje sygnały po wartościach i godzinach w bieżących danych albo w nagraniu z bazy. Szczegóły: [BAZY_DANYCH.md](BAZY_DANYCH.md), rozdz. 13 (pełny opis: rodzaje, parametry, obsługa, zapis, wyszukiwarka) i [WEB.md](WEB.md), rozdz. 19.
 * Zakładki = niezależne połączenia (dół okna, `+` dodaje). Kropka przy nazwie: zielona = praca, szara = stop.
 * Wykres przesuwa się w czasie rzeczywistym: najnowsze próbki po prawej, szerokość = „Okno czasu” (wpisana w sekundach albo wybrana z listy: 5 s … 24 godz.).
   Przeciągnięcie / zoom myszą wstrzymuje widok (zbieranie trwa); „Wznów” wraca do trybu na żywo.

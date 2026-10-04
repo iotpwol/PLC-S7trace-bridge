@@ -339,14 +339,14 @@ class TraceTab(QWidget):
         self.btn_v.setCheckable(True)
         self.btn_h = QPushButton("H znacznik")
         self.btn_h.setCheckable(True)
-        self.btn_mrk = QPushButton("Znaczniki…")
+        self.btn_mrk = QPushButton("Lista znaczników…")
         self.btn_mrk.setToolTip("Lista znaczników (zakładek) na wykresie: wyszukiwanie, edycja, przejście do punktu.\n"
                                 "Znacznik dodasz też prawym przyciskiem myszy na wykresie.")
         self.btn_msave = QPushButton("Zapisz znaczniki")
         self.btn_msave.setToolTip("Znaczniki założone, zmienione lub usunięte na wykresie są robocze, dopóki ich nie zapiszesz.\n"
                                   "Przycisk pokazuje liczbę niezapisanych zmian i listę tego, co zostanie zapisane.")
         self.btn_msave.setEnabled(False)
-        self.btn_find = QPushButton("Szukaj…")
+        self.btn_find = QPushButton("Szukaj w danych…")
         self.btn_find.setToolTip("Wyszukiwarka: kiedy sygnał miał daną wartość / zmienił się; w danych karty albo w nagraniu z bazy")
         self.btn_sig = QPushButton("Sygnały...")
         self.btn_diag = QPushButton("Diagnostyka…")
@@ -357,9 +357,20 @@ class TraceTab(QWidget):
                   self.btn_v, self.btn_h):
             bar.addWidget(b)
         bar.addStretch()
-        for b in (self.btn_mrk, self.btn_msave, self.btn_find, self.btn_sig, self.btn_diag, self.btn_exp, self.btn_imp):
+        for b in (self.btn_sig, self.btn_diag, self.btn_exp, self.btn_imp):
             bar.addWidget(b)
         right.addLayout(bar)
+        mbar = QHBoxLayout()                          # markers + search: their own row, so they are easy to find
+        self.btn_madd = QPushButton("Dodaj znacznik")
+        self.btn_madd.setToolTip("Dodaje znacznik na najnowszej próbce (na żywo) albo w środku widocznego zakresu.\n"
+                                 "Znacznik w dowolnym miejscu: prawy przycisk myszy na wykresie.")
+        mlbl = QLabel("Znaczniki:")
+        mlbl.setStyleSheet("font-weight:bold")
+        mbar.addWidget(mlbl)
+        for b in (self.btn_madd, self.btn_mrk, self.btn_msave, self.btn_find):
+            mbar.addWidget(b)
+        mbar.addStretch()
+        right.addLayout(mbar)
         self.lbl_status = PanLabel()                  # right aligned; a long text can be dragged with the mouse
         right.addWidget(self.lbl_status)
 
@@ -397,6 +408,7 @@ class TraceTab(QWidget):
         self.mk = TabMarkers(self)                    # bookmarks on the chart (right click) + the search window
         self.btn_mrk.clicked.connect(lambda: self.mk.open_list())
         self.btn_find.clicked.connect(lambda: self.mk.open_search())
+        self.btn_madd.clicked.connect(lambda: self.mk.add_now())
         self.btn_msave.clicked.connect(lambda: self.mk.save())
         self.btn_sig.clicked.connect(self.edit_signals)
         self.btn_diag.clicked.connect(self.open_diag)

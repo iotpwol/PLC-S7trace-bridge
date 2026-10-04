@@ -184,16 +184,22 @@ class MainWindow(QMainWindow):
         self.act_legend = self._act(v, "Legenda", self._set_legend, checked=self.ui.get("legend", True))
         self.act_grid = self._act(v, "Siatka", self._set_grid, checked=self.ui.get("grid", True))
         v.addSeparator()
-        self._act(v, "Znaczniki na wykresie…", lambda: self._cur(lambda t: t.mk.open_list()), "Ctrl+M")
-        self._act(v, "Dodaj znacznik teraz", lambda: self._cur(lambda t: t.mk.add_now()), "Ctrl+Shift+M")
-        self._act(v, "Wyszukiwarka danych…", lambda: self._cur(lambda t: t.mk.open_search()), "Ctrl+F")
-        v.addSeparator()
         self.menu_legend = v.addMenu("Położenie legendy (ta karta)")
         for label, pos in (("Lewy górny róg", (0, 0)), ("Prawy górny róg", (1, 0)),
                            ("Lewy dolny róg", (0, 1)), ("Prawy dolny róg", (1, 1))):
             self._act(self.menu_legend, label, lambda p=pos: self.set_legend_pos(*p))
         self.menu_legend.addSeparator()
         hint = self.menu_legend.addAction("…albo przeciągnij legendę myszą na wykresie")
+        hint.setEnabled(False)
+
+        mk = mb.addMenu("&Znaczniki")
+        self._act(mk, "Dodaj znacznik teraz", lambda: self._cur(lambda t: t.mk.add_now()), "Ctrl+Shift+M")
+        self._act(mk, "Lista znaczników…", lambda: self._cur(lambda t: t.mk.open_list()), "Ctrl+M")
+        self._act(mk, "Zapisz znaczniki…", lambda: self._cur(lambda t: t.mk.save()), "Ctrl+Shift+S")
+        mk.addSeparator()
+        self._act(mk, "Wyszukiwarka danych (po wartościach i godzinach)…", lambda: self._cur(lambda t: t.mk.open_search()), "Ctrl+F")
+        mk.addSeparator()
+        hint = mk.addAction("Znacznik w wybranym miejscu: prawy przycisk myszy na wykresie")
         hint.setEnabled(False)
 
         st = mb.addMenu("&Ustawienia")

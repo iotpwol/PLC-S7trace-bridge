@@ -256,7 +256,8 @@ aby zmienić okno czasu.</li>
          "przy wyłączonym REC kropka ma kolor napisu."),
         ("Punkty", "Pokazuje znaczniki pojedynczych próbek na krzywych."),
         ("V znacznik / H znacznik", "Tryb stawiania kursorów pionowych / poziomych (patrz „Wykres główny”)."),
-        ("Znaczniki…", "Lista znaczników z wyszukiwaniem (tytuł, opis, uwagi, autor, grupa, kolor, priorytet, czas). Znacznik zakładasz prawym "
+        ("Dodaj znacznik", "Zakłada znacznik na najnowszej próbce (na żywo) albo w środku widocznego zakresu. Przyciski znaczników są w osobnym rzędzie „Znaczniki:” pod wykresem, wszystkie te polecenia są też w menu <b>Znaczniki</b> (Ctrl+Shift+M – dodaj, Ctrl+M – lista, Ctrl+Shift+S – zapisz, Ctrl+F – wyszukiwarka)."),
+        ("Lista znaczników…", "Lista znaczników z wyszukiwaniem (tytuł, opis, uwagi, autor, grupa, kolor, priorytet, czas). Znacznik zakładasz prawym "
          "przyciskiem myszy na wykresie: <b>punkt</b> albo <b>zakres czasu</b> (półprzezroczysty obszar), dla wszystkich przebiegów albo tylko "
          "wybranych. Ma tytuł, opis, uwagi, kolor, priorytet, grubość i rodzaj linii, przezroczystość obszaru, autora oraz daty założenia i "
          "modyfikacji. Najechanie kursorem pokazuje dymek z opisem; prawy przycisk na znaczniku otwiera jego menu (edycja, zmiana pozycji, "
@@ -266,7 +267,7 @@ aby zmienić okno czasu.</li>
         ("Zapisz znaczniki", "Znaczniki założone, zmienione lub usunięte na wykresie są <b>robocze</b> (oznaczone gwiazdką), dopóki ich nie "
          "zapiszesz. Przycisk pokazuje ich liczbę, a okno przed zapisem wylicza: nowe, zmienione (z nazwami zmienionych pól) i do usunięcia. "
          "Przy zamykaniu karty albo programu z niezapisanymi znacznikami program przypomina o nich i pokazuje ich wykaz (Zapisz / Odrzuć / Wróć)."),
-        ("Szukaj…", "Wyszukiwarka wartości: sygnały o zadanej wartości, w przedziale, ze zmianą albo zboczem (do 3 warunków naraz, opcjonalnie minimalny "
+        ("Szukaj w danych…", "Wyszukiwarka wartości: sygnały o zadanej wartości, w przedziale, ze zmianą albo zboczem (do 3 warunków naraz, opcjonalnie minimalny "
          "czas trwania) w danych bieżącego wykresu albo w wybranym nagraniu z bazy; wynik pokazuje początek, czas trwania i wartości, „Pokaż” "
          "przechodzi na wykresie do wyniku, „Dodaj znacznik…” zakłada znacznik w tym miejscu. Można też przejść do wpisanej daty i godziny."),
     ]) + """
