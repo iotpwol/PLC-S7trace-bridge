@@ -28,6 +28,13 @@ Do `dist\` nic nie jest commitowane (`.gitignore`). Uwaga: `C:\Dev\Python-3.14.8
 Symulator: w aplikacji wpisz IP `127.0.0.1:1102`, rack 0, slot 2; sygnały: DB1 bajt 160 bit 0–4 (BOOL),
 DB1 bajt 170 (INT, licznik), DB1 bajt 172 (REAL, sinus).
 
+## Tryb Web (serwer dla wielu użytkowników)
+
+`Web-Serwer.bat` (albo `python -m s7trace.web --config <plik.json> --host 0.0.0.0 --tls`) uruchamia centralny serwer:
+połączenia ze sterownikami działają na nim, a użytkownicy logują się przeglądarką (konta programu albo Windows / AD, role
+podgląd / operator / administrator). Strona pokazuje, kto jest zalogowany (konto, komputer), jakie są połączenia i z jakimi
+sterownikami (IP, nazwa stacji, moduł), wykres na żywo oraz Start/Stop. Szczegóły: [WEB.md](WEB.md).
+
 ## Sterownik
 
 | CPU | Rack / Slot | Wymagania |

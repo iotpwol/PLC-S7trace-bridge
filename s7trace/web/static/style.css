@@ -1,0 +1,19 @@
+:root { --bg:#1f2124; --panel:#2a2d31; --text:#dcdcdc; --muted:#8f949a; --accent:#2a82da; --err:#ff6b6b; --ok:#4cd964; }
+@media (prefers-color-scheme: light) { :root { --bg:#f2f3f5; --panel:#fff; --text:#202124; --muted:#6b7075; } }
+* { box-sizing: border-box; }
+body { margin:0; font:14px/1.4 "Segoe UI", system-ui, sans-serif; background:var(--bg); color:var(--text); }
+header { display:flex; align-items:center; gap:12px; padding:8px 16px; background:var(--panel); border-bottom:2px solid var(--accent); }
+.brand { font-size:18px; } .spacer { flex:1; } nav { display:flex; gap:4px; margin-left:16px; }
+button, select, input { font:inherit; color:inherit; background:var(--bg); border:1px solid #777; border-radius:3px; padding:4px 10px; }
+button { cursor:pointer; } button:hover, nav button.on { border-color:var(--accent); } nav button.on { background:var(--accent); color:#fff; }
+main { padding:16px; } h2 { margin:18px 0 8px; font-size:16px; } .muted { color:var(--muted); } .error { color:var(--err); }
+table { width:100%; border-collapse:collapse; background:var(--panel); }
+th, td { text-align:left; padding:6px 10px; border-bottom:1px solid rgba(128,128,128,.25); vertical-align:top; }
+th { color:var(--muted); font-weight:600; white-space:nowrap; }
+.dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; background:#8a8a8a; }
+.dot.running { background:var(--ok); } .dot.connecting, .dot.reconnecting { background:#ffcc00; } .dot.error { background:var(--err); }
+#login { max-width:360px; margin:40px auto; } #login form { display:flex; flex-direction:column; gap:10px; } #login label { display:flex; flex-direction:column; gap:4px; }
+.bar { display:flex; gap:12px; align-items:center; margin-bottom:8px; } canvas { width:100%; height:auto; background:#000; border:1px solid #444; }
+.legend { display:flex; flex-wrap:wrap; gap:12px; margin-top:8px; } .legend i { display:inline-block; width:12px; height:3px; margin-right:6px; vertical-align:middle; }
+.inline { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+[hidden] { display:none !important; }

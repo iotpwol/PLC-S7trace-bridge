@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>S7Trace – tryb Web</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <b class="brand">S7Trace</b>
+  <nav id="nav" hidden>
+    <button data-view="overview" class="on">Przegląd</button>
+    <button data-view="chart">Podgląd na żywo</button>
+    <button data-view="users" id="nav-users" hidden>Użytkownicy</button>
+  </nav>
+  <span class="spacer"></span>
+  <span id="who"></span>
+  <button id="logout" hidden>Wyloguj</button>
+</header>
+<main>
+  <section id="login" hidden>
+    <h2 id="login-title">Logowanie</h2>
+    <p id="login-hint" class="muted"></p>
+    <form id="login-form">
+      <label>Użytkownik <input id="l-user" autocomplete="username" required></label>
+      <label>Hasło <input id="l-pass" type="password" autocomplete="current-password" required></label>
+      <button type="submit" id="l-submit">Zaloguj</button>
+      <div id="l-error" class="error"></div>
+    </form>
+  </section>
+  <section id="overview" hidden>
+    <h2>Połączenia i sterowniki</h2>
+    <table id="t-conn"><thead><tr><th>Nazwa</th><th>Adres IP</th><th>Rack/Slot</th><th>Stan</th><th>Sterownik</th>
+      <th>Nazwa stacji</th><th>Nazwa modułu</th><th>Metoda</th><th>Uruchomił</th><th>Ogląda</th><th></th></tr></thead><tbody></tbody></table>
+    <h2>Zalogowani użytkownicy</h2>
+    <table id="t-sess"><thead><tr><th>Użytkownik</th><th>Konto</th><th>Rola</th><th>Komputer (adres)</th><th>Przeglądarka</th>
+      <th>Zalogowany</th><th>Aktywność</th><th>Ogląda</th></tr></thead><tbody></tbody></table>
+  </section>
+  <section id="chart" hidden>
+    <div class="bar"><select id="c-conn"></select>
+      <label>Okno <select id="c-sec"><option value="30">30 s</option><option value="60" selected>60 s</option>
+        <option value="300">5 min</option><option value="900">15 min</option></select></label>
+      <span id="c-state" class="muted"></span></div>
+    <canvas id="canvas" width="1200" height="520"></canvas>
+    <div id="c-legend" class="legend"></div>
+  </section>
+  <section id="users" hidden>
+    <h2>Konta użytkowników</h2>
+    <table id="t-users"><thead><tr><th>Konto</th><th>Rodzaj</th><th>Rola</th><th>Ostatnie logowanie</th><th>Stan</th><th></th></tr></thead><tbody></tbody></table>
+    <h3>Nowe konto</h3>
+    <form id="u-form" class="inline">
+      <input id="u-name" placeholder="nazwa (np. jan.kowalski albo DOMENA\jan)" required>
+      <select id="u-kind"><option value="local">konto programu (hasło)</option><option value="windows">konto Windows / AD</option></select>
+      <input id="u-pass" type="password" placeholder="hasło (min. 8 znaków)">
+      <select id="u-role"><option value="viewer">podgląd</option><option value="operator">operator</option><option value="admin">administrator</option></select>
+      <button type="submit">Dodaj</button><span id="u-error" class="error"></span>
+    </form>
+  </section>
+</main>
+<script src="/static/app.js"></script>
+</body>
+</html>

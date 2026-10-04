@@ -43,6 +43,8 @@ powershell -ExecutionPolicy Bypass -File build-portable.ps1                 # po
 
 **UI frames**: `ui/fold_splitter.py` (thin hover-only resize handle, colour / "always" from theme keys `bar`, `bar_always`), `ui/pan_label.py` (status bar: draggable text, `status_lines`, `status_bg`, `status_text`), `ui/dialog_kit.py` (`@dialog_info(title, text)` on a QDialog: header strip + scroll area + fit to the screen on first show; the bottom button row stays outside the scroll area). `TraceTab._fit_left_min` keeps the settings panel at least as wide as its content. `TraceTab.import_db` / `load_recording` / `tooltip_html` (opening a DB recording into this or a new tab; the main window answers the tab-bar ToolTip event with `tooltip_html`).
 
+**Web mode** (`s7trace/web/`, Qt-free, stdlib only; user-facing description in `WEB.md`, keep it in sync): central server `python -m s7trace.web` (`__main__.py`; `Web-Serwer.bat` in the package). `server.py` = `ThreadingHTTPServer` + `Handler` (cookie sessions in `WebSessions`, POST needs header `X-S7Trace: 1`, SSE `/api/connections/<id>/stream`, static front end in `web/static`: `index.html`, `app.js`, `style.css`, canvas chart), `auth.py` = `UserStore` (SQLite `web_users.db`, PBKDF2, lockout, protects last admin; Windows/AD via `LogonUserW`, replaceable `windows_check` in tests; roles viewer < operator < admin), `hosted.py` = `HostedConnection`/`HostManager` (headless tab: `ProcAcquirer` + `TraceBuffer`, loaded from S7Trace config JSON). Tests: `tests/test_web.py`. Stage 1 only (login, overview, live chart, Start/Stop, accounts); signal editing / REC / desktop-session reporting are later stages.
+
 **Theming**: all styling is the QSS from `ui/theme.py::build_qss` (bold values in edit fields/combos/tables, one left padding for all fields). `IpEdit`/`IpCombo` (`ui/ip_edit.py`) are 4 fixed-width octet cells with undeletable dots; `text()` returns the plain address. `DurationCombo` is the editable "Okno czasu [s]" field with presets.
 
 ## Gotchas
@@ -52,7 +54,7 @@ powershell -ExecutionPolicy Bypass -File build-portable.ps1                 # po
 - Narrow left panel (min ~200 px): wide spin ranges / long combo items squeeze form labels; fields have `setMinimumWidth(70)` plus adjust policies (regression test exists).
 - Tests: `tests/conftest.py` autouse fixtures redirect `%APPDATA%`, `%ProgramData%`, `%PUBLIC%` to temp dirs, auto-answer the `{confname}` prompt, and **stop and delete every TraceTab/MainWindow/dialog a test creates** (leftover widgets are re-styled on every later `setStyleSheet` and made the full run take 17 min). Do not delete arbitrary top-level widgets there (it crashes Python).
 - Bash tool here collapses backslashes inside heredocs; for patch scripts or Windows paths with `\` use the Write/Edit tools instead.
-- Open topics to resume only when the user returns (do not build before they decide): Web mode (A: read-only browser view, recommended / B: full web UI / C: remote desktop) and remote access/routing/VPN; the session registry only covers one computer (a central registry belongs to the Web phase).
+- Web mode stage 1 is built (see Architecture); later stages (signal editing, trigger, REC from the browser, desktop app reporting its sessions to the server = a central registry across computers) wait for the user's decision. Open topic to resume only when the user returns: remote access/routing/VPN. The desktop `core/sessions.py` registry still covers one computer only.
 
 ## Status pracy równoległej (N komputerów)
 
@@ -60,6 +62,6 @@ Ten projekt bywa edytowany z więcej niż jednego komputera na przemian. `git pu
 
 **Aktualny stan:**
 
-- `PL-LAP-00354` (Windows 11) — **brak aktywnych zmian** (ostatni push: 2026-10-03, zarządzanie nagraniami (opisy, kosz, przegląd, konta), kompresja TimescaleDB, usunięty InfluxDB 3; poprzedni: `1b54887`).
+- `PL-LAP-00354` (Windows 11) — **zmiany gotowe, czekają na push** (commit trybu Web etap 1; ostatni push: 2026-10-03, `d7f1e6d` renderowanie wykresu i ustawienia).
 
 **Zasada:** na początku sesji sprawdź tę listę i `ListAgents`; jeśli inny komputer ma „w trakcie edycji”, powiedz o tym przed commitem/push. Po realnym `git push` zaktualizuj swój wpis.
