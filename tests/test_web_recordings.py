@@ -27,7 +27,10 @@ def _record(folder_or_cfg, owner, title, n=300, mode="all", base=""):
     cfg.mode = mode
     sigs = [Signal(name="A", dtype="INT", color="#ff0000"), Signal(name="B", dtype="BOOL", color="#00ff00")]
     rec = st.DbRecorder(cfg, sigs, datetime(2026, 10, 4, 12, 0, 0), {"title": title, "owner": owner, "computer": "Web 1.2.3.4",
-                                                                      "name": "Linia", "ip": "10.0.0.5"}, base_dir=base)
+                                                                      "name": "Linia", "ip": "10.0.0.5",
+                                                                      "device": {"ip": "10.0.0.5", "method": "snap7", "rack": 0, "slot": 1,
+                                                                                 "info": {"model": "CPU 1214C", "plc_name": "Linia1",
+                                                                                          "serial": "S C-XYZ"}}}, base_dir=base)
     for i in range(n):
         rec.write(i * 0.1, [float(i), float((i // 20) % 2)])
     rec.close()
@@ -44,9 +47,12 @@ def test_own_file_list_read_csv_edit_trash(srv):
     assert [s["id"] for s in srcs] == ["sqlite"]
     (r,) = ola.get("/api/recordings?source=sqlite")[1]["recordings"]
     assert r["id"] == sid and r["title"] == "Pierwsze" and r["owner"] == "ola" and r["signals"] == ["A", "B"]
+    assert r["device"]["title"] == "CPU 1214C (Linia1)" and r["device"]["serial"] == "S C-XYZ"
+    assert ["Numer seryjny", "S C-XYZ"] in r["device"]["lines"] and ["Adres", "10.0.0.5"] in r["device"]["lines"]
     assert r["can_modify"] and r["entries"] == 600 and r["computer"] == "Web 1.2.3.4" and r["ip"] == "10.0.0.5"
     # reading: thinned for the chart, a range, the original colours
     st_, d = ola.get(f"/api/recordings/data?source=sqlite&id={sid}&points=60")
+    assert d["device"]["title"] == "CPU 1214C (Linia1)"
     assert st_ == 200 and d["names"] == ["A", "B"] and d["colors"] == ["#ff0000", "#00ff00"] and d["rows"] == 300
     assert 2 <= len(d["t"]) <= 70 and d["t"][0] == 0.0 and d["values"][0][-1] == 299.0 and d["shown"] == len(d["t"])
     d2 = ola.get(f"/api/recordings/data?source=sqlite&id={sid}&from=5&to=10&points=1000")[1]

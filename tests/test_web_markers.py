@@ -224,3 +224,32 @@ def test_batch_save_is_one_transaction_and_checks_rights(srv):
     assert ola.post("/api/markers", {"action": "batch", "adds": [{"at_us": BASE}] * 501})[0] == 400
     assert ola.post("/api/markers", {"action": "batch", "adds": "x"})[0] == 400
     assert ids(jan) == ["janowy"] and shared  # untouched
+
+
+def test_series_carries_share_gain_and_type_for_the_lanes(srv):
+    h = _host(srv)
+    d = h.series(60)
+    assert d["shares"] == [1.0, 1.0] and d["gains"] == [1.0, 1.0] and d["dtypes"] == ["INT", "BOOL"]
+
+
+def test_web_recording_starts_when_rec_is_pressed(srv):
+    h = _host(srv)                                                      # 100 s of samples are already in the buffer
+    from s7trace.core import store as stm
+    cfg = stm.StoreConfig(kind="sqlite", sqlite_path=os.path.join(srv.app.hosts.files_root, "r.db"), mode="changes")
+    rec = stm.DbRecorder(cfg, h.signals, h.start_wall, {"title": "t"}, base_dir=srv.app.hosts.files_root, t0=h.buffer.last_time())
+    rec.write(h.buffer.last_time() + 5.0, [1.0, 0.0])
+    rec.close()
+    b = stm.open_backend(cfg, srv.app.hosts.files_root)
+    (s,) = b.sessions()
+    b.close()
+    assert abs((s["end_us"] - s["start_us"]) / 1e6 - 5.0) < 0.01
+
+
+def test_marker_look_is_kept_per_account_on_the_server(srv):
+    ola, ala = _user(srv, "ola"), _user(srv, "ala")
+    assert ola.get("/api/prefs")[1]["prefs"]["marker_look"] == {"width_all": 2, "width_sel": 3, "width_other": 1, "width_hover": 4}
+    st_, d = ola.post("/api/prefs", {"marker_look": {"width_all": 5, "width_sel": 99, "width_other": "x", "width_hover": 9}})
+    assert st_ == 200 and d["prefs"]["marker_look"] == {"width_all": 5, "width_sel": 12, "width_other": 1, "width_hover": 9}   # validated
+    assert ola.get("/api/prefs")[1]["prefs"]["marker_look"]["width_all"] == 5
+    assert ala.get("/api/prefs")[1]["prefs"]["marker_look"]["width_all"] == 2          # another account is not affected
+    assert os.path.isfile(os.path.join(srv.app.data_dir, "prefs", "u_ola.json"))

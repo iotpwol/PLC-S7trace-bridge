@@ -406,3 +406,25 @@ def test_grouping_by_days(app, tmp_path):
     assert len(d._picked()) == 1 and d.btn_del.isEnabled()
     d.chk_group.setChecked(False)
     assert d.table.rowCount() == 3 and d.table.isSortingEnabled()
+
+
+def test_overview_shows_the_controller_of_a_recording(app, tmp_path, monkeypatch):
+    cfg = StoreConfig(kind="sqlite", sqlite_path=str(tmp_path / "p.db"), mode="all")
+    dev = {"ip": "10.1.1.1", "method": "snap7", "rack": 0, "slot": 1,
+           "info": {"model": "CPU 1516-3 PN/DP", "plc_name": "Piec1", "serial": "S C-ABC123", "firmware": "V2.9"}}
+    for title, d in (("Z danymi", dev), ("Bez danych", None)):
+        rec = DbRecorder(cfg, [Signal(name="A")], datetime.now(), {"title": title, "device": d or {}})
+        rec.write(0.0, [1.0])
+        rec.close()
+    d = dialog(cfg, tmp_path)
+    d.cb_user.setCurrentIndex(d.cb_user.findData("all"))
+    r = titles(d).index("Z danymi")
+    assert d.cell(r, "plc") == "CPU 1516-3 PN/DP (Piec1)" and d.cell(r, "plc_sn") == "S C-ABC123"
+    assert d.cell(titles(d).index("Bez danych"), "plc") == ""
+    d.ed_search.setText("abc123")                                    # the controller data is searchable
+    assert titles(d) == ["Z danymi"]
+    shown = []
+    monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a, **k: shown.append(a[2])))
+    d.table.selectRow(0)
+    d.show_device()
+    assert shown and "V2.9" in shown[0] and "S C-ABC123" in shown[0]

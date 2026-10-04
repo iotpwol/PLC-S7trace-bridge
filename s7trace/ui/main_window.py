@@ -9,15 +9,18 @@ from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QInputDialog, QMainWindow, QMenu,
                                QMessageBox, QStackedWidget, QTabBar, QToolButton, QToolTip, QWidget)
 
-from ..core import render_cfg, sessions, web_agent
+from ..core import marker_look, render_cfg, sessions, web_agent
 from ..core import symbols as sym
 from ..core.config import TabConfig, app_dir, load_app_config, save_app_config, symbols_path
 from ..core.naming import suggest_config_name
 from . import theme as th
 from .help_dialog import HelpDialog
 from .conn_dialog import ConnectionDialog
+from ..version import about_lines
+from . import help_mode
 from .interface_dialog import InterfaceDialog
 from .render_dialog import RenderDialog
+from .marker_look_dialog import MarkerLookDialog
 from .wizard_dialog import WizardDialog
 from .trace_tab import RACK_SLOT_HELP, TraceTab, dot_icon
 
@@ -87,9 +90,14 @@ class MainWindow(QMainWindow):
         self.symbols: list[sym.Symbol] = sym.load_symbols(symbols_path())
         cfg = load_app_config(self.config_file)
         self.ui: dict = cfg.get("ui") if isinstance(cfg.get("ui"), dict) else {}
-        self.theme = th.normalize(self.ui.get("theme"))
+        old_look = self.ui.get("marker_look")                  # before the look belonged to the theme it was a separate key
+        theme0 = self.ui.get("theme") if isinstance(self.ui.get("theme"), dict) else None
+        if theme0 is not None and "marker_look" not in theme0 and isinstance(old_look, dict):
+            theme0 = {**theme0, "marker_look": old_look}
+        self.theme = th.normalize(theme0)
         self.web_cfg = web_agent.normalize(self.ui.get("web_server"))         # Ustawienia -> Serwer Web
         self.render_cfg = render_cfg.normalize(self.ui.get("render"))      # Ustawienia -> Renderowanie wykresu
+        self.marker_look = self.theme["marker_look"]       # Znaczniki -> Wygląd znaczników (part of the interface configuration)
 
         self.stack = QStackedWidget()
         self.setCentralWidget(self.stack)
@@ -107,6 +115,13 @@ class MainWindow(QMainWindow):
         bar.tabBarDoubleClicked.connect(self.rename_tab)
         self.tabs = TopTabs(bar, self.stack)
         bar.installEventFilter(self)                   # the tooltip of a tab lists its connection / recording and database
+        self.help_btn = QToolButton()                  # help mode: the same '?' as in the title bar of every dialog
+        self.help_btn.setText("?")
+        self.help_btn.setCheckable(True)
+        self.help_btn.setToolTip("Tryb pomocy: po włączeniu najedź kursorem na dowolny element, aby zobaczyć jego opis (Shift+F1, Esc kończy)")
+        self.help_mode = help_mode.install(QApplication.instance())
+        self.help_btn.clicked.connect(lambda on: self.help_mode.set_active(on))
+        self.help_mode.modeChanged.connect(self.help_btn.setChecked)
         plus = QToolButton()
         plus.setText("+")
         plus.setToolTip("Nowa karta (nowe połączenie)")
@@ -117,6 +132,7 @@ class MainWindow(QMainWindow):
         lay.setSpacing(2)
         lay.addWidget(bar)
         lay.addWidget(plus)
+        lay.addWidget(self.help_btn)
         self._build_menu()
         self._corner, self._plus = corner, plus       # keep the Python wrappers alive
         self.menuBar().setCornerWidget(corner, Qt.TopRightCorner)
@@ -192,6 +208,13 @@ class MainWindow(QMainWindow):
         hint = self.menu_legend.addAction("…albo przeciągnij legendę myszą na wykresie")
         hint.setEnabled(False)
 
+        dg = mb.addMenu("&Diagnostyka")
+        self._act(dg, "Diagnostyka połączenia…", lambda: self._cur(lambda t: t.open_diag()), "Ctrl+D")
+        self._act(dg, "Informacje o sterowniku i czas…", lambda: self._cur(lambda t: self.run_wizard(t, 1)))
+        dg.addSeparator()
+        self._act(dg, "Aktywne sesje programu…", self.show_sessions)
+        self._act(dg, "Zaległe bufory zapisu do baz…", lambda: self._cur(lambda t: t.open_spools()))
+
         mk = mb.addMenu("&Znaczniki")
         self._act(mk, "Dodaj znacznik teraz", lambda: self._cur(lambda t: t.mk.add_now()), "Ctrl+Shift+M")
         self._act(mk, "Lista znaczników…", lambda: self._cur(lambda t: t.mk.open_list()), "Ctrl+M")
@@ -199,18 +222,16 @@ class MainWindow(QMainWindow):
         mk.addSeparator()
         self._act(mk, "Wyszukiwarka danych (po wartościach i godzinach)…", lambda: self._cur(lambda t: t.mk.open_search()), "Ctrl+F")
         mk.addSeparator()
+        self._act(mk, "Wygląd znaczników (grubość linii)…", self.edit_marker_look)
+        mk.addSeparator()
         hint = mk.addAction("Znacznik w wybranym miejscu: prawy przycisk myszy na wykresie")
         hint.setEnabled(False)
 
         st = mb.addMenu("&Ustawienia")
         self._act(st, "Metoda połączenia i dane logowania…", lambda: self._cur(self.edit_connection))
         self._act(st, "Kreator połączenia (rozpoznawanie metody)…", lambda: self._cur(self.run_wizard))
-        self._act(st, "Informacje o sterowniku i czas…", lambda: self._cur(lambda t: self.run_wizard(t, 1)))
-        self._act(st, "Diagnostyka połączenia…", lambda: self._cur(lambda t: t.open_diag()), "Ctrl+D")
         self._act(st, "Zapis nagrań w bazach danych (SQLite / InfluxDB / TimescaleDB)…",
                   lambda: self._cur(lambda t: t.edit_store(pick=True)))
-        self._act(st, "Zaległe bufory zapisu do baz…", lambda: self._cur(lambda t: t.open_spools()))
-        self._act(st, "Aktywne sesje programu…", self.show_sessions)
         self._act(st, "Wymagania, ograniczenia i blokady…", lambda: self.show_help("Ograniczenia"))
         st.addSeparator()
         self._act(st, "Interfejs (kolory, czcionki)…", self.edit_interface)
@@ -226,12 +247,11 @@ class MainWindow(QMainWindow):
 
         h = mb.addMenu("&Pomoc")
         self._act(h, "Pomoc – opis programu…", lambda: self.show_help(), "F1")
+        self._act(h, "Tryb pomocy (opisy elementów po najechaniu)", lambda: self.help_mode.toggle(), "Shift+F1")
         h.addSeparator()
         self._act(h, "Adresowanie, rack/slot, S7-1200/1500",
                   lambda: QMessageBox.information(self, "Pomoc", RACK_SLOT_HELP))
-        self._act(h, "O programie", lambda: QMessageBox.about(
-            self, "O programie", "S7Trace — rejestrator przebiegów z PLC Siemens S7\n"
-            "(S7comm przez python-snap7, wykresy pyqtgraph)."))
+        self._act(h, "O programie", lambda: QMessageBox.about(self, "O programie", "\n".join(about_lines())))
 
     def _act(self, menu, text, fn, shortcut=None, checked=None):
         a = QAction(text, self)
@@ -293,6 +313,17 @@ class MainWindow(QMainWindow):
             self.web_cfg = dlg.result_cfg()
             self._start_reporter()
 
+    def _apply_marker_look(self, cfg: dict) -> None:
+        self.marker_look = marker_look.normalize(cfg)
+        self.theme = {**self.theme, "marker_look": self.marker_look}
+        for i in range(self.tabs.count()):
+            self.tabs.widget(i).apply_marker_look(self.marker_look)
+
+    def edit_marker_look(self) -> None:
+        dlg = MarkerLookDialog(self.marker_look, self._apply_marker_look, self)
+        if dlg.exec():
+            self._apply_marker_look(dlg.result_cfg())
+
     def edit_render(self) -> None:
         dlg = RenderDialog(self.render_cfg, self._apply_render, self)
         if dlg.exec():
@@ -300,6 +331,8 @@ class MainWindow(QMainWindow):
 
     def _apply_theme(self, theme: dict) -> None:
         self.theme = th.apply_theme(QApplication.instance(), theme)
+        if self.theme["marker_look"] != self.marker_look:      # a configuration (or the preview of one) with another marker look
+            self._apply_marker_look(self.theme["marker_look"])
         for i in range(self.tabs.count()):
             self.tabs.widget(i).apply_plot_theme(self.theme["plot_bg"], self.theme["plot_fg"])
             self.tabs.widget(i).apply_ctl_theme(self.theme)
@@ -311,7 +344,7 @@ class MainWindow(QMainWindow):
         bar, mb = self.tabs.bar, self.menuBar()
         acts = mb.actions()
         left = mb.actionGeometry(acts[-1]).right() + 16 if acts else 160
-        plus = self._plus.sizeHint().width() + 10
+        plus = self._plus.sizeHint().width() + self.help_btn.sizeHint().width() + 14
         avail = mb.width() - left - plus
         want = sum(bar.tabSizeHint(i).width() for i in range(bar.count())) + 8
         w = int(max(min(want, avail), 140))
@@ -354,6 +387,8 @@ class MainWindow(QMainWindow):
         WizardDialog(tab, show_tab=page, parent=self).exec()
 
     def _commit_theme(self, theme: dict) -> None:
+        if "marker_look" not in theme:                          # e.g. a configuration file of an older version
+            theme = {**theme, "marker_look": self.marker_look}
         self.ui["theme"] = th.normalize(theme)
         self._apply_theme(self.ui["theme"])
 
@@ -429,6 +464,7 @@ class MainWindow(QMainWindow):
         tab.apply_plot_theme(self.theme["plot_bg"], self.theme["plot_fg"])
         tab.apply_ctl_theme(self.theme)
         tab.apply_render(self.render_cfg)
+        tab.apply_marker_look(self.marker_look)
         tab.apply_layout()
         self._tab_state(tab, "stopped")
         self.tabs.setCurrentIndex(i)
@@ -503,6 +539,7 @@ class MainWindow(QMainWindow):
         self.ui["geometry"] = bytes(self.saveGeometry().toBase64()).decode()
         self.ui["theme"] = self.theme
         self.ui["render"] = self.render_cfg
+        self.ui.pop("marker_look", None)                       # now inside ui["theme"]
         self.ui["web_server"] = self.web_cfg
         return {"tabs": [self.tabs.widget(i).to_config().to_dict() for i in range(self.tabs.count())],
                 "current": self.tabs.currentIndex(), "ui": self.ui}

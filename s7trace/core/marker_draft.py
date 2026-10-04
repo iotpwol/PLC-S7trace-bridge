@@ -97,6 +97,11 @@ class MarkerDraft:
         self.version += 1
         return m
 
+    def changed_fields(self, mid: int) -> set[str]:
+        """Internal names of the fields of a saved marker that differ from the saved version (empty for new / untouched ones)."""
+        m, base = self.edited.get(mid), self._orig.get(mid)
+        return set(_changed(base, m)) if m is not None and base is not None else set()
+
     def delete(self, mid: int) -> bool:
         """A new marker disappears; a saved one is listed for deletion until the draft is saved. False = nothing to delete."""
         if mid in self.new:

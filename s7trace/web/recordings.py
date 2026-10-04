@@ -19,13 +19,19 @@ import numpy as np
 
 from ..core import store as st
 from ..core.csvio import write_csv
-from ..core.types import Signal
+from ..core.types import Signal, signal_tip_static
 from . import files
 
 DB_NAME = "recordings.db"
 MAX_POINTS = 6000
 DAY_US = 86_400_000_000
 
+
+
+def _device(s: dict) -> dict:
+    """The controller of a recording for the browser: one line for the list and every (label, value) row for the details."""
+    dev = s.get("device") or {}
+    return {"title": st.device_title(dev), "serial": str((dev.get("info") or {}).get("serial", "")), "lines": st.device_lines(dev)}
 
 class RecError(ValueError):
     """A message that may be shown to the user as it is."""
@@ -135,6 +141,7 @@ class Library:
                             "computer": s["computer"], "name": s["name"], "ip": s["ip"], "tab": s["tab"], "conf": s["conf"],
                             "mode": s["mode"], "start_us": s["start_us"], "end_us": s["end_us"], "deleted_us": s["deleted_us"],
                             "signals": names, "entries": counts.get(s["id"]), "can_modify": mod,
+                            "device": _device(s),
                             "recording": s["id"] in st._ACTIVE_SESSIONS})
             return out
         finally:
@@ -176,11 +183,15 @@ class Library:
         t, v = st.downsample_minmax(t, v, max_points)
         sigs = [d for d in meta.get("signals", []) if isinstance(d, dict)]
         k = len(sigs)
+        objs = [Signal.from_dict(d) for d in sigs]
         ts = ((t - meta["start_us"]) / 1e6) if n0 else np.zeros(0)
         cols = [[None if x != x else float(x) for x in v[:, i]] for i in range(k)] if len(t) else [[] for _ in range(k)]
         return {"t": [float(x) for x in ts], "values": cols, "names": [d.get("name", f"SIG{i + 1}") for i, d in enumerate(sigs)],
-                "colors": [d.get("color", "#ffb347") for d in sigs], "start_us": meta["start_us"], "end_us": meta["end_us"],
-                "title": meta["title"], "rows": n0, "shown": len(t), "mode": meta["mode"]}
+                "colors": [d.get("color", "#ffb347") for d in sigs], "shares": [float(d.get("share", 1) or 1) for d in sigs],
+                "gains": [float(d.get("gain", 1) or 1) for d in sigs], "dtypes": [d.get("dtype", "") for d in sigs],
+                "offsets": [float(d.get("offset_y", 0) or 0) for d in sigs],
+                "addresses": [x.address for x in objs], "tips": [signal_tip_static(x) for x in objs], "start_us": meta["start_us"], "end_us": meta["end_us"],
+                "title": meta["title"], "rows": n0, "shown": len(t), "mode": meta["mode"], "device": _device(meta)}
 
     def search(self, src: Source, sid: str, user: str, role: str, d: dict, max_s: float = 60.0) -> dict:
         """Where the signals of a recording had the given values (all conditions at once); times in seconds from its start.

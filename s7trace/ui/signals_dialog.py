@@ -15,7 +15,7 @@ from PySide6.QtGui import QActionGroup
 from ..core.naming import NAME_OWN, NAME_PREV, new_signal_name
 from ..core.symbols import Symbol
 from ..core.types import (ALL_SOURCES, DEFAULT_COLORS, FORMATS, NODE_SOURCES, SOURCES, TYPES, Signal, address_key,
-                          format_value)
+                          format_value, signal_tip)
 from .dialog_kit import dialog_info
 
 # key, header, default width
@@ -387,7 +387,7 @@ class SignalsDialog(QDialog):
     @staticmethod
     def _set_color(btn: QPushButton, color: str) -> None:
         btn.setProperty("color", color)
-        btn.setStyleSheet(f"background:{color}; border:1px solid #222;")
+        btn.setStyleSheet(f"QPushButton {{ background:{color}; border:1px solid #222; }}")
 
     def _pick_color(self, btn: QPushButton) -> None:
         c = QColorDialog.getColor(QColor(btn.property("color")), self, "Kolor sygnału")
@@ -440,18 +440,7 @@ class SignalsDialog(QDialog):
     def row_tooltip(self, r: int) -> str:
         s = self._row_signal(r)
         vals = self._values()
-        v = vals[r] if vals is not None and r < len(vals) else None
-        if v is None:
-            cur = "— (zmienna nie jest teraz pobierana)"
-        else:
-            cur = f"{format_value(s, v)}   (surowa: {v:g})"
-        return (f"Nazwa: {s.name}\nAdres: {s.address}\n"
-                f"Źródło: {s.source}   Typ: {s.dtype}   DB: {s.db if s.source == 'DB' else '—'}   "
-                f"Bajt: {s.byte}   Bit: {s.bit if s.dtype == 'BOOL' else '—'}\n"
-                f"Pobieranie: {'tak' if s.enabled else 'nie'}   Na wykresie: {'tak' if s.plot else 'nie'}\n"
-                f"Offset Y: {s.offset_y:g}   Gain: {s.gain:g}   Share: {s.share:g}   Kolor: {s.color}\n"
-                f"Sposób wyświetlania: {s.fmt}\nOpis: {s.comment or '—'}\n"
-                f"Aktualna wartość: {cur}")
+        return signal_tip(s, vals[r] if vals is not None and r < len(vals) else None)
 
     # ------------------------------------------------------- add/remove
     def _add(self) -> None:

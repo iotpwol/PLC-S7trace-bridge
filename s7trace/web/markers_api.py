@@ -61,6 +61,8 @@ class MarkerService:
             group=q.get("group") if "group" in q else None, conn=q.get("conn") if q.get("conn") else None,
             rec_id=q.get("rec") if q.get("rec") else None, order=q.get("order", "at"),
             limit=min(max(num("limit") or 500, 1), 2000))
+        if q.get("conns"):                                              # markers of connections (not of recordings): 'show also other connections'
+            rows = [m for m in rows if m.conn]
         return {"markers": [self._dict(m, user, role) for m in rows],
                 "groups": [{"name": g, "count": n} for g, n in self.store.groups(vis)],
                 "authors": sorted({m.author for m in self.store.search(visible_to=vis, limit=2000) if m.author})}

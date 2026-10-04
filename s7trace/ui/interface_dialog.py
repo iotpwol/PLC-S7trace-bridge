@@ -115,7 +115,7 @@ class InterfaceDialog(QDialog):
             c = self.theme[key]
             fg = "#000000" if QColor(c).lightness() > 128 else "#ffffff"
             b.setText(c)
-            b.setStyleSheet(f"background:{c}; color:{fg}; border:1px solid #777;")
+            b.setStyleSheet(f"QPushButton {{ background:{c}; color:{fg}; border:1px solid #777; }}")
         self.font_family.blockSignals(True)
         self.font_size.blockSignals(True)
         self.rec_hz.blockSignals(True)
@@ -181,6 +181,7 @@ class InterfaceDialog(QDialog):
         except Exception as e:
             QMessageBox.warning(self, "Interfejs", f"Nie można wczytać konfiguracji: {e}")
             return
+        t.setdefault("marker_look", self.theme["marker_look"])      # a file of an older version has none: keep the current one
         self.theme = t
         self._sync_widgets()
         self._apply(self.theme)

@@ -111,6 +111,35 @@ def address_key(s: "Signal") -> tuple:
             s.bit if s.dtype == "BOOL" else None)
 
 
+def signal_tip(s: "Signal", v=None, reading: bool = False) -> str:
+    """The description bubble of a signal (signals window rows and the chart legend). `v` = the latest raw value, `reading` = the
+    variable is being read right now."""
+    if v is None or v != v:
+        cur = "— (zmienna nie jest teraz pobierana)" if not reading else "—"
+    else:
+        cur = f"{format_value(s, v)}   (surowa: {v:g})"
+    return (f"Nazwa: {s.name}\nAdres: {s.address}\n"
+            f"Źródło: {s.source}   Typ: {s.dtype}   DB: {s.db if s.source == 'DB' else '—'}   "
+            f"Bajt: {s.byte}   Bit: {s.bit if s.dtype == 'BOOL' else '—'}\n"
+            f"Pobieranie: {'tak' if s.enabled else 'nie'}   Na wykresie: {'tak' if s.plot else 'nie'}\n"
+            f"Offset Y: {s.offset_y:g}   Gain: {s.gain:g}   Share: {s.share:g}   Kolor: {s.color}\n"
+            f"Sposób wyświetlania: {s.fmt}\nOpis: {s.comment or '—'}\n"
+            f"Aktualna wartość: {cur}")
+
+
+def signal_tip_static(s: "Signal") -> str:
+    """signal_tip without the current-value line (the Web page appends the value it has)."""
+    return signal_tip(s, None, reading=True).rsplit(chr(10), 1)[0]
+
+
+LEGEND_MODES = {"name": "Nazwa", "address": "Adres / węzeł OPC"}
+
+
+def legend_text(s: "Signal", mode: str) -> str:
+    """What the legend shows for a signal: its name or its address (the OPC node / Web API name for those sources)."""
+    return s.address if mode == "address" else s.name
+
+
 def format_value(sig: "Signal", v, fmt: str | None = None) -> str:
     """Current value as text according to the 'Sposób wyświetlania' choice."""
     fmt = fmt or sig.fmt

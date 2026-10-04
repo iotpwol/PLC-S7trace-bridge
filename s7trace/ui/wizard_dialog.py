@@ -9,16 +9,12 @@ from PySide6.QtWidgets import (QApplication, QDialog, QHBoxLayout, QHeaderView, 
 
 from ..core import detect
 from ..core.drivers import CONN_LABEL
+from ..core.store import DEVICE_LABELS
 from .dialog_kit import dialog_info
 
 STATUS_TXT = {"ok": ("✔ OK", "#2fbf4a"), "fail": ("✖ błąd", "#e04040"), "warn": ("▲ uwaga", "#e0b020"),
               "skip": ("— pominięto", "#8a8a8a")}
-INFO_LABELS = [("family", "Rodzina"), ("model", "Model CPU"), ("order_code", "Numer katalogowy (MLFB)"),
-               ("firmware", "Wersja firmware"), ("serial", "Numer seryjny"), ("plc_name", "Nazwa stacji"),
-               ("module_name", "Nazwa modułu"), ("copyright", "Producent / copyright"), ("state", "Stan CPU"),
-               ("protection", "Ochrona CPU"), ("pdu", "Długość PDU [B]"), ("opcua_product", "Serwer OPC UA: produkt"),
-               ("opcua_version", "Serwer OPC UA: wersja"), ("opcua_policies", "OPC UA: polityki bezpieczeństwa"),
-               ("opcua_tokens", "OPC UA: uwierzytelnianie"), ("webapi_version", "Web API: wersja")]
+INFO_LABELS = DEVICE_LABELS
 
 
 class DetectWorker(QThread):

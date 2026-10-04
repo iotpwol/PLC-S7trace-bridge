@@ -28,7 +28,7 @@ from ..core.csvio import CsvRecorder, csv_start_wall, read_csv, write_csv
 from ..core.planner import MODES
 from ..core.symbols import Symbol
 from ..core.netaddr import ACCEPTABLE, ipv4_state
-from ..core.types import Signal
+from ..core.types import LEGEND_MODES, Signal, signal_tip
 from ..core.drivers import CONN_LABEL, SOURCE_OF, family_of
 from .diag_dialog import DiagDialog
 from .duration_combo import DurationCombo
@@ -36,8 +36,9 @@ from .markers_ui import TabMarkers
 from .plotview import PlotView
 from .signals_dialog import SignalsDialog
 from ..core import ip_history, sessions
-from ..core.store import KIND_LABEL, KINDS, MODE_LABEL, DbRecorder, StoreConfig, test_connection
+from ..core.store import KIND_LABEL, KINDS, MODE_LABEL, DbRecorder, StoreConfig, device_summary, test_connection
 from ..core.store import MODES as STORE_MODES            # (planner.MODES = communication modes)
+from .fold_group import FoldGroup
 from .fold_splitter import DEFAULT_BAR, FoldSplitter
 from .pan_label import PanLabel
 from .ip_edit import IpCombo
@@ -182,11 +183,17 @@ class TraceTab(QWidget):
         lv = QVBoxLayout(left)
         lv.setContentsMargins(14, 10, 8, 6)
 
+        self.folds: dict[str, FoldGroup] = {}
+
         def group(title):
-            g = QGroupBox(title)
-            f = QFormLayout(g)
+            g = FoldGroup(title)                     # a click on the title folds the group (state saved with the layout)
+            body = QWidget()
+            f = QFormLayout(body)
             f.setLabelAlignment(Qt.AlignLeft)
             f.setContentsMargins(8, 10, 8, 8)
+            g.set_body(body)
+            g.foldedChanged.connect(self._layout_moved)
+            self.folds[title] = g
             lv.addWidget(g)
             return f
 
@@ -387,6 +394,7 @@ class TraceTab(QWidget):
         self.plot.legendMoved.connect(self._legend_moved)
         self.plot.legendDoubleClicked.connect(self.edit_signals)
         self.plot.legendContextMenu.connect(self._legend_menu)
+        self.plot.legend_tip = self._legend_signal_tip
         self.cb_ylayout.currentIndexChanged.connect(self._on_ylayout)
 
         for b, role in ((self.btn_start, "start"), (self.btn_stop, "stop"), (self.btn_pause, "pause"),
@@ -468,6 +476,7 @@ class TraceTab(QWidget):
         self._want_left = None                                       # the user's own drag wins over a pending restore
         self.ui_state["left_collapsed"] = self.split_h.collapsed
         self.ui_state["overview_collapsed"] = self.plot.split.collapsed
+        self.ui_state["folds"] = {k: g.folded() for k, g in self.folds.items()}
         # a folded pane keeps the size it had when it was last visible
         self.ui_state["left_width"] = self.split_h.saved if self.split_h.collapsed else self.split_h.sizes()[0]
         self.ui_state["overview_h"] = (self.plot.split.saved if self.plot.split.collapsed
@@ -481,6 +490,12 @@ class TraceTab(QWidget):
         """Right click on the legend: signals window, corner of this tab's legend, hide the legend."""
         m = QMenu(self)
         m.addAction("Sygnały…", lambda: self.edit_signals())
+        shows = m.addMenu("Legenda pokazuje")
+        for key, label in LEGEND_MODES.items():
+            a = shows.addAction(label)
+            a.setCheckable(True)
+            a.setChecked(self.cfg.legend_mode == key)
+            a.triggered.connect(lambda _=False, k=key: self.set_legend_mode(k))
         corners = m.addMenu("Położenie legendy (ta karta)")
         for label, p in (("Lewy górny róg", (0, 0)), ("Prawy górny róg", (1, 0)),
                          ("Lewy dolny róg", (0, 1)), ("Prawy dolny róg", (1, 1))):
@@ -488,6 +503,24 @@ class TraceTab(QWidget):
         m.addSeparator()
         m.addAction("Ukryj legendę", lambda: self.legendHideRequested.emit())
         return m
+
+    def set_legend_mode(self, mode: str) -> None:
+        """Legend text: the signal name or its address / OPC node (per tab, saved in the tab's configuration)."""
+        self.cfg.legend_mode = "address" if mode == "address" else "name"
+        self.plot.set_legend_mode(self.cfg.legend_mode)
+
+    def toggle_legend_mode(self) -> None:
+        self.set_legend_mode("name" if self.cfg.legend_mode == "address" else "address")
+
+    def _legend_signal_tip(self, i: int) -> str:
+        """Bubble over a legend row: the same text as in the signals window (with the current value while reading)."""
+        sigs = self.plot.signals
+        if i >= len(sigs):
+            return ""
+        s = sigs[i]
+        vals = self.current_values()
+        idx = next((k for k, x in enumerate(self.cfg.signals) if x is s or x.name == s.name), None)
+        return signal_tip(s, vals[idx] if vals is not None and idx is not None else None, reading=vals is not None)
 
     def _legend_moved(self, fx: float, fy: float) -> None:
         self.cfg.legend_pos = [round(fx, 4), round(fy, 4)]          # per tab (saved in the tab's configuration)
@@ -499,6 +532,9 @@ class TraceTab(QWidget):
     def apply_layout(self) -> None:
         """Splitter sizes + legend position from the shared UI settings (applied once the widget has a size)."""
         st = self.ui_state
+        if isinstance(st.get("folds"), dict):
+            for k, g in self.folds.items():
+                g.set_folded(bool(st["folds"].get(k, False)), animate=False)
         if isinstance(st.get("left_width"), int):
             self._want_left = st["left_width"]
             self.split_h.saved = st["left_width"]
@@ -633,6 +669,7 @@ class TraceTab(QWidget):
         self.cb_rmode.setCurrentIndex(max(self.cb_rmode.findData(c.store.mode), 0))
         self._rkind_changed()
         self.plot.set_legend_pos(float(c.legend_pos[0]), float(c.legend_pos[1]))
+        self.plot.set_legend_mode(c.legend_mode)
         self._loading = False
         self._trigger_changed()
 
@@ -885,6 +922,8 @@ class TraceTab(QWidget):
         """Data of the PLC read right after a (re)connection: replaces the previous data of this address."""
         self.device, self._device_ip = d, self.ed_ip.text()
         self._show_device()
+        if isinstance(self.recorder, DbRecorder):                  # the recording carries the data of the PLC it was made on
+            self.recorder.update_device(device_summary(d, self._device_ip))
 
     def _ip_changed_device(self, *_) -> None:
         if self.device is not None and self.ed_ip.text() != self._device_ip:      # another device: the data is stale
@@ -1017,6 +1056,11 @@ class TraceTab(QWidget):
             w.setEnabled(stopped)
 
     # ============================================================== tick
+    def apply_marker_look(self, cfg: dict) -> None:
+        """Line widths of the markers (Znaczniki -> Wygląd znaczników)."""
+        self.plot.set_marker_look(cfg)
+        self.mk.sync(True)
+
     def apply_render(self, cfg: dict) -> None:
         self._render = render_cfg.normalize(cfg)
         self.timer.setInterval(max(int(1000 / self._render["fps"]), 1))
@@ -1463,7 +1507,8 @@ class TraceTab(QWidget):
             c = self._collect()
             if c.store.kind == "csv":
                 path = self._file_name(c.rec_filename or DEFAULT_REC_NAME, "REC", c.rec_folder or "rec")
-                self.recorder = CsvRecorder(path, self._run_signals, self.start_wall, c.store.mode)
+                self.recorder = CsvRecorder(path, self._run_signals, self.start_wall, c.store.mode,
+                                          device_summary(self.device, c.ip))
             else:
                 from .store_dialog import RecInfoDialog
                 mode, info = c.store.title_ask, dict(self._rec_info)
@@ -1479,8 +1524,9 @@ class TraceTab(QWidget):
                 self._rec_info = info
                 self.recorder = DbRecorder(
                     c.store, self._run_signals, self.start_wall,
-                    {"name": self.title(), "ip": c.ip, "tab": self.title(), "conf": c.conf_name, **info},
-                    base_dir=data_dir())
+                    {"name": self.title(), "ip": c.ip, "tab": self.title(), "conf": c.conf_name,
+                     "device": device_summary(self.device, c.ip), **info},
+                    base_dir=data_dir(), t0=self.buffer.last_time() if len(self.buffer) else 0.0)
                 path = self.recorder.path
                 if c.store.kind in StoreConfig.NETWORK:
                     self._probe_db(c.store, self.recorder.session)

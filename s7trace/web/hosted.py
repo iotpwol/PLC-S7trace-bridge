@@ -13,12 +13,13 @@ import numpy as np
 
 from ..core.acq_process import ProcAcquirer
 from ..core.buffer import TraceBuffer
+from ..core import diagnostics as dg
 from ..core.config import TabConfig, load_app_config
 from ..core.csvio import CsvRecorder, write_csv
 from ..core.drivers import CONN_LABEL, family_of
-from ..core.store import DbRecorder, StoreConfig
+from ..core.store import DbRecorder, StoreConfig, device_lines, device_summary
 from ..core.trigger import TriggerEngine
-from ..core.types import Signal
+from ..core.types import Signal, signal_tip_static
 from . import files
 
 MAX_SERIES_POINTS = 4000
@@ -80,6 +81,24 @@ class HostedConnection:
                 "device": {k: v for k, v in info.items() if isinstance(v, (str, int, float)) and v != ""},
                 "shared": not self.owner, "can_edit": self.can_edit(user, role), "can_run": self.can_run(user, role),
                 "trigger": self.trigger_info(), "rec": self.rec_describe()}
+
+    def diag(self) -> dict:
+        """What the Diagnostics view shows: link quality (the same numbers as 'Diagnostyka połączenia' of the program), the controller data
+        and its clock, the state of the connection."""
+        acq = self.acq
+        snap = acq.diag.snapshot() if acq is not None and getattr(acq, "diag", None) is not None else None
+        rating, notes = dg.verdict(snap) if snap else ("Brak danych", ["Połączenie nie pracuje – uruchom je (Start) na stronie Przegląd."])
+        dev = self.device or {}
+        plc_t = dev.get("plc_time")
+        plc = None
+        if isinstance(plc_t, datetime):
+            ref = datetime.utcnow() if dev.get("plc_time_utc") else datetime.now()
+            plc = {"time": plc_t.strftime("%Y-%m-%d %H:%M:%S"), "utc": bool(dev.get("plc_time_utc")),
+                   "diff_s": round((plc_t - ref).total_seconds(), 1)}
+        return {"id": self.id, "name": self.name, "ip": self.cfg.ip, "state": self.state, "message": self.message,
+                "method": CONN_LABEL.get(self.method, self.method or "automatycznie"), "cycle_ms": self.cfg.cycle_ms,
+                "started_us": self.started_us, "samples": len(self.buffer), "rating": rating, "notes": notes,
+                "link": _jsonable(snap) if snap else None, "device": device_lines(device_summary(self.device, self.cfg.ip)), "plc_time": plc}
 
     def trigger_info(self) -> dict:
         tc = self.cfg.trigger
@@ -249,13 +268,15 @@ class HostedConnection:
         if target == "csv":
             path = files.new_path(self.mgr.files_root if self.mgr else "", self.owner, "rec", c.rec_filename,
                                   confname=c.conf_name or self.name, ip=c.ip, tab=self.name)
-            rec = CsvRecorder(path, self.signals, self.start_wall, c.store.mode)
+            rec = CsvRecorder(path, self.signals, self.start_wall, c.store.mode, device_summary(self.device, c.ip))
             label = os.path.basename(path)
         else:
             scfg, base = self._store_for(target)
             rec = DbRecorder(scfg, self.signals, self.start_wall,
                              {"name": self.name, "ip": c.ip, "tab": self.name, "conf": c.conf_name or self.name,
-                              "owner": user, "computer": ("Web " + address).strip(), **info}, base_dir=base)
+                              "owner": user, "computer": ("Web " + address).strip(),
+                              "device": device_summary(self.device, c.ip), **info}, base_dir=base,
+                             t0=self.buffer.last_time() if len(self.buffer) else 0.0)
             label = f"{target}: {rec.path}"
         return rec, label
 
@@ -284,6 +305,9 @@ class HostedConnection:
         with self._lock:
             self.device = d
             self.version += 1
+        rec = self.recorder
+        if isinstance(rec, DbRecorder):                          # the recording carries the data of the PLC it was made on
+            rec.update_device(device_summary(d, self.cfg.ip))
 
     # ---- data
     def series(self, seconds: float = 60.0, max_points: int = MAX_SERIES_POINTS, since: float | None = None,
@@ -305,8 +329,27 @@ class HostedConnection:
             t, v = t[idx], v[idx]
         cols = [[None if x != x else float(x) for x in v[:, k]] for k in range(n)] if len(t) else [[] for _ in range(n)]
         return {"t": [float(x) for x in t], "names": [s.name for s in self.signals], "values": cols,
-                "colors": [s.color for s in self.signals], "last": float(last), "state": self.state,
+                "colors": [s.color for s in self.signals], "shares": [float(s.share) for s in self.signals],
+                "gains": [float(s.gain) for s in self.signals], "dtypes": [s.dtype for s in self.signals],
+                "offsets": [float(s.offset_y) for s in self.signals],
+                "addresses": [s.address for s in self.signals], "tips": [signal_tip_static(s) for s in self.signals],
+                "layout": {"legend_mode": self.cfg.legend_mode, "y_layout": self.cfg.y_layout, "auto_y": self.cfg.auto_y, "y_min": self.cfg.y_min,
+                           "y_max": self.cfg.y_max, "show_points": self.cfg.show_points},
+                "last": float(last), "state": self.state,
                 "start_us": int(self.start_wall.timestamp() * 1e6)}
+
+
+def _jsonable(v):
+    """numpy numbers / NaN / tuples of a statistics snapshot -> plain JSON values."""
+    if isinstance(v, dict):
+        return {str(k): _jsonable(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_jsonable(x) for x in v]
+    if isinstance(v, np.generic):
+        v = v.item()
+    if isinstance(v, float) and v != v:
+        return None
+    return v
 
 
 class HostManager:

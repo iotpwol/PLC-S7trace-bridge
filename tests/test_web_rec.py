@@ -217,6 +217,7 @@ def test_rec_sqlite_target_with_owner_metadata(sim, mgr):
         assert s["title"] == "Próba" and s["owner"] == "ola" and s["computer"] == "Web 10.0.0.7" and s["notes"] == "uwagi"
         meta, t, m = b.read(s["id"])
         assert len(t) >= 1 and list(m[-1]) == [1.0, 1.0]            # mode "changes": one row for constant values
+        assert s["device"]["info"]["model"] == "CPU 315-2 PN/DP" and s["device"]["info"]["serial"].startswith("S C-")   # tied to the PLC
     finally:
         b.close()
 
@@ -307,3 +308,69 @@ def test_http_targets(srv):
     assert adm.post("/api/targets", {"action": "test", "name": "Nie ma"})[0] == 404
     assert adm.post("/api/targets", {"action": "delete", "name": "Baza"})[0] == 200
     assert ola.get("/api/targets")[1]["targets"] == []
+
+
+def test_http_diag_view(srv, sim):
+    """Diagnostics of a connection: stopped = no link data; running = the same numbers as the program, the controller table, a ping."""
+    ola, jan = _user(srv, "ola"), _user(srv, "jan")
+    st, d = ola.post("/api/connections", {"name": "L", "ip": f"127.0.0.1:{PORT}", "slot": 2, "cycle_ms": 25, "window_s": 2,
+                                          "signals": [{"name": "b0", "dtype": "BOOL", "db": 1, "byte": 100, "bit": 0}]})
+    cid = d["id"]
+    try:
+        assert jan.get(f"/api/connections/{cid}/diag")[0] == 404                                   # someone else's connection
+        st, dg = ola.get(f"/api/connections/{cid}/diag")
+        assert st == 200 and dg["rating"] == "Brak danych" and dg["link"] is None and dg["device"] == [] and dg["spools"] == []
+        assert ola.post(f"/api/connections/{cid}/start")[0] == 200
+        assert _wait(lambda: ola.get(f"/api/connections/{cid}")[1]["state"] == "running")
+        time.sleep(1.0)
+        st, dg = ola.get(f"/api/connections/{cid}/diag?ping=1")
+        assert st == 200 and dg["state"] == "running" and dg["link"]["samples"] > 5 and dg["link"]["lag"]["avg"] is not None
+        assert dg["rating"] in ("Bardzo dobre", "Dobre", "Przeciętne", "Słabe") and dg["notes"]
+        assert ["Model CPU", "CPU 315-2 PN/DP"] in dg["device"] and any(a == "Numer seryjny" for a, _ in dg["device"])
+        assert "ping_ms" in dg and dg["others"] == []
+    finally:
+        ola.post(f"/api/connections/{cid}/stop")
+
+
+def test_edit_chart_layout_and_series_fields(sim, mgr):
+    cfg = _cfg()
+    v = editing.view(cfg)
+    assert v["y_layout"] == "lanes" and v["auto_y"] is True and v["show_points"] is False
+    changed = editing.apply(cfg, {"y_layout": "offset", "auto_y": False, "y_min": -5, "y_max": 120, "show_points": True}, running=True)
+    assert set(changed) == {"y_layout", "auto_y", "y_min", "y_max", "show_points"}          # the look of the chart: allowed while running
+    assert (cfg.y_layout, cfg.auto_y, cfg.y_min, cfg.y_max, cfg.show_points) == ("offset", False, -5.0, 120.0, True)
+    for bad in ({"y_layout": "x"}, {"y_min": "abc"}, {"y_max": 1e15}):
+        with pytest.raises(editing.EditError):
+            editing.apply(cfg, bad, running=False)
+    cfg.signals[0].offset_y, cfg.signals[0].gain = 3.5, 2.0
+    h = _run(mgr, cfg)
+    try:
+        s = h.series(5)
+        assert s["offsets"] == [3.5, 0.0] and s["gains"] == [2.0, 1.0] and s["layout"]["y_layout"] == "offset" and s["layout"]["show_points"] is True
+    finally:
+        h.shutdown()
+
+
+def test_http_help_version_and_legend_data(srv, sim):
+    from s7trace import version
+    ola = _user(srv, "ola")
+    anon = Client(srv)
+    assert anon.get("/api/version")[1]["version"] == version.VERSION and anon.get("/api/version")[1]["author"] == "PWOL79 & CLAUDE"
+    h = anon.get("/api/help")[1]["help"]
+    assert "cykl [ms]" in h and "Do czego służy" in h["start"] and "pobierz" in h
+    st, d = ola.post("/api/connections", {"name": "L", "ip": f"127.0.0.1:{PORT}", "slot": 2, "cycle_ms": 25, "window_s": 2, "legend_mode": "address",
+                                          "signals": [{"name": "b0", "dtype": "BOOL", "db": 1, "byte": 100, "bit": 0, "comment": "pierwszy"}]})
+    assert st == 200
+    cid = d["id"]
+    try:
+        assert ola.get(f"/api/connections/{cid}/config")[1]["legend_mode"] == "address"
+        assert ola.get(f"/api/connections/{cid}/config")[1]["device"] == []
+        assert ola.post(f"/api/connections/{cid}/start")[0] == 200
+        assert _wait(lambda: ola.get(f"/api/connections/{cid}")[1]["state"] == "running")
+        time.sleep(0.5)
+        s = ola.get(f"/api/connections/{cid}/series?seconds=5")[1]
+        assert s["addresses"] == ["DB1.DBX100.0"] and s["layout"]["legend_mode"] == "address"
+        assert "Adres: DB1.DBX100.0" in s["tips"][0] and "Opis: pierwszy" in s["tips"][0] and "Aktualna wartość" not in s["tips"][0]
+        assert any(a == "Model CPU" for a, _ in ola.get(f"/api/connections/{cid}/config")[1]["device"])
+    finally:
+        ola.post(f"/api/connections/{cid}/stop")

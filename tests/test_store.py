@@ -1090,3 +1090,100 @@ def test_influx_reads_a_range_too_big_for_memory_in_slices(influx, ver, monkeypa
     assert 0 < len(t) < 1200 and m[:, 0].max() == 5000.0 and m[:, 0].min() == 0.0 and np.all(np.diff(t) >= 0)
     assert t[0] == store.to_us(START, 0) and t[-1] >= store.to_us(START, 14990)
     b.close()
+
+
+# ------------------------------------------------------------------------------ the controller (device) data of a recording
+DEV = {"ip": "10.1.1.1", "method": "snap7", "rack": 0, "slot": 1,
+       "info": {"family": "S7-1500", "model": "CPU 1516-3 PN/DP", "order_code": "6ES7 516-3AN02-0AB0", "firmware": "V2.9.4",
+                "serial": "S C-ABC123", "station_name": "Piec1", "module_name": "CPU1516", "pdu": 960}}
+
+
+def test_device_summary():
+    assert store.device_summary(None) == {} and store.device_summary({"ip": "1.1.1.1", "info": {}}) == {}
+    d = store.device_summary({"method": "snap7", "rack": 0, "slot": 1, "info": {"family": "S7-1200", "pdu": 480, "x": None}}, "9.9.9.9")
+    assert d["ip"] == "9.9.9.9" and d["info"]["family"] == "S7-1200" and d["info"]["pdu"] == 480 and d["slot"] == 1
+
+
+def test_device_data_roundtrip_sqlite_and_update(tmp_path):
+    cfg = StoreConfig(kind="sqlite", sqlite_path=str(tmp_path / "d.db"))
+    rec = DbRecorder(cfg, SIGS, START, {"tab": "Piec", "device": DEV})
+    feed(rec, 30)
+    newer = {**DEV, "info": {**DEV["info"], "firmware": "V3.0"}}
+    rec.update_device(newer)                                          # a reconnection reported newer data
+    feed(rec, 30)
+    rec.close()
+    b = store.open_backend(cfg)
+    s = b.sessions()[0]
+    assert s["device"]["info"]["model"] == "CPU 1516-3 PN/DP" and s["device"]["info"]["firmware"] == "V3.0"
+    assert s["device"]["rack"] == 0 and s["device"]["slot"] == 1
+    b.close()
+
+
+def test_recording_without_device_data_has_an_empty_one(tmp_path):
+    cfg = StoreConfig(kind="sqlite", sqlite_path=str(tmp_path / "n.db"))
+    rec = _record_one(cfg)
+    b = store.open_backend(cfg)
+    assert b.sessions()[0]["device"] == {}
+    b.close()
+
+
+def test_device_data_roundtrip_influx(influx):
+    cfg = StoreConfig(url=influx.url, mode="changes", **INFLUX_CFGS[2])
+    rec = DbRecorder(cfg, SIGS, START, {"tab": "Piec", "device": DEV})
+    feed(rec, 30)
+    rec.update_device({**DEV, "info": {**DEV["info"], "firmware": "V3.0"}})
+    feed(rec, 30)
+    rec.close()
+    s = store.open_backend(cfg).sessions()
+    assert len(s) == 1 and s[0]["device"]["info"]["serial"] == "S C-ABC123" and s[0]["device"]["info"]["firmware"] == "V3.0"
+
+
+def test_device_data_goes_into_the_timescale_insert(pg):
+    cfg = StoreConfig(kind="timescale", host="db", pg_database="plant", pg_user="u", pg_password="p", table="rec_samples")
+    rec = DbRecorder(cfg, SIGS, START, {"device": DEV})
+    feed(rec, 20)
+    rec.close()
+    c = pg["conn"]
+    ins = next(p for s, p in c.log if s.startswith("INSERT INTO rec_samples_sessions("))
+    row = ins if isinstance(ins, (list, tuple)) and not isinstance(ins[0], (list, tuple)) else ins[0]
+    assert any(isinstance(v, str) and "CPU 1516-3 PN/DP" in v for v in row)
+    assert any("ADD COLUMN IF NOT EXISTS device text" in s for s, _ in c.log)
+    # reading: the column comes back as JSON text
+    b = store.open_backend(cfg)
+    c = pg["conn"]
+    cols = store.SESSION_COLS
+    vals = {k: None for k in cols}
+    vals.update(id="S1", name="n", start_us=5, ip="1.1.1.1", tab="T", conf="L", mode="changes", signals="[]", fields="[]",
+                device=json.dumps(DEV))
+    c.sessions = [tuple(vals[k] for k in cols)]
+    assert b.sessions()[0]["device"]["info"]["order_code"] == "6ES7 516-3AN02-0AB0"
+
+
+def test_sqlite_file_of_an_older_version_gets_the_device_column(tmp_path):
+    import sqlite3
+    p = tmp_path / "old2.db"
+    db = sqlite3.connect(p)
+    db.executescript("""CREATE TABLE sessions(id TEXT PRIMARY KEY, name TEXT, start_us INTEGER, end_us INTEGER, ip TEXT,
+        tab TEXT, conf TEXT, mode TEXT, signals TEXT, fields TEXT);
+        CREATE TABLE samples(session TEXT NOT NULL, sig INTEGER NOT NULL, ts_us INTEGER NOT NULL, value REAL,
+        PRIMARY KEY(session, sig, ts_us)) WITHOUT ROWID;
+        INSERT INTO sessions VALUES('OLD','n',5,NULL,'1.2.3.4','T','L','changes','[]','[]');""")
+    db.commit()
+    db.close()
+    b = store.open_backend(StoreConfig(kind="sqlite", sqlite_path=str(p)))
+    assert b.sessions()[0]["device"] == {}
+    b.update_session("OLD", {"device": DEV})
+    assert b.sessions()[0]["device"]["info"]["station_name"] == "Piec1"
+    b.close()
+
+
+def test_csv_rec_file_carries_the_device_line_and_still_reads(tmp_path):
+    from s7trace.core.csvio import CsvRecorder, read_csv
+    p = str(tmp_path / "r.csv")
+    r = CsvRecorder(p, SIGS, START, "all", DEV)
+    r.write(0.0, [1.0, 2.0, 3.0])
+    r.close()
+    head = open(p, encoding="utf-8").read().splitlines()
+    assert head[0] == "# s7trace v1" and head[1].startswith("# device: ") and "CPU 1516-3 PN/DP" in head[1]
+    sigs, t, v = read_csv(p)
+    assert [s.name for s in sigs] == ["A", "B", "C"] and len(t) == 1

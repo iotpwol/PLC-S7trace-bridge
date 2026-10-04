@@ -7,11 +7,12 @@ from typing import Callable
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtCore import QObject, Qt, Signal as QtSignal
-from PySide6.QtGui import QColor, QCursor, QPen
+from PySide6.QtCore import QObject, QRectF, Qt, Signal as QtSignal
+from PySide6.QtGui import QColor, QCursor, QFontMetricsF, QPen
 from PySide6.QtWidgets import QApplication, QLabel, QSplitter, QToolTip, QVBoxLayout, QWidget
 
-from ..core import render, render_cfg
+from ..core import marker_look, render, render_cfg
+from ..core.types import legend_text
 from .fold_splitter import FoldSplitter
 from ..core.buffer import TraceBuffer
 from ..core.types import Signal
@@ -49,6 +50,7 @@ class LaneAxis(pg.AxisItem):
     def __init__(self, *a, **k):
         super().__init__(*a, **k)
         self.lanes: list[tuple[float, float, str]] = []
+        self.labels: list[tuple[float, str, float, str, str]] = []   # (y, text, anchor y, 'min' / 'max' / 'mid', colour)
 
     def drawPicture(self, p, axisSpec, tickSpecs, textSpecs):
         if not self.lanes:
@@ -65,11 +67,22 @@ class LaneAxis(pg.AxisItem):
             p.setFont(self.style["tickFont"])
         p.setClipRect(self.boundingRect().toAlignedRect())
         h = max(self.height(), 1.0)
-        for rect, flags, text in textSpecs:
-            v = 1.0 - rect.center().y() / h
-            lane = min(self.lanes, key=lambda ln: abs(v - (ln[0] + ln[1]) / 2))
-            p.setPen(QPen(QColor(lane[2])))
-            p.drawText(rect, int(flags), text)
+        # The labels are placed here, not by pyqtgraph (it drops / shifts overlapping ones): the MIN label sits on the lower edge of
+        # its lane, the MAX label on the upper edge, so the numbers of neighbouring lanes never run into each other.
+        fm = QFontMetricsF(self.style["tickFont"] or p.font())
+        th = fm.height()
+        xs = [min(a.x(), b.x()) for _pen, a, b in tickSpecs]
+        xr = (min(xs) if xs else self.width() - 8) - 3
+        for y, text, anchor, kind, colour in self.labels:
+            if kind == "min":
+                top = (1.0 - anchor) * h - th
+            elif kind == "max":
+                top = (1.0 - anchor) * h
+            else:
+                top = (1.0 - y) * h - th / 2
+            top = min(max(top, 0.0), max(h - th, 0.0))
+            p.setPen(QPen(QColor(colour)))
+            p.drawText(QRectF(0.0, top, xr, th), int(Qt.AlignRight | Qt.AlignVCenter), text)
 
 
 LEGEND_MARGIN = 12
@@ -112,6 +125,7 @@ class PlotView(QWidget):
     markerMoved = QtSignal(int, float, float)   # a marker was dragged: (marker id, new start [s], new end [s] (= start for a point))
     markerPlaced = QtSignal(int, float)         # 'Zmień pozycję': the chart was clicked: (marker id, time [s])
     markerOpened = QtSignal(int)                # left click on a marker line: (marker id) -> the tab shows its description
+    markerEdit = QtSignal(int)                  # double click on a marker: (marker id) -> the edit window
 
     def __init__(self, buffer: TraceBuffer, parent=None):
         super().__init__(parent)
@@ -137,6 +151,7 @@ class PlotView(QWidget):
         self.vmarks: list[pg.InfiniteLine] = []
         self.hmarks: list[pg.InfiniteLine] = []
         self.mitems: dict[int, dict] = {}                 # bookmarks (core.markers) drawn in the visible range
+        self.mlook = dict(marker_look.DEFAULTS)           # line widths of the markers (Znaczniki -> Wygląd znaczników)
         self.mhi: set[int] = set()                        # markers drawn highlighted (the one being moved / a whole group)
         self._tip_id: int | None = None                   # marker whose bubble is shown
         self.place_marker: int | None = None              # waiting for a click that gives the new place of this marker
@@ -144,6 +159,9 @@ class PlotView(QWidget):
         self.v_mode = False
         self.h_mode = False
         self.legend_pos = (0.0, 0.0)
+        self.legend_mode = "name"                      # "name" / "address": what the legend shows
+        self.legend_tip = None                         # callable(signal index) -> bubble text of the signal under the cursor
+        self._legend_idx: list[int] = []               # signal index of every legend row
         self._ov_want: int | None = None
         self.y_layout = "lanes"                     # "lanes" (Share) / "offset" (Offset Y + Gain)
         self._lane_geo: dict[int, tuple[float, float]] = {}
@@ -238,9 +256,24 @@ class PlotView(QWidget):
 
     def _rebuild_legend(self) -> None:
         self.legend.clear()
-        for c, s in zip(self.curves, self.signals):
+        self._legend_idx = []
+        for i, (c, s) in enumerate(zip(self.curves, self.signals)):
             if s.plot:
-                self.legend.addItem(c, s.name)
+                self.legend.addItem(c, legend_text(s, self.legend_mode))
+                self._legend_idx.append(i)
+
+    def set_legend_mode(self, mode: str) -> None:
+        self.legend_mode = "address" if mode == "address" else "name"
+        self._rebuild_legend()
+
+    def _legend_row_at(self, pos):
+        """Index of the signal whose legend row is under the scene position (None = none)."""
+        if not self.legend.isVisible():
+            return None
+        for k, (sample, label) in enumerate(self.legend.items):
+            if k < len(self._legend_idx) and sample.sceneBoundingRect().united(label.sceneBoundingRect()).contains(pos):
+                return self._legend_idx[k]
+        return None
 
     # ------------------------------------------------ layout (saved in the UI settings)
     def overview_height(self) -> int:
@@ -341,6 +374,7 @@ class PlotView(QWidget):
         self.axis_y.setWidth(70 if lanes else 52)
         if not lanes:
             self.axis_y.lanes = []
+            self.axis_y.labels = []
             self.axis_y.setTicks(None)
 
     # ------------------------------------------------------------ lanes (Share)
@@ -396,21 +430,28 @@ class PlotView(QWidget):
     def _fmt(v: float) -> str:
         return f"{v:.5g}"
 
-    def _lane_labels(self, k: int, lo: float, hi: float, const: bool, px: float) -> list[tuple[float, str]]:
-        """Axis labels of one lane: MIN and MAX, plus intermediate values when the lane is tall enough."""
+    def _lane_labels(self, k: int, lo: float, hi: float, const: bool, px: float) -> list[tuple[float, str, float, str, str]]:
+        """Axis labels of one lane: MIN and MAX, plus intermediate values when the lane is tall enough.
+        (y of the value, text, y where the label is anchored, 'min' / 'max' / 'mid', lane colour)."""
         b, t = self._lane_geo[k]
         pad = (t - b) * LANE_PAD
         b2, t2 = b + pad, t - pad
         lane_px = (t - b) * px
+        col = self.signals[k].color
         if const:
-            return [((b2 + t2) / 2, self._fmt((lo + hi) / 2))] if lane_px >= 14 else []
+            return [((b2 + t2) / 2, self._fmt((lo + hi) / 2), (b2 + t2) / 2, "mid", col)] if lane_px >= 14 else []
         fr = [0.0, 1.0] if lane_px >= 26 else []
         if self.signals[k].dtype != "BOOL":
             if lane_px >= 140:
                 fr = [0.0, 0.25, 0.5, 0.75, 1.0]
             elif lane_px >= 70:
                 fr = [0.0, 0.5, 1.0]
-        return [(b2 + f * (t2 - b2), self._fmt(lo + f * (hi - lo))) for f in fr]
+        out = []
+        for f in fr:
+            y = b2 + f * (t2 - b2)
+            kind, anchor = ("min", b) if f == 0.0 else ("max", t) if f == 1.0 else ("mid", y)
+            out.append((y, self._fmt(lo + f * (hi - lo)), anchor, kind, col))
+        return out
 
     def set_y_range(self, lo: float, hi: float) -> None:
         self.y_range = (lo, hi)
@@ -600,14 +641,33 @@ class PlotView(QWidget):
         finally:
             self._mset = False
 
+    def set_marker_look(self, cfg: dict) -> None:
+        """Line widths of the markers (settings); the markers are rebuilt with the new look."""
+        self.mlook = marker_look.normalize(cfg)
+        for mid in list(self.mitems):
+            self._marker_remove(mid)
+
+    def _width(self, it: dict, case: str) -> int:
+        """Line width [px] of a marker: its own width (> 0) or the setting of the case: 'all' / 'sel' / 'other' / 'hover'."""
+        own = int(it["width"] or 0)
+        if case == "hover":
+            return max(self.mlook["width_hover"], own + 1)
+        if case == "other":
+            return self.mlook["width_other"]
+        return own or self.mlook["width_all" if case == "all" else "width_sel"]
+
     def _marker_pen(self, it: dict, hi: bool = False):
-        w = it["width"]
         restricted = bool(it["signals"]) and self.y_layout == "lanes"       # the full-height line is only a thin guide then
         col = QColor("#ffffff" if hi else it["color"])
         if restricted and not hi:
             col.setAlpha(120)
         style = Qt.SolidLine if hi else self.LINE_STYLES.get(it["style"], Qt.SolidLine)
-        return pg.mkPen(col, width=(w + 2) if hi else (1 if restricted else w), style=style)
+        w = self._width(it, "hover") if hi else self._width(it, "other" if restricted else "all")
+        return pg.mkPen(col, width=w, style=style)
+
+    def _hover_pen(self, it: dict):
+        """The line under the mouse: the marker's own colour, thicker (the same for points and the edges of a range)."""
+        return pg.mkPen(QColor(it["color"]), width=self._width(it, "hover"), style=self.LINE_STYLES.get(it["style"], Qt.SolidLine))
 
     def _marker_create(self, it: dict, look: tuple) -> dict:
         mid, col = it["id"], it["color"]
@@ -624,11 +684,12 @@ class PlotView(QWidget):
             main.sigRegionClicked.connect(lambda ev, i=mid: self._marker_clicked(i, ev))
             for ln in main.lines:
                 ln.sigClicked.connect(lambda l, ev, i=mid: self._marker_clicked(i, ev))
+                ln.setHoverPen(self._hover_pen(it))
             label = pg.InfLineLabel(main.lines[0], text, position=0.985, color=col, rotateAxis=(1, 0), anchors=[(1, 1), (1, 1)])
             self.plot.addItem(main, ignoreBounds=True)
         else:
             main = pg.InfiniteLine(pos=it["x0"], angle=90, movable=True, pen=self._marker_pen(it),
-                                   hoverPen=pg.mkPen("#ffffff", width=4), label=text, labelOpts=label_opts)
+                                   hoverPen=self._hover_pen(it), label=text, labelOpts=label_opts)
             main.setZValue(8)
             main.sigPositionChangeFinished.connect(lambda l, i=mid: self._marker_dropped(i, l))
             main.sigClicked.connect(lambda l, ev, i=mid: self._marker_clicked(i, ev))
@@ -667,9 +728,9 @@ class PlotView(QWidget):
                     r.setAcceptedMouseButtons(Qt.NoButton)
                     self.plot.addItem(r, ignoreBounds=True)
                     cur["extras"].append(r)
-                else:
-                    seg = pg.PlotCurveItem([it["x0"], it["x0"]], [b, t], pen=pg.mkPen(col, width=it["width"] + 2,
-                                                                                     style=self.LINE_STYLES.get(it["style"], Qt.SolidLine)))
+                pen = pg.mkPen(col, width=self._width(it, "sel"), style=self.LINE_STYLES.get(it["style"], Qt.SolidLine))
+                for x in ((it["x0"], it["x1"]) if it["kind"] == "range" else (it["x0"],)):     # a bar (edges of a range) in the lane
+                    seg = pg.PlotCurveItem([x, x], [b, t], pen=pen)
                     seg.setZValue(7)
                     seg.setAcceptedMouseButtons(Qt.NoButton)
                     self.plot.addItem(seg, ignoreBounds=True)
@@ -685,8 +746,10 @@ class PlotView(QWidget):
                 main.setBrush(pg.mkBrush(QColor(255, 255, 255, 90) if hi else self._range_fill(it)))
                 for ln in main.lines:
                     ln.setPen(pen)
+                    ln.setHoverPen(self._hover_pen(it))
             else:
                 main.setPen(pen)
+                main.setHoverPen(self._hover_pen(it))
 
     @staticmethod
     def _alpha(it: dict) -> int:
@@ -705,7 +768,19 @@ class PlotView(QWidget):
 
     def _on_hover(self, pos) -> None:
         """The cursor over a marker opens a bubble with its parameters and descriptions."""
-        if not self.mitems or QApplication.mouseButtons() != Qt.NoButton:
+        if QApplication.mouseButtons() != Qt.NoButton:
+            return
+        if self.legend_tip is not None:                             # the cursor over a legend row: the bubble of that signal
+            row = self._legend_row_at(pos)
+            if row is not None:
+                if self._tip_id != ("leg", row):
+                    self._tip_id = ("leg", row)
+                    QToolTip.showText(QCursor.pos(), self.legend_tip(row), self.glw)
+                return
+            if isinstance(self._tip_id, tuple):
+                QToolTip.hideText()
+                self._tip_id = None
+        if not self.mitems:
             return
         best, score = None, None
         if self.vb.sceneBoundingRect().contains(pos):
@@ -755,8 +830,11 @@ class PlotView(QWidget):
         if ev.button() == Qt.RightButton:
             ev.accept()
             self.markerMenu.emit(mid, ev.screenPos().toPoint())
-        elif ev.button() == Qt.LeftButton and not ev.double():
-            self.markerOpened.emit(mid)
+        elif ev.button() == Qt.LeftButton:
+            if ev.double():
+                self.markerEdit.emit(mid)
+            else:
+                self.markerOpened.emit(mid)
 
     def clear_markers(self) -> None:
         self.set_markers([])
@@ -861,7 +939,7 @@ class PlotView(QWidget):
         self.points_hidden = bool(self.show_points and n_vis > self.rcfg["points_max"])
         px = max(self.vb.height(), 1.0)
         lo = hi = None
-        ticks, lane_cols, info = [], [], {}
+        ticks, marks, info = [], [], {}
         for k, s in enumerate(self.signals):
             if k >= len(self.curves):
                 break
@@ -874,7 +952,7 @@ class PlotView(QWidget):
                 g, off, llo, lhi, const = self._lane_xf(k, v[:, k] if vis is None else v[vis, k])
                 b2, t2 = self._inner(k)
                 info[k] = (b2, t2, llo, lhi, s.name)
-                ticks += self._lane_labels(k, llo, lhi, const, px)
+                marks += self._lane_labels(k, llo, lhi, const, px)
             x_end = x1 if (self.follow and x1 > t[-1]) else None
             xs, ys = render.curve_data(t, v[:, k], g, off, x_end, max_points=self.rcfg["curve_points"])
             self.curves[k].setData(xs, ys, connect="finite")
@@ -891,6 +969,10 @@ class PlotView(QWidget):
         if lanes:
             self._lane_info = info
             self.axis_y.lanes = [(*self._lane_geo[k], self.signals[k].color) for k in self._lane_geo]
+            ticks = [(m[0], m[1]) for m in marks]
+            if marks != self.axis_y.labels:
+                self.axis_y.labels = marks
+                self.axis_y.update()
             if ticks != self._lane_ticks:
                 self._lane_ticks = ticks
                 self.axis_y.setTicks([ticks])

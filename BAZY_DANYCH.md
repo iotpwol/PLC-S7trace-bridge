@@ -44,6 +44,19 @@ W panelu **„Nagrywanie REC”** (lewy panel karty): lista **„Zapis do:”** 
 TimescaleDB), lista **„Próbki:”** (domyślnie *Tylko zmiany stanu*) i przycisk **„...”** (ustawienia bazy). Wybór jest
 zapamiętywany w konfiguracji **każdej karty osobno** (`TabConfig.store`).
 
+### 1.4. Dane sterownika w nagraniu
+
+Do opisu **każdego nagrania w każdej bazie** (SQLite, InfluxDB, TimescaleDB) zapisywane są też **dane sterownika PLC**, z którego pochodzą dane – żeby
+nagranie dało się powiązać z właściwym sterownikiem (np. gdy kilka linii ma ten sam adres albo sterownik został wymieniony): adres, sposób połączenia
+(rack / slot) oraz tabela „Informacje o sterowniku” – rodzina, model CPU, numer katalogowy (MLFB), wersja firmware, numer seryjny, nazwa stacji, nazwa modułu,
+producent / copyright, stan i ochrona CPU, długość PDU (przy OPC UA / Web API także produkt i wersja serwera). W SQLite i TimescaleDB to kolumna `device`
+(JSON, tekst), w InfluxDB pole `device` w pomiarze `<nazwa>_sessions`; starsze pliki SQLite i tabele TimescaleDB dostają kolumnę przy pierwszym otwarciu,
+a nagrania bez danych (powstałe w starszej wersji, albo gdy sterownik jeszcze nie odpowiedział) mają puste `device`.
+Dane są zapisywane przy naciśnięciu REC, a po ponownym połączeniu ze sterownikiem (nowszy odczyt) – aktualizowane w opisie nagrania. W plikach CSV z REC dane są
+w komentarzu `# device: {json}` na początku pliku (program czyta CSV, pomijając tę linię).
+Przegląd: w oknie „Przegląd nagrań” kolumny **Sterownik** (model + nazwa stacji) i **Nr seryjny**, przycisk **Sterownik…** (cała tabela) i wyszukiwanie po tych
+danych; w trybie Web ta sama kolumna na liście nagrań i opis sterownika nad wykresem (patrz `WEB.md`).
+
 ---
 
 ## 2. Dostępne cele zapisu i porównanie
@@ -257,12 +270,12 @@ Okno otwiera się zawsze (także podczas zbierania); **wczytanie na wykres** jes
 * **Baza**, „Ustawienia…” (połączenie, czasy, nagrania i użytkownicy), „Odśwież listę”, „Zaległe bufory…” (widoczny, gdy są takie bufory, p. 7.7).
 * **Szukanie** w tytule, uwagach, tagach, konfiguracji, karcie, IP, użytkowniku i komputerze (bez rozróżniania wielkości liter),
   filtr **użytkownika** (Moje / Wszystkie / konkretny użytkownik) i pole wyboru **Kosz**.
-* **Tabela** z kolumnami: Początek, Czas trwania, Tytuł, Tagi, Uwagi, Użytkownik, Komputer, Konfiguracja, IP, Karta, Zapis, Sygnały,
+* **Tabela** z kolumnami: Początek, Czas trwania, Tytuł, Tagi, Uwagi, Użytkownik, Komputer, Konfiguracja, IP, Karta, Sterownik, Nr seryjny, Zapis, Sygnały,
   Wpisy. **Sortowanie** po każdej kolumnie (kliknięcie nagłówka; czas i liczby sortują się liczbowo), domyślnie najnowsze na górze.
   Liczba wpisów jest podawana dla SQLite i TimescaleDB (InfluxDB nie podaje jej tanio).
 * **Grupuj po dniach:** nagłówek z datą i dniem tygodnia (oraz liczbą nagrań) nad nagraniami z każdego dnia, najnowsze dni na górze. Przy grupowaniu sortowanie po kolumnach jest wyłączone; nagłówków nie da się zaznaczyć.
 * **Tylko zakres czasu:** zaznacz i ustaw od–do (po wybraniu nagrania domyślnie jego początek i koniec).
-* Przyciski: **Właściwości…** (tytuł, uwagi, tagi), **Usuń** (do kosza albo trwale, p. 7.5), **Zapisz jako CSV…**, **Wczytaj**
+* Przyciski: **Właściwości…** (tytuł, uwagi, tagi), **Sterownik…** (dane sterownika zapisane z nagraniem, p. 1.4), **Usuń** (do kosza albo trwale, p. 7.5), **Zapisz jako CSV…**, **Wczytaj**
   (dwuklik też wczytuje) i – w widoku kosza – **Przywróć**, **Opróżnij kosz**.
 * Pasek pod tabelą: liczba nagrań, nagrań w koszu, liczba wpisów, ostrzeżenie o zaległych buforach.
 
@@ -306,7 +319,7 @@ opis trafia do bufora na dysku razem z danymi). Dodanie zmiennej w trakcie zapis
   „Kosz” można je **przywrócić** albo usunąć **trwale** (też zaznaczone grupą) lub **opróżnić kosz**.
 * Po „Kosz: przechowuj” dniach (domyślnie 30) nagranie z kosza znika na stałe – robi to program przy otwarciu przeglądu. 0 dni = bez kosza,
   usunięcie jest od razu trwałe. „Automatyczne czyszczenie” przenosi własne nagrania starsze niż N dni do kosza (domyślnie wyłączone).
-* Nagrania, które właśnie trwa w tym programie, nie można usunąć ani edytować w przeglądzie (zmieniasz je oknem „nazwa nagrania”); nagrania innych instancji programu są rozpoznawane tylko po braku czasu końca (kolumna „Czas trwania”).
+* Nagrania, które właśnie trwa w tym programie, nie można usunąć ani edytować w przeglądzie (zmieniasz je oknem „nazwa nagrania”); nagrania innych instancji programu są rozpoznawane tylko po braku czasu końca (kolumna „Czas trwania”). **Czas trwania nagrania liczy się od chwili naciśnięcia REC do ostatniej zapisanej próbki** (a nie od Startu skanowania): nagranie 20-sekundowe, włączone po minucie skanowania, pokazuje 20 s. W trybie „tylko zmiany” koniec nagrania to ostatnia próbka, a nie ostatnia zmiana. Okno „Przegląd nagrań” samo odczytuje listę przy otwarciu i po zmianie pola „Baza:”.
 * **Co dzieje się w bazie:**
   * **SQLite:** wiersze są kasowane, plik zmniejszany (`VACUUM`).
   * **TimescaleDB:** `DELETE` danych i opisu. Dane w skompresowanych fragmentach wymagają TimescaleDB 2.11+ (i są usuwane wolniej); błąd jest pokazywany. Jeśli ważne jest szybkie i pewne usuwanie, ustaw `compress_days` na 0.
@@ -326,7 +339,7 @@ opis trafia do bufora na dysku razem z danymi). Dodanie zmiennej w trakcie zapis
 
 ### 7.7. Zaległe bufory zapisu
 
-Bufory na dysku (p. 6.3), które nie zostały dosłane przed zamknięciem programu, widać w **Ustawienia → „Zaległe bufory zapisu do baz…”** i w przeglądzie
+Bufory na dysku (p. 6.3), które nie zostały dosłane przed zamknięciem programu, widać w **Diagnostyka → „Zaległe bufory zapisu do baz…”** i w przeglądzie
 nagrań (przycisk „Zaległe bufory…”). Dla każdego: opis nagrania, cel, liczba wpisów, rozmiar i informacja, czy dotyczy bieżącej bazy. **„Wyślij teraz”**
 dosyła bufor od razu (tylko dla bieżącej bazy), **„Usuń bufor”** kasuje go. Bufory trwających nagrań nie są pokazywane.
 
@@ -360,7 +373,7 @@ przekazania danych do Excela lub innych narzędzi.
 | Ustawienia bazy (połączenie + czasy) | przycisk „...” obok „Zapis do” **albo** Ustawienia → „Zapis nagrań w bazach danych…” (dla bieżącej karty; przy zapisie do CSV pyta, którą bazę ustawić) |
 | Test połączenia | „Testuj połączenie” w ustawieniach bazy; automatycznie przy REC |
 | Przegląd, opisy, kosz, usuwanie, odczyt nagrań | Plik → „Przegląd nagrań w bazach (SQLite / InfluxDB / TimescaleDB)…” |
-| Zaległe bufory zapisu | Ustawienia → „Zaległe bufory zapisu do baz…” |
+| Zaległe bufory zapisu, diagnostyka połączenia, informacje o sterowniku, aktywne sesje | menu **Diagnostyka** (kolejność menu: Plik, Widok, Diagnostyka, Znaczniki, Ustawienia, Pomoc) |
 | Eksport do CSV | „Zapisz jako CSV…” w przeglądzie nagrań |
 | Pomoc | F1 → „Przyciski sterujące” → REC |
 | Znaczniki, zapis znaczników, wyszukiwarka | menu **Znaczniki** (Dodaj znacznik teraz, Lista znaczników…, Zapisz znaczniki…, Wyszukiwarka danych…) oraz rząd przycisków „Znaczniki:” pod wykresem („Dodaj znacznik”, „Lista znaczników…”, „Zapisz znaczniki”, „Szukaj w danych…”); prawy przycisk na wykresie i na znaczniku (patrz rozdz. 13) |
@@ -476,8 +489,8 @@ sygnałów). Przypisanie do przebiegów można zmienić w edycji znacznika.
 | Rodzaj | punkt / zakres czasu |
 | Czas (od, do) | dokładność do milisekundy; można wpisać lub zmienić w oknie znacznika |
 | Kolor | paleta (pomarańczowy, czerwony, zielony, niebieski, fioletowy, żółty, turkusowy, biały) albo dowolny kolor |
-| Priorytet | Niski, Normalny, Wysoki, Krytyczny (wpływa też na domyślną grubość linii: 1–4 px) |
-| Grubość linii | 0 = według priorytetu, 1–8 px |
+| Priorytet | Niski, Normalny, Wysoki, Krytyczny (do sortowania i filtrów; nie zmienia grubości linii) |
+| Grubość linii | 0 = wg ustawień (menu Znaczniki → „Wygląd znaczników”), 1–8 px – własna grubość zawsze wygrywa z ustawieniami |
 | Rodzaj linii | ciągła, kreskowana, kropkowana, kreska-kropka |
 | Przezroczystość obszaru | tylko dla zakresu; domyślnie 76 % (obszar ledwo widoczny), 0 % = pełny kolor |
 | Dotyczy | wszystkie przebiegi albo lista wybranych (do 200) |
@@ -497,15 +510,23 @@ zaimportowanego pliku CSV (program zapamiętuje w CSV czas rozpoczęcia).
 
 - **Prawy przycisk na wykresie**: „Dodaj znacznik (punkt) tutaj…”, „Dodaj znacznik zakresu czasu tutaj…”, „Znacznik zakresu z kursorów V1–V2…” (gdy są ustawione oba
   kursory pionowe), „Zapisz znaczniki”, „Lista znaczników…”, „Szukaj w danych…”, przełącznik „Pokaż też znaczniki z innych połączeń”.
-- **Najechanie kursorem na znacznik** otwiera **dymek** z tytułem, czasem, priorytetem, przebiegami, grupą, opisem, uwagami, autorem i datami.
+- **Najechanie kursorem na znacznik** otwiera **dymek** z tytułem, czasem (dla zakresu: „Od:” i „Do:” jedno pod drugim, czcionką o stałej szerokości, więc cyfra pod cyfrą), priorytetem, linią, przebiegami, grupą, opisem, uwagami oraz kolejno: Autor, Założono, Zmodyfikował, Zmieniono. Pola zmienione od ostatniego zapisu (niezapisana edycja) są w dymku **podświetlone na żółto**.
+- **Podświetlenie po najechaniu**: linia (punktu i oba brzegi zakresu – ten sam standard) robi się grubsza i **zachowuje kolor znacznika**.
 - **Prawy przycisk na znaczniku** otwiera menu: edycja; **zmiana pozycji** (znacznik się podświetla, klik na wykresie ustawia go w nowym miejscu, prawy przycisk anuluje;
   zakres zachowuje długość, a środek trafia w kliknięte miejsce); **ukryj / pokaż nazwę na wykresie**; grupy; cofnięcie niezapisanej zmiany; usunięcie; „Pokaż na liście”.
+- **Dwuklik na znaczniku** otwiera okno edycji znacznika.
 - **Przeciąganie myszą**: punkt – za linię; zakres – za brzeg (zmiana początku lub końca) albo za wnętrze (przesunięcie całości).
 - Domyślnie widać znaczniki **tej karty** (połączenia) z widocznego zakresu czasu; znaczniki niezwiązane z żadną kartą widać zawsze.
 - Przycisk „Lista znaczników…” otwiera **listę**: wyszukiwanie po tekście (tytuł, opis, uwagi, autor, grupa – bez względu na wielkość liter i polskie znaki), filtry
   (priorytet, kolor, autor, grupa, zakres czasu / dat, tylko widoczny zakres, ta karta / wszystkie połączenia), sortowanie (wg czasu znacznika, ostatniej zmiany,
   priorytetu), kolumny: czas, tytuł, rodzaj, priorytet, dotyczy, grupa, autor, połączenie, zmieniono, stan; dwuklik albo „Przejdź do punktu” wraca na wykres
   (w razie potrzeby otwiera nagranie z bazy).
+
+**Grubości linii (menu Znaczniki → „Wygląd znaczników (grubość linii)…”)** – ustawiane globalnie, zapisywane **razem z konfiguracją interfejsu**: wchodzą do pliku „Zapisz konfigurację interfejsu” (Ustawienia → Interfejs; w pliku jako cztery parametry `marker_width_*`, po jednym w linii) i wracają przy jego wczytaniu; plik starszej wersji bez tych parametrów zostawia bieżące ustawienia:
+linia znacznika „Dotyczy: wszystkie przebiegi” (domyślnie 2 px), linia w pasach przebiegów **wybranych** (3 px), cienka półprzezroczysta prowadnica przez pasy **pozostałych** przebiegów (1 px)
+i linia **podświetlona** po najechaniu (4 px). Zakres czasu dla wybranych przebiegów ma w ich pasach także oba brzegi (grubość „wybranych przebiegów”).
+
+Ten sam wygląd i zachowanie (dymek, podświetlenie, dwuklik, grubości linii, etykiety osi w pasach, czas trwania nagrania) ma tryb Web (`WEB.md`, rozdz. 15 i 19); różnica: ustawienia grubości linii w Web są pamiętane w przeglądarce.
 
 ### 13.5. Grupy znaczników
 

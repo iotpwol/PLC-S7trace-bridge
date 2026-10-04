@@ -16,13 +16,18 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
 
 from .auth import KIND_LABEL, ROLE_LABEL, AuthError, UserStore, role_allows
+from ..core import diagnostics as dg
+from ..core import store as st
 from ..core.config import TabConfig
+from .. import version
+from ..core import help_texts
 from . import editing
 from . import files
 from . import sso
 from .agents import Agents, host_of
 from .hosted import HostManager
 from .markers_api import MarkerService, search_connection
+from .prefs import Prefs
 from .recordings import Library, RecError
 from .targets import TargetError, Targets
 
@@ -90,6 +95,7 @@ class App:
         h.targets = h.targets or self.targets
         self.library = Library(h.files_root, h.data_dir, h.targets)
         self.markers = MarkerService(os.path.join(data_dir, "web_markers.db"), h)      # bookmarks on charts (per author)
+        self.prefs = Prefs(os.path.join(data_dir, "prefs"))        # interface settings per account (look of the marker lines)
         self.agents = Agents()                                      # desktop programs that report to the server
         self.sso = False                                            # single sign-on with the Windows account (--sso)
         self.started = time.time()
@@ -169,6 +175,10 @@ class Handler(BaseHTTPRequestHandler):
                 s = self.app.sessions.get(self._token())
                 return self._json({"user": s["username"], "role": s["role"], "kind": s["kind"]} if s else {"user": None,
                                   "first_run": self.app.users.count() == 0, "sso": self.app.sso})
+            if path == "/api/help":
+                return self._json({"help": help_texts.HELP})
+            if path == "/api/version":
+                return self._json({"author": version.AUTHOR, "version": version.VERSION, "date": version.DATE})
             if path == "/api/sso":
                 return self._sso()
             if path == "/api/overview":
@@ -179,6 +189,11 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if path.startswith("/api/recordings"):
                 return self._recordings_get(path, q)
+            if path == "/api/prefs":
+                s = self._session("viewer")
+                if s is not None:
+                    self._json({"prefs": self.app.prefs.get(s["username"])})
+                return
             if path == "/api/markers":
                 s = self._session("viewer")
                 if s is not None:
@@ -248,16 +263,37 @@ class Handler(BaseHTTPRequestHandler):
             if not host.can_edit(s["username"], s["role"]):
                 return self._error(403, "Brak uprawnień do edycji tego połączenia.")
             return self._json({**editing.view(host.cfg, host.web, self.app.targets.names()), "state": host.state,
-                               "recording": host.recorder is not None})
+                               "recording": host.recorder is not None,
+                               "device": st.device_lines(st.device_summary(host.device, host.cfg.ip))})
         if what == "series":
             span = (float(q["from"]), float(q["to"])) if "from" in q and "to" in q else None
             return self._json(host.series(float(q.get("seconds", 60)), since=float(q["since"]) if "since" in q else None,
                                           span=span))
+        if what == "diag":
+            return self._diag(host, s, q)
         if what == "files":
             return self._files(host, parts[2:])
         if what == "stream":
             return self._stream(host, s, float(q.get("seconds", 60)))
         self._json(host.describe(s["username"], s["role"]))
+
+    def _diag(self, host, session, q: dict):
+        """Diagnostics of a connection: link quality, the controller, who else scans the same PLC, (admin) leftover disk buffers of
+        recordings and, on request (?ping=1), one ICMP ping of the controller."""
+        d = host.diag()
+        addr = host_of(host.cfg.ip)
+        others = [f"{x['user']} ({x['computer']})" for x in self.app.agents.scans() if x["ip"] == addr]
+        others += [f"{x['user']} ({x['computer']}: {x['title']})" for x in self.app.server_scans() if x["ip"] == addr and x["agent"] != host.id]
+        d["others"] = others
+        if q.get("ping"):
+            rtt = dg.system_ping(addr)
+            d["ping_ms"] = None if rtt is None else round(rtt, 1)
+        d["spools"] = []
+        if session["role"] == "admin" and self.app.hosts.data_dir:
+            d["spools"] = [{"name": x["name"], "target": x["target"], "rows": x["rows"], "size": x["size"],
+                            "title": (x["meta"] or {}).get("title", "") if isinstance(x["meta"], dict) else ""}
+                           for x in st.scan_spools(self.app.hosts.data_dir)]
+        self._json(d)
 
     def _stream(self, host, session, seconds: float):
         """Server-Sent Events: the last `seconds` at once, then the new samples about ten times per second."""
@@ -325,6 +361,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._detect(d)
             if path == "/api/recordings":
                 return self._recordings_post(d)
+            if path == "/api/prefs":
+                s = self._session("viewer")
+                if s is not None:
+                    self._json({"prefs": self.app.prefs.update(s["username"], d)})
+                return
             if path == "/api/markers":
                 return self._markers_post(d)
             if path == "/api/search":
@@ -351,7 +392,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         cfg = TabConfig()
         patch = {k: v for k, v in d.items() if k in ("name", "ip", "rack", "slot", "cycle_ms", "conn_type", "conn", "mode",
-                                                   "window_s", "signals", "trigger", "rec")}
+                                                   "window_s", "signals", "trigger", "rec", "y_layout", "auto_y", "y_min", "y_max",
+                                                   "show_points", "legend_mode")}
         try:
             web = {}
             editing.apply(cfg, patch, running=False, web=web, targets=self.app.targets.names())

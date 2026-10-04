@@ -66,10 +66,12 @@ function go(v) {
   if (v === "targets") refreshTargets();
   if (v === "recs") initRecs();
   if (v === "markers") refreshMarkers();
+  if (v === "diag") initDiag();
 }
 async function start() {
   me = await api("/api/me");
   if (!me.user) return showLogin();
+  mkLoadPrefs();
   $("who").textContent = `${me.user} (${me.role})`; $("logout").hidden = false; $("nav").hidden = false;
   $("nav-users").hidden = me.role !== "admin"; $("nav-targets").hidden = me.role !== "admin";
   $("new-conn").hidden = ROLE_RANK[me.role] < ROLE_RANK.operator;
@@ -120,7 +122,7 @@ window.openEditor = async (id) => {
   view = "editor"; show("editor"); stopStream(); $("e-error").textContent = "";
   let d;
   if (id) d = await api(`/api/connections/${id}/config`);
-  else d = { name: "", ip: "192.168.0.1", rack: 0, slot: 2, cycle_ms: 25, window_s: 200, conn_type: "auto", mode: null, state: "stopped",
+  else d = { name: "", ip: "192.168.0.1", rack: 0, slot: 2, cycle_ms: 25, window_s: 200, y_layout: "lanes", auto_y: true, y_min: 0, y_max: 10, show_points: false, conn_type: "auto", mode: null, state: "stopped",
              signals: [NEW_SIGNAL(1)], options: (await api("/api/options")).options };
   editing = { id, opts: d.options, running: d.state !== "stopped" };
   $("e-title").textContent = id ? `Edycja połączenia: ${d.name || d.ip}` : "Nowe połączenie";
@@ -128,6 +130,8 @@ window.openEditor = async (id) => {
   for (const el of $("e-form").querySelectorAll("input,select,button[type=button]")) if (!["e-cancel", "e-delete"].includes(el.id)) el.disabled = false;
   $("e-name").value = d.name; $("e-ip").value = d.ip; $("e-rack").value = d.rack; $("e-slot").value = d.slot;
   $("e-cycle").value = d.cycle_ms; $("e-window").value = d.window_s;
+  $("e-device").innerHTML = (d.device || []).map(([a, b]) => `<tr><th>${esc(a)}</th><td>${esc(b)}</td></tr>`).join("") || '<tr><td class="muted">Brak danych sterownika – pojawią się po pierwszym połączeniu.</td></tr>';
+  $("e-ylayout").value = d.y_layout || "lanes"; $("e-autoy").checked = d.auto_y !== false; $("e-ymin").value = d.y_min ?? 0; $("e-ymax").value = d.y_max ?? 10; $("e-points").checked = !!d.show_points; $("e-legend").value = d.legend_mode || "name";
   fillSelect($("e-type"), d.options.conn_types, d.conn_type); fillSelect($("e-mode"), d.options.modes, d.mode || d.options.modes[0]);
   $("e-delete").hidden = !id;
   $("e-sig").tBodies[0].innerHTML = ""; d.signals.forEach(addSigRow);
@@ -191,7 +195,8 @@ function collectSignals() {
 }
 $("e-form").addEventListener("submit", async (e) => {
   e.preventDefault(); $("e-error").textContent = "";
-  const body = { name: $("e-name").value, window_s: +$("e-window").value,
+  const body = { name: $("e-name").value, window_s: +$("e-window").value, y_layout: $("e-ylayout").value, auto_y: $("e-autoy").checked,
+    y_min: +$("e-ymin").value, y_max: +$("e-ymax").value, show_points: $("e-points").checked, legend_mode: $("e-legend").value,
     trigger: { enabled: $("t-enabled").checked, signal: $("t-signal").value, mode: $("t-mode").value, a: +$("t-a").value, b: +$("t-b").value,
                hysteresis: +$("t-h").value, pretrigger: +$("t-pre").value, action: $("t-action").value, filename: $("t-file").value } };
   if (!editing.recording) body.rec = { target: $("r-target").value, mode: $("r-mode").value, filename: $("r-file").value };
@@ -207,7 +212,7 @@ $("e-delete").addEventListener("click", async () => {
 
 // ---------------------------------------------------------------- live chart
 const COLORS = ["#ffb347", "#4eb8f0", "#7bd88f", "#ff7b7b", "#c792ea", "#f1fa8c", "#8be9fd", "#ffa7d1"];
-let markTimer = null, searchNames = "", userFrozen = false;
+let markTimer = null, searchNames = "", userFrozen = false, liveView = null;   // liveView: {x0, x1} the viewer zoomed / panned to (seconds of the series)
 function stopStream() { if (stream) { stream.close(); stream = null; } clearInterval(markTimer); }
 window.openChart = async (id) => {
   if (view !== "chart") { view = "chart"; show("chart"); }
@@ -220,8 +225,8 @@ window.openChart = async (id) => {
 function openChart() { window.openChart(); }
 let frozen = null, frozenKey = null, conn = null, lastDesc = null;
 function connectStream() {
-  stopStream(); frozen = null; frozenKey = null; lastDesc = null; userFrozen = false; $("c-live").hidden = true;
-  const id = $("c-conn").value; if (!id) return;
+  stopStream(); frozen = null; frozenKey = null; lastDesc = null; userFrozen = false; liveView = null; $("c-live").hidden = true;
+  const id = $("c-conn").value; connPrev = id; if (!id) return;
   conn = (overview?.connections || []).find((c) => c.id === id) || null;
   $("c-filelist").hidden = true;
   series = { t: [], values: [], names: [], colors: [], start_us: 0 };
@@ -230,14 +235,15 @@ function connectStream() {
   stream = new EventSource(`/api/connections/${id}/stream?seconds=${sec}`);
   stream.onmessage = (ev) => {
     const d = JSON.parse(ev.data);
-    if (d.reset) { series = { t: d.t, values: d.values, names: d.names, colors: d.colors, start_us: d.start_us }; }   // (identical colours: palette below)
+    if (d.reset) { series = { t: d.t, values: d.values, names: d.names, colors: d.colors, start_us: d.start_us, shares: d.shares, gains: d.gains, dtypes: d.dtypes, offsets: d.offsets, layout: d.layout, addresses: d.addresses, tips: d.tips }; }   // (identical colours: palette below)
     else { series.t.push(...d.t); d.values.forEach((col, k) => (series.values[k] ||= []).push(...col)); }
     if (d.start_us) series.start_us = d.start_us;
     if (d.names?.length && d.names.join("\u0001") !== searchNames) { searchNames = d.names.join("\u0001"); $("c-search-box")._rebuild?.(); }
+    if (d.shares) { series.shares = d.shares; series.gains = d.gains; series.dtypes = d.dtypes; series.offsets = d.offsets; series.layout = d.layout; series.addresses = d.addresses; series.tips = d.tips; }
     if (d.names?.length) { series.names = d.names; series.colors = new Set(d.colors).size < d.colors.length ? d.colors.map((_, k) => COLORS[k % COLORS.length]) : d.colors; }
     if (d.description) { lastDesc = d.description; describeChart(d.description); }
-    const cut = (series.t.at(-1) ?? 0) - sec;
-    while (series.t.length && series.t[0] < cut) { series.t.shift(); series.values.forEach((c) => c.shift()); }
+    const cut = liveView ? -Infinity : (series.t.at(-1) ?? 0) - sec;          // a zoomed / panned view keeps what the page has collected
+    while (series.t.length && (series.t[0] < cut || series.t.length > 60000)) { series.t.shift(); series.values.forEach((c) => c.shift()); }
     draw();
   };
 }
@@ -274,46 +280,89 @@ $("c-files").addEventListener("click", async () => {
 });
 window.delFile = async (id, kind, name) => { if (!confirm("Usunąć plik " + name + "?")) return;
   try { await api(`/api/connections/${id}/files`, { kind, name }); } catch (e) { alert(e.message); } $("c-filelist").hidden = true; $("c-files").click(); };
-$("c-conn").addEventListener("change", connectStream); $("c-sec").addEventListener("change", connectStream);
+let connPrev = "";
+$("c-conn").addEventListener("change", async () => { if (!(await mkConfirmLeave())) { $("c-conn").value = connPrev; return; } connectStream(); }); $("c-sec").addEventListener("change", connectStream);
 let drawPending = false;
 function draw() { if (drawPending) return; drawPending = true; requestAnimationFrame(() => { drawPending = false; paint(); }); }
-function paint() {
-  const ds = frozen || series, sec = +$("c-sec").value, t1 = frozen ? frozen.x1 : (ds.t.at(-1) ?? 0), t0 = frozen ? frozen.x0 : t1 - sec;
-  drawChart($("canvas"), ds, t0, t1, { mk: MK.live, markers: (lastDesc?.trigger?.events || []).map((e) => e.t), left: frozen ? "okno zamrożone triggerem" : `-${sec} s`,
-    right: frozen ? "" : "teraz", empty: "Brak danych – uruchom połączenie (Start) na stronie Przegląd.", legend: $("c-legend") });
+function liveRange() {
+  const ds = frozen || series, sec = +$("c-sec").value;
+  if (frozen) return [frozen.x0, frozen.x1];
+  if (liveView) return [liveView.x0, liveView.x1];
+  const t1 = ds.t.at(-1) ?? 0; return [t1 - sec, t1];
 }
-// one lane per signal, scaled to its own min..max of the shown range; steps (the value holds until the next change)
+function paint() {
+  const ds = frozen || series, sec = +$("c-sec").value, [t0, t1] = liveRange();
+  drawChart($("canvas"), ds, t0, t1, { ...cxOpts($("canvas"), ds), mk: MK.live, markers: (lastDesc?.trigger?.events || []).map((e) => e.t), left: frozen ? "okno zamrożone triggerem" : `-${sec} s`,
+    right: frozen ? "" : liveView ? "" : "teraz", empty: "Brak danych – uruchom połączenie (Start) na stronie Przegląd.", legend: $("c-legend") });
+  cxOverview($("canvas"));
+}
+// one lane per signal, scaled to its own min..max of the shown range; steps (the value holds until the next change).
+// o.layout "offset": one common area, value x gain + offset on one Y axis (auto min..max of all signals or o.yMin..o.yMax); o.points: sample points.
 function drawChart(cv, ds, t0, t1, o) {
   const g = cv.getContext("2d"), W = cv.width, H = cv.height, pad = { l: 60, r: 10, t: 8, b: 24 }, n = ds.names.length;
   g.fillStyle = "#000"; g.fillRect(0, 0, W, H); g.font = "12px sans-serif"; g.strokeStyle = "#333"; g.fillStyle = "#aaa";
-  cv._geo = null;
+  cv._geo = null; cv._ds = ds;
   if (!n || !ds.t.length) { g.fillText(o.empty || "Brak danych.", 70, 30); return; }
   const colors = new Set(ds.colors).size < ds.colors.length ? ds.colors.map((_, k) => COLORS[k % COLORS.length]) : ds.colors;
-  const bandH = (H - pad.t - pad.b) / n, X = (t) => pad.l + (t - t0) / ((t1 - t0) || 1) * (W - pad.l - pad.r), lanes = [];
+  const sh = ds.names.map((_, k) => Math.max(+(ds.shares || [])[k] || 1, 0.01)), shSum = sh.reduce((a, b) => a + b, 0);   // lane height ~ Share (as in the program)
+  const X = (t) => pad.l + (t - t0) / ((t1 - t0) || 1) * (W - pad.l - pad.r), lanes = [], offsetMode = o.layout === "offset", num = (v) => String(+v.toPrecision(5));
+  const gains = ds.gains || [], offs = ds.offsets || [], inRange = (i) => ds.t[i] >= t0 && ds.t[i] <= t1;
+  // values as drawn: x gain (+ offset in the offset layout), like the program
+  const cols = ds.names.map((_, k) => { const gn = gains[k] || 1, of = offsetMode ? (offs[k] || 0) : 0; return (ds.values[k] || []).map((x) => x === null || x === undefined ? null : x * gn + of); });
+  let gLo = 0, gHi = 1;
+  if (offsetMode) {
+    if (o.autoY === false) { gLo = +o.yMin; gHi = +o.yMax; }
+    else { let a = Infinity, b = -Infinity; cols.forEach((c) => c.forEach((x, i) => { if (x !== null && inRange(i)) { if (x < a) a = x; if (x > b) b = x; } })); if (Number.isFinite(a)) { gLo = a; gHi = b; } }
+    if (!(gHi > gLo)) { gLo -= 0.5; gHi = gLo + 1; }
+  }
+  const area = { top: pad.t, bot: H - pad.b - 4 };
+  let yy = pad.t;
+  if (offsetMode) {                                                                  // one frame, one neutral axis
+    g.strokeStyle = "#333"; g.strokeRect(pad.l, area.top, W - pad.l - pad.r, area.bot - area.top); g.fillStyle = "#aaa";
+    for (const f of [0, 0.25, 0.5, 0.75, 1]) g.fillText(num(gLo + f * (gHi - gLo)), 4, area.bot - f * (area.bot - area.top - 6) - 3 + (f === 1 ? 10 : f === 0 ? -1 : 4));
+  }
   for (let k = 0; k < n; k++) {
-    const col = ds.values[k] || [], top = pad.t + k * bandH, bot = top + bandH - 4, c = colors[k] || COLORS[k % COLORS.length];
-    lanes.push({ top, bot });
-    const fin = col.filter((x, i) => x !== null && ds.t[i] >= t0 && ds.t[i] <= t1), lo = Math.min(...fin), hi = Math.max(...fin), span = hi - lo || 1;
-    g.strokeStyle = "#333"; g.strokeRect(pad.l, top, W - pad.l - pad.r, bandH - 4);
-    g.fillStyle = "#aaa"; g.fillText(Number.isFinite(hi) ? hi.toPrecision(4) : "", 4, top + 12); g.fillText(Number.isFinite(lo) ? lo.toPrecision(4) : "", 4, bot);
-    g.fillStyle = c; g.fillText(ds.names[k], pad.l + 6, top + 14);
+    const bandH = (H - pad.t - pad.b) * sh[k] / shSum, top = offsetMode ? area.top : yy, bot = offsetMode ? area.bot : top + bandH - 4, c = colors[k] || COLORS[k % COLORS.length];
+    yy += bandH;
+    const gn = gains[k] || 1, isBool = (ds.dtypes || [])[k] === "BOOL", col = cols[k];
+    const fin = col.filter((x, i) => x !== null && inRange(i));
+    const lo = offsetMode ? gLo : isBool ? Math.min(0, gn) : Math.min(...fin), hi = offsetMode ? gHi : isBool ? Math.max(0, gn) : Math.max(...fin), span = hi - lo || 1;   // BOOL: a fixed scale 0..gain
+    lanes.push({ top, bot, lo, hi, span, name: ds.names[k], color: c });
+    if (!offsetMode) {
+      g.strokeStyle = "#333"; g.strokeRect(pad.l, top, W - pad.l - pad.r, bandH - 4);
+      const lh = bot - top, ly = (f) => bot - f * (bot - top - 6) - 3;
+      g.fillStyle = c;                                                                // labels in the colour of their lane: MIN on its lower edge, MAX on the upper one
+      if (Number.isFinite(lo) && Number.isFinite(hi)) {
+        if (hi === lo) { if (lh >= 14) g.fillText(num(lo), 4, (top + bot) / 2 + 4); }
+        else if (lh >= 26) {
+          g.fillText(num(hi), 4, top + 10); g.fillText(num(lo), 4, bot - 1);
+          for (const f of isBool ? [] : lh >= 140 ? [0.25, 0.5, 0.75] : lh >= 70 ? [0.5] : []) g.fillText(num(Math.abs(lo + f * (hi - lo)) < span * 1e-6 ? 0 : lo + f * (hi - lo)), 4, ly(f) + 4);
+        }
+      }
+    }
+    g.fillStyle = c; g.fillText(ds.names[k], pad.l + 6, top + 14 + (offsetMode ? 14 * k : 0));
     g.strokeStyle = c; g.lineWidth = 1.2; g.beginPath(); let pen = false, py = 0;
+    const pts = [];
     for (let i = 0; i < ds.t.length; i++) {
       const v = col[i]; if (v === null || v === undefined) { pen = false; continue; }
       const x = X(ds.t[i]), y = bot - (v - lo) / span * (bot - top - 6) - 3;
       if (!pen) { g.moveTo(x, y); pen = true; } else { g.lineTo(x, py); g.lineTo(x, y); }
       py = y;
+      if (o.points && inRange(i)) pts.push(x, y);
     }
     if (o.hold && pen) g.lineTo(X(t1), py);          // a recording of changes: the last value holds to the end of the range
     g.stroke();
+    if (o.points && pts.length <= 6000) { g.fillStyle = c; for (let i = 0; i < pts.length; i += 2) g.fillRect(pts[i] - 2, pts[i + 1] - 2, 4, 4); }   // "Punkty": at most 3000 shown
   }
-  cv._geo = { t0, t1, pad, W, H };
+  cv._geo = { t0, t1, pad, W, H, lanes, offsetMode };
   if (o.mk) mkPaint(g, cv, o.mk, cv._geo, lanes);                                    // markers (bookmarks) over the curves
   g.strokeStyle = "#ff4d4d"; g.fillStyle = "#ff4d4d"; g.lineWidth = 1; g.setLineDash([5, 4]);
   for (const t of o.markers || []) { if (t < t0 || t > t1) continue; const x = X(t); g.beginPath(); g.moveTo(x, pad.t); g.lineTo(x, H - pad.b); g.stroke(); g.fillText("T", x + 3, H - pad.b - 4); }
   g.setLineDash([]); g.fillStyle = "#aaa"; g.fillText(o.left || "", pad.l, H - 6);
   if (o.right) { const w = g.measureText(o.right).width; g.fillText(o.right, W - pad.r - w, H - 6); }
-  if (o.legend) o.legend.innerHTML = ds.names.map((nm, k) => `<span><i style="background:${colors[k] || COLORS[k % COLORS.length]}"></i>${esc(nm)}</span>`).join("");
+  if (cv._cx) cxPaint(g, cv);                                                        // cursors V1/V2, H1/H2 and their read-out
+  if (o.legend) o.legend.innerHTML = ds.names.map((nm, k) => { const last = [...(ds.values[k] || [])].reverse().find((x) => x !== null && x !== undefined), tip = (ds.tips?.[k] || "Nazwa: " + nm) + "\nAktualna wartość: " +(last === undefined ? "—" : +(+last).toPrecision(8));
+    return `<span title="${esc(tip)}"><i style="background:${colors[k] || COLORS[k % COLORS.length]}"></i>${esc(cxLegend(cv, ds, k))}</span>`; }).join("");
 }
 
 // ---------------------------------------------------------------- recordings stored in databases
@@ -334,18 +383,19 @@ async function refreshRecs() {
   } catch (e) { rv.list = []; $("rv-msg").textContent = "Błąd: " + e.message; }
   fillRecs();
 }
+const devTip = (d) => (d?.lines || []).map((l) => l[0] + ": " + l[1]).join("\n");
 function fillRecs() {
   const q = $("rv-q").value.trim().toLowerCase(), trash = $("rv-trash").checked;
-  const rows = rv.list.filter((r) => !q || [r.title, r.tags, r.notes, r.owner, r.computer, r.name, r.ip, r.conf, ...r.signals].join(" ").toLowerCase().includes(q));
+  const rows = rv.list.filter((r) => !q || [r.title, r.tags, r.notes, r.owner, r.computer, r.name, r.ip, r.conf, ...r.signals, ...r.device.lines.map((l) => l[1])].join(" ").toLowerCase().includes(q));
   $("t-recs").tBodies[0].innerHTML = rows.map((r) => `<tr><td><b>${esc(r.title || r.conf || r.id)}</b>${r.notes ? `<div class="muted">${esc(r.notes)}</div>` : ""}</td>
     <td>${new Date(r.start_us / 1000).toLocaleString("pl-PL")}</td><td>${r.recording ? "nagrywanie…" : fmtDur(r.start_us, r.end_us)}</td><td>${esc(r.owner)}</td>
-    <td class="muted">${esc(r.computer)}</td><td>${esc([r.name || r.tab, r.ip].filter(Boolean).join(" · "))}</td><td class="muted">${esc(r.signals.join(", "))}</td><td>${esc(r.tags)}</td>
+    <td class="muted">${esc(r.computer)}</td><td>${esc([r.name || r.tab, r.ip].filter(Boolean).join(" · "))}</td><td title="${esc(devTip(r.device))}">${esc(r.device.title)}${r.device.serial ? `<div class="muted">${esc(r.device.serial)}</div>` : ""}</td><td class="muted">${esc(r.signals.join(", "))}</td><td>${esc(r.tags)}</td>
     <td><button onclick="loadRec('${esc(r.id)}')">Wczytaj</button> <a href="/api/recordings/csv?source=${enc($("rv-src").value)}&id=${enc(r.id)}" download>CSV</a>
     ${r.can_modify ? `<button onclick="editRec('${esc(r.id)}')">Opis</button> ` + (trash ? `<button onclick="recAct('${esc(r.id)}','restore')">Przywróć</button> <button onclick="recAct('${esc(r.id)}','purge')">Usuń trwale</button>`
       : `<button onclick="recAct('${esc(r.id)}','trash')">${rv.trashDays > 0 ? "Do kosza" : "Usuń"}</button>`) : ""}</td></tr>`).join("")
-    || `<tr><td colspan="9" class="muted">${trash ? "Kosz jest pusty." : "Brak nagrań w tym źródle (nagrania powstają przyciskiem REC przy celu „sqlite” albo celu z listy administratora)."}</td></tr>`;
+    || `<tr><td colspan="10" class="muted">${trash ? "Kosz jest pusty." : "Brak nagrań w tym źródle (nagrania powstają przyciskiem REC przy celu „sqlite” albo celu z listy administratora)."}</td></tr>`;
 }
-$("rv-src").addEventListener("change", () => { $("rv-view").hidden = true; refreshRecs(); });
+$("rv-src").addEventListener("change", async () => { if (rv.cur && !(await mkConfirmLeave())) { return; } $("rv-view").hidden = true; refreshRecs(); });
 $("rv-refresh").addEventListener("click", refreshRecs); $("rv-trash").addEventListener("change", refreshRecs); $("rv-q").addEventListener("input", fillRecs);
 window.recAct = async (id, action) => {
   const text = { trash: rv.trashDays > 0 ? `Przenieść nagranie do kosza (do ${rv.trashDays} dni można je przywrócić)?` : "Usunąć nagranie? Tej operacji nie można cofnąć.",
@@ -361,25 +411,31 @@ $("rv-save").addEventListener("click", async () => {
   try { await api("/api/recordings", { source: $("rv-src").value, id: editingRec, action: "update", fields: { title: $("rv-title").value, notes: $("rv-notes").value, tags: $("rv-tags").value } }); }
   catch (e) { alert(e.message); } refreshRecs();
 });
-window.loadRec = async (id, from, to) => {
+window.loadRec = async (id, from, to, quiet) => {
+  if (id !== rv.cur && rv.cur && !quiet && !(await mkConfirmLeave())) return;          // unsaved markers of the recording on screen: remind first
   const r = rv.list.find((x) => x.id === id) || {}, qs = `source=${enc($("rv-src").value)}&id=${enc(id)}` + (from != null ? `&from=${from}&to=${to}` : "");
-  $("rv-msg").textContent = "Wczytuję…";
+  if (!quiet) $("rv-msg").textContent = "Wczytuję…";
+  const sameRec = rv.cur === id;
   try { rv.data = await api(`/api/recordings/data?${qs}&points=${Math.min(6000, $("rv-canvas").width * 2)}`); } catch (e) { $("rv-msg").textContent = "Błąd: " + e.message; return; }
   $("rv-msg").textContent = ""; rv.cur = id; rv.from = from ?? null; rv.to = to ?? null;
+  if (from == null && !(quiet && sameRec && rv.full)) { rv.ov = rv.data; rv.full = null; rv.full = recRange(); }          // the whole recording: the overview strip and the zoom limits
+  if (!sameRec && from != null) { rv.full = null; rv.ov = null; }
   $("rv-view").hidden = false; $("rv-name").textContent = (r.title || rv.data.title || id) + " ";
   $("rv-info").textContent = ` ${rv.data.rows} wierszy` + (rv.data.shown < rv.data.rows ? `, na wykresie ${rv.data.shown} (min/maks)` : "") + (rv.data.mode === "changes" ? " · zapis zmian" : "");
-  $("rv-csv").href = `/api/recordings/csv?${qs}`; $("rv-search-box")._rebuild?.(); await loadRecMarks(); drawRec(); $("rv-view").scrollIntoView({ behavior: "smooth" });
+  const dv = rv.data.device || r.device; $("rv-dev").textContent = dv?.title ? " · sterownik: " + dv.title + (dv.serial ? " (SN " + dv.serial + ")" : "") : ""; $("rv-dev").title = devTip(dv);
+  $("rv-csv").href = `/api/recordings/csv?${qs}`; if (!quiet) $("rv-search-box")._rebuild?.(); await loadRecMarks(); drawRec(); if (!quiet) $("rv-view").scrollIntoView({ behavior: "smooth" });
 };
 function recRange() { const d = rv.data, end = Math.max(d.t.length ? d.t.at(-1) : 0, d.end_us ? (d.end_us - d.start_us) / 1e6 : 0); return [rv.from ?? (d.t[0] ?? 0), rv.to ?? end]; }
 function drawRec() {
   const d = rv.data, [t0, t1] = recRange(), at = (t) => new Date(d.start_us / 1000 + t * 1000).toLocaleString("pl-PL");
-  drawChart($("rv-canvas"), d, t0, t1, { mk: MK.rec, hold: d.mode === "changes", left: at(t0), right: at(t1), empty: "Brak danych w tym zakresie.", legend: $("rv-legend") });
+  drawChart($("rv-canvas"), d, t0, t1, { ...cxOpts($("rv-canvas"), d), mk: MK.rec, hold: d.mode === "changes", left: at(t0), right: at(t1), empty: "Brak danych w tym zakresie.", legend: $("rv-legend") });
+  cxOverview($("rv-canvas"));
 }
 $("rv-all").addEventListener("click", () => { if (rv.cur) loadRec(rv.cur); });
 
 // ---------------------------------------------------------------- markers on the two charts
 const canMark = () => ROLE_RANK[me?.role] >= ROLE_RANK.operator;
-MK.live = { cv: $("canvas"), kind: "live", marks: [], srv: [], pred: (m) => m.conn === $("c-conn").value, hi: new Set(), hiGroup: "", place: null, drag: null, ds: () => frozen || series, startUs: () => (frozen || series).start_us || 0,
+MK.live = { cv: $("canvas"), kind: "live", marks: [], srv: [], showAll: false, pred: (m) => MK.live.showAll ? !!m.conn : m.conn === $("c-conn").value, hi: new Set(), hiGroup: "", place: null, drag: null, ds: () => frozen || series, startUs: () => (frozen || series).start_us || 0,
   target: () => ({ conn: $("c-conn").value }), canAdd: () => canMark() && !!$("c-conn").value, canEdit: (m) => m.can_edit, redraw: () => { if (view === "chart" && (frozen || series)) draw(); }, reload: async () => { await loadLiveMarks(); } };
 MK.rec = { cv: $("rv-canvas"), kind: "rec", marks: [], srv: [], pred: (m) => !!rv.cur && m.rec_id === $("rv-src").value + "|" + rv.cur, hi: new Set(), hiGroup: "", place: null, drag: null, ds: () => rv.data || { names: [] }, startUs: () => rv.data?.start_us || 0,
   target: () => ({ rec_id: $("rv-src").value + "|" + rv.cur }), canAdd: () => canMark() && !!rv.data, canEdit: (m) => m.can_edit, redraw: () => { if (view === "recs" && rv.data) drawRec(); }, reload: async () => { await loadRecMarks(); MK.rec.redraw(); } };
@@ -391,7 +447,7 @@ async function loadMarks(ctx, qs) {
 async function loadLiveMarks() {
   const id = $("c-conn").value, ds = frozen || series; if (!id || !ds.start_us) return;
   const last = ds.t.at(-1) ?? 0, sec = +$("c-sec").value, t0 = frozen ? frozen.x0 : last - sec, t1 = frozen ? frozen.x1 : last;
-  await loadMarks(MK.live, `conn=${encodeURIComponent(id)}&from=${Math.round(ds.start_us + t0 * 1e6)}&to=${Math.round(ds.start_us + t1 * 1e6)}&limit=500`);
+  await loadMarks(MK.live, (MK.live.showAll ? "conns=1" : `conn=${encodeURIComponent(id)}`) + `&from=${Math.round(ds.start_us + t0 * 1e6)}&to=${Math.round(ds.start_us + t1 * 1e6)}&limit=500`);
   draw();
 }
 async function loadRecMarks() { if (rv.cur) await loadMarks(MK.rec, "rec=" + encodeURIComponent($("rv-src").value + "|" + rv.cur) + "&limit=1000"); else { MK.rec.srv = []; MK.rec.marks = mkdOverlay([], MK.rec.pred); } }
@@ -399,24 +455,80 @@ function showUserFrozen(d, x0, x1) {
   const colors = new Set(d.colors).size < d.colors.length ? d.colors.map((_, k) => COLORS[k % COLORS.length]) : d.colors;
   frozen = { ...d, colors, x0, x1, trig: null }; userFrozen = true; $("c-live").hidden = false; loadLiveMarks(); draw();
 }
-$("c-live").addEventListener("click", () => { userFrozen = false; frozen = null; frozenKey = null; $("c-live").hidden = true; loadLiveMarks(); draw(); });
+$("c-live").addEventListener("click", () => { userFrozen = false; liveView = null; frozen = null; frozenKey = null; $("c-live").hidden = true; loadLiveMarks(); draw(); });
 $("c-addmark").addEventListener("click", () => { const ds = frozen || series; if (!ds.start_us || !canMark()) return alert(canMark() ? "Brak danych – uruchom połączenie." : "Rola „podgląd” nie zakłada znaczników.");
   mkAdd(MK.live, mkBlank(Math.round(ds.start_us + (ds.t.at(-1) ?? 0) * 1e6))); });
 mkAttach(MK.live); mkAttach(MK.rec); initMarkersView();
-mkSearchPanel($("c-search-box"), { names: () => series?.names || [], run: (b) => api("/api/search", { conn: $("c-conn").value, ...b }),
-  pick: async (h) => { const pad = Math.max(h.duration * 0.3, 10), f = h.t0 - pad, t = h.t1 + pad, d = await api(`/api/connections/${$("c-conn").value}/series?from=${f}&to=${t}`);
-    if (!d.t.length) return alert("Ten moment jest poza danymi, które połączenie trzyma w pamięci."); showUserFrozen(d, f, t); },
+mkSearchPanel($("c-search-box"), { names: () => series?.names || [], startUs: () => (frozen || series).start_us || 0, run: (b) => api("/api/search", { conn: $("c-conn").value, ...b }),
+  pick: async (h, quiet) => { const pad = Math.max(h.duration * 0.3, 10), f = h.t0 - pad, t = h.t1 + pad, d = await api(`/api/connections/${$("c-conn").value}/series?from=${f}&to=${t}`);
+    if (!d.t.length) { if (quiet) return false; return alert("Ten moment jest poza danymi, które połączenie trzyma w pamięci."); } showUserFrozen(d, f, t); },
   mark: (h, sigs, ev) => mkAdd(MK.live, mkBlank(h.t0_us, { title: "Wynik wyszukiwania", signals: sigs, ...(!ev && h.t1_us > h.t0_us ? { kind: "range", end_us: h.t1_us } : {}) })) });
-mkSearchPanel($("rv-search-box"), { names: () => rv.data?.names || [], run: (b) => api("/api/search", { source: $("rv-src").value, id: rv.cur, ...b }),
-  pick: (h) => { const pad = Math.max(h.duration * 0.3, 20); loadRec(rv.cur, Math.max(0, h.t0 - pad), h.t1 + pad); },
+mkSearchPanel($("rv-search-box"), { names: () => rv.data?.names || [], startUs: () => rv.data?.start_us || 0, run: (b) => api("/api/search", { source: $("rv-src").value, id: rv.cur, ...b }),
+  pick: (h, quiet) => { const end = rv.full ? rv.full[1] : 0; if (quiet && (h.t0 < 0 || (end && h.t0 > end))) return false; const pad = Math.max(h.duration * 0.3, 20); loadRec(rv.cur, Math.max(0, h.t0 - pad), h.t1 + pad); },
   mark: (h, sigs, ev) => mkAdd(MK.rec, mkBlank(h.t0_us, { title: "Wynik wyszukiwania", signals: sigs, ...(!ev && h.t1_us > h.t0_us ? { kind: "range", end_us: h.t1_us } : {}) })) });
-(() => {   // zoom: drag a range on the chart
-  const cv = $("rv-canvas"); let x0 = null;
-  const tAt = (ev) => { const b = cv.getBoundingClientRect(), px = (ev.clientX - b.left) / b.width * cv.width, [a, z] = recRange();
-    return a + Math.min(Math.max((px - 60) / (cv.width - 70), 0), 1) * (z - a); };
-  cv.addEventListener("mousedown", (e) => { if (rv.data) x0 = tAt(e); });
-  window.addEventListener("mouseup", (e) => { if (x0 === null) return; const t = tAt(e), a = Math.min(x0, t), z = Math.max(x0, t); x0 = null; if (z - a > 0.05 && rv.cur) loadRec(rv.cur, a, z); });
-})();
+// chart tools (cursors, zoom / pan with the mouse, overview strip, points, layout) of both charts: chartx.js
+let liveRefresh = null;
+cxAttach($("canvas"), { range: liveRange, busy: () => !!(MK.live.place || MK.live.drag),
+  limits: () => { const ds = frozen || series; return [ds.t[0] ?? 0, Math.max(ds.t.at(-1) ?? 0, (ds.t[0] ?? 0) + 0.1)]; },
+  setRange: (a, b) => { if (frozen) { frozen.x0 = a; frozen.x1 = b; } else { liveView = { x0: a, x1: b }; $("c-live").hidden = false; }
+    draw(); clearTimeout(liveRefresh); liveRefresh = setTimeout(loadLiveMarks, 250); },
+  redraw: draw, overview: { cv: $("ov-live"), ds: () => frozen || series } });
+cxToolbar($("c-tools"), $("canvas"));
+let recReload = null;
+cxAttach($("rv-canvas"), { range: () => recRange(), busy: () => !!(MK.rec.place || MK.rec.drag),
+  limits: () => rv.full || recRange(),
+  setRange: (a, b) => { if (!rv.cur) return; rv.from = a; rv.to = b; drawRec(); clearTimeout(recReload);
+    recReload = setTimeout(() => { const [lo, hi] = rv.full || [a, b]; if (a <= lo + 1e-6 && b >= hi - 1e-6) loadRec(rv.cur, undefined, undefined, true); else loadRec(rv.cur, a, b, true); }, 220); },
+  redraw: () => rv.data && drawRec(), overview: { cv: $("ov-rec"), ds: () => rv.ov || rv.data } });
+cxToolbar($("rv-tools"), $("rv-canvas"));
+
+// ---------------------------------------------------------------- diagnostics (the counterpart of the program's Diagnostyka menu)
+const DG_COLOR = { "Bardzo dobre": "#2fbf4a", "Dobre": "#7fcf3a", "Przeciętne": "#e0b020", "Słabe": "#e04040", "Brak połączenia": "#e04040", "Brak danych": "#8a8a8a" };
+const DG_SCORE = { "Bardzo dobre": 10, "Dobre": 8, "Przeciętne": 5, "Słabe": 2, "Brak połączenia": 0, "Brak danych": 0 };
+const dgF = (v, d = 1) => (typeof v === "number" && isFinite(v) ? v.toFixed(d) : "—");
+const dgHms = (sec) => { sec = Math.floor(sec || 0); return `${Math.floor(sec / 3600)}:${String(Math.floor(sec % 3600 / 60)).padStart(2, "0")}:${String(sec % 60).padStart(2, "0")}`; };
+let dgTimer = null, dgBusy = false, dgPing = null;       // dgPing: the last ping result stays visible while the view refreshes
+async function initDiag() {
+  const o = overview || await api("/api/overview"); overview = o; const cur = $("dg-conn").value;
+  $("dg-conn").innerHTML = o.connections.map((c) => `<option value="${c.id}">${esc(c.name)} (${esc(c.ip)})</option>`).join("");
+  if (cur && o.connections.some((c) => c.id === cur)) $("dg-conn").value = cur; else if ($("c-conn").value) $("dg-conn").value = $("c-conn").value;
+  await refreshDiag();
+  clearInterval(dgTimer); dgTimer = setInterval(() => { if (view === "diag" && $("dg-auto").checked) refreshDiag(); }, 2000);
+}
+async function refreshDiag(ping) {
+  const id = $("dg-conn").value; if (!id || dgBusy) { if (!id) $("dg-body").innerHTML = '<p class="muted">Brak połączeń.</p>'; return; }
+  dgBusy = true;
+  try { const d = await api(`/api/connections/${id}/diag` + (ping ? "?ping=1" : "")); if (ping) dgPing = { id, ms: d.ping_ms, at: new Date() };
+    renderDiag(d); $("dg-msg").textContent = ""; }
+  catch (e) { $("dg-msg").textContent = "Błąd: " + e.message; }
+  dgBusy = false;
+}
+function renderDiag(d) {
+  const L = d.link, col = DG_COLOR[d.rating] || "#8a8a8a", seg = DG_SCORE[d.rating] ?? 0;
+  const bar = Array.from({ length: 10 }, (_, i) => `<i style="background:${col};opacity:${i < seg ? 1 : 0.25}"></i>`).join("");
+  const keys = [["last", "Chwilowo"], ["avg10", "Śr. 10 s"], ["avg60", "Śr. 60 s"], ["avg", "Śr. całość"], ["min", "Min"], ["max", "Max"], ["std", "Odch. std."], ["p95", "P95"], ["p99", "P99"]];
+  const row = (title, o, extra) => `<tr><th>${title}</th>${keys.map(([k]) => `<td>${dgF(o?.[k])}</td>`).join("")}${extra || ""}</tr>`;
+  let h = `<div class="dg-rate"><b style="color:${col}">${esc(d.rating)}</b> <span class="dg-bar">${bar}</span> <span class="muted">${esc(d.name)} · ${esc(d.ip)} · ${esc(d.state)}${d.message ? " · " + esc(d.message) : ""} · metoda: ${esc(d.method)}</span></div>`;
+  h += "<ul>" + d.notes.map((n) => `<li>${esc(n)}</li>`).join("") + "</ul>";
+  if (dgPing && dgPing.id === d.id) h += `<p>Ping ICMP sterownika (z serwera, ${dgPing.at.toLocaleTimeString("pl-PL")}): <b>${dgPing.ms === null ? "brak odpowiedzi" : dgPing.ms + " ms"}</b></p>`;
+  if (L) {
+    h += `<h3>Czasy [ms]</h3><table class="dg"><thead><tr><th></th>${keys.map(([, t]) => `<th>${t}</th>`).join("")}</tr></thead><tbody>${row("Czas odczytu", L.lag)}${row("Okres próbkowania", L.period)}</tbody></table>`;
+    h += `<h3>Odczyt</h3><table class="dg"><tbody>
+      <tr><th>Cykl ustawiony</th><td>${dgF(L.cycle_ms, 0)} ms</td><th>Częstotliwość oczekiwana</th><td>${dgF(L.expected_rate)} Hz</td><th>Rzeczywista (10 s / całość)</th><td>${dgF(L.rate10)} / ${dgF(L.rate)} Hz</td><th>Maks. możliwa</th><td>${dgF(L.max_rate)} Hz</td></tr>
+      <tr><th>Próbki</th><td>${L.samples}</td><th>Pominięte cykle</th><td>${L.missed} (${dgF(L.missed_pct, 2)}%)</td><th>Odczyty dłuższe niż cykl</th><td>${L.overruns} (${dgF(L.overrun_pct, 2)}%)</td><th>Zalecany cykl</th><td>≥ ${L.safe_cycle_ms} ms</td></tr>
+      <tr><th>Błędy odczytu</th><td>${L.errors}</td><th>Ponowne połączenia</th><td>${L.reconnects}</td><th>Czas przerw / dostępność</th><td>${dgF(L.down_s)} s / ${dgF(L.availability, 2)}%</td><th>Czas pracy</th><td>${dgHms(L.uptime_s)}</td></tr>
+      <tr><th>Dane na cykl</th><td>${L.bytes_per_cycle} B w ${L.req_per_cycle} żądaniach</td><th>Przepustowość</th><td>${dgF(L.bytes_per_s, 0)} B/s, ${dgF(L.req_per_s)} żądań/s</td><th>Ruch w sieci (szacunek)</th><td>${dgF(L.wire_bytes_per_s * 8 / 1000)} kb/s</td><th>Ostatni błąd</th><td>${esc(L.last_error || "—")}</td></tr></tbody></table>`;
+  }
+  h += `<h3>Sterownik</h3>` + (d.device.length ? `<table class="dg"><tbody>${d.device.map(([a, b]) => `<tr><th>${esc(a)}</th><td>${esc(b)}</td></tr>`).join("")}</tbody></table>`
+    : '<p class="muted">Brak danych sterownika – pojawią się po pierwszym połączeniu.</p>');
+  if (d.plc_time) h += `<p>Czas sterownika (w chwili połączenia): <b>${esc(d.plc_time.time)}</b>${d.plc_time.utc ? " (UTC)" : ""}, różnica do zegara serwera <b>${d.plc_time.diff_s > 0 ? "+" : ""}${d.plc_time.diff_s} s</b>.</p>`;
+  h += `<h3>Kto jeszcze odczytuje ten sterownik</h3>` + (d.others.length ? "<ul>" + d.others.map((x) => `<li>${esc(x)}</li>`).join("") + "</ul>" : '<p class="muted">Nikt inny (wśród programów okienkowych zgłaszających się do serwera i połączeń tego serwera).</p>');
+  if (me.role === "admin") h += `<h3>Zaległe bufory zapisu (dysk serwera)</h3>` + (d.spools.length ? `<table class="dg"><thead><tr><th>Bufor</th><th>Cel</th><th>Nagranie</th><th>Wpisów</th><th>Rozmiar</th></tr></thead><tbody>${d.spools.map((x) =>
+    `<tr><td>${esc(x.name)}</td><td>${esc(x.target)}</td><td>${esc(x.title)}</td><td>${x.rows}</td><td>${(x.size / 1024).toFixed(0)} KB</td></tr>`).join("")}</tbody></table><p class="muted">Dane zostaną dosłane przy następnym nagraniu do tej samej bazy.</p>`
+    : '<p class="muted">Brak – wszystko dostarczone.</p>');
+  $("dg-body").innerHTML = h;
+}
+$("dg-conn").addEventListener("change", () => refreshDiag()); $("dg-refresh").addEventListener("click", () => refreshDiag()); $("dg-ping").addEventListener("click", () => refreshDiag(true));
 
 // ---------------------------------------------------------------- recording targets (administrator)
 let targets = [];
@@ -476,3 +588,60 @@ $("u-form").addEventListener("submit", async (e) => {
 $("u-kind").addEventListener("change", () => { $("u-pass").hidden = $("u-kind").value === "windows"; });
 
 start();
+
+
+// ---------------------------------------------------------------- foldable groups (title click; the state is remembered in this browser)
+(() => {
+  let saved = {}; try { saved = JSON.parse(localStorage.getItem("s7trace.folds") || "{}"); } catch (e) { /* none */ }
+  document.querySelectorAll(".fold").forEach((f) => {
+    const k = f.dataset.fold; if (saved[k]) f.classList.add("folded");
+    f.querySelector(".fold-h").addEventListener("click", () => {
+      f.classList.toggle("folded"); saved[k] = f.classList.contains("folded");
+      try { localStorage.setItem("s7trace.folds", JSON.stringify(saved)); } catch (e) { /* not remembered */ }
+    });
+  });
+})();
+
+
+// ---------------------------------------------------------------- "O programie" and the help mode ("?": the element under the mouse is described)
+$("about-btn").addEventListener("click", async () => {
+  try { const v = await (await fetch("/api/version")).json(); $("about-text").textContent = `S7Trace — rejestrator przebiegów z PLC Siemens S7\n(tryb Web)\n\nAutor: ${v.author}\nWersja: ${v.version}\nData: ${v.date}`; } catch (e) { $("about-text").textContent = "Brak danych o wersji."; }
+  $("about").showModal();
+});
+$("about-ok").addEventListener("click", () => $("about").close());
+fetch("/api/version").then((r) => r.json()).then((v) => { document.querySelector(".brand").title = `Wersja ${v.version} (${v.date}), autor: ${v.author}`; }).catch(() => {});
+(() => {
+  let HELP = null, on = false;
+  const norm = (t) => { t = (t || "").replace(/&/g, "").replace(/ /g, " ").trim().toLowerCase(); while (t && ":….?".includes(t.at(-1))) t = t.slice(0, -1).trimEnd(); return t.split(/\s+/).join(" "); };
+  const own = (el) => [...el.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent).join(" ").trim() || el.textContent.trim();
+  const caption = (el) => {
+    if (el.dataset?.help) return el.dataset.help;
+    if (el.matches?.("button,summary,h2,h3,th,legend")) return el.textContent;
+    const lab = el.closest?.("label"); if (lab) return own(lab);
+    if (el.id && document.querySelector(`label[for="${el.id}"]`)) return document.querySelector(`label[for="${el.id}"]`).textContent;
+    if (el.matches?.("td")) { const t = el.closest("table"), th = t?.tHead?.rows[0]?.cells[el.cellIndex]; if (th) return th.textContent; }
+    return "";
+  };
+  const resolve = (el) => {
+    for (let e = el, d = 0; e && d < 6; e = e.parentElement, d++) {
+      const cap = caption(e), t = cap && HELP[norm(cap)];
+      if (t) return t;
+      if (e.title && !e.matches("body,main,section")) return "Opis: " + e.title;
+    }
+    const e = el.closest?.("button") ? "Przycisk" : el.matches?.("input,select,textarea") ? "Pole" : "Element";
+    return `${e}${(caption(el) || "").trim() ? " „" + caption(el).trim() + "”" : ""}.\nPo najechaniu na element z opisem widać, do czego służy.`;
+  };
+  const show = (e) => {
+    const b = $("helpbubble"), t = resolve(e.target); if (!t) { b.hidden = true; return; }
+    b.innerHTML = t.split("\n").map((l) => { const i = l.indexOf(": "); return i > 0 && i < 24 ? `<b>${esc(l.slice(0, i))}:</b> ${esc(l.slice(i + 2))}` : esc(l); }).join("<br>");
+    b.hidden = false; b.style.left = Math.min(e.clientX + 14, innerWidth - 440) + "px"; b.style.top = Math.min(e.clientY + 18, innerHeight - b.offsetHeight - 8) + "px";
+  };
+  const set = async (v) => {
+    on = v; $("help-btn").classList.toggle("on", on); document.body.classList.toggle("helpmode", on); $("helpbubble").hidden = true;
+    if (on && !HELP) { try { HELP = (await (await fetch("/api/help")).json()).help; } catch (e) { HELP = {}; } }
+  };
+  $("help-btn").addEventListener("click", () => set(!on));
+  document.addEventListener("mouseover", (e) => { if (on && HELP && e.target !== $("help-btn")) show(e); });
+  document.addEventListener("mousemove", (e) => { if (on && HELP && !$("helpbubble").hidden) { const b = $("helpbubble"); b.style.left = Math.min(e.clientX + 14, innerWidth - 440) + "px"; b.style.top = Math.min(e.clientY + 18, innerHeight - b.offsetHeight - 8) + "px"; } });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && on) set(false); if (e.key === "F1" && e.shiftKey) { e.preventDefault(); set(!on); } });
+})();

@@ -433,7 +433,8 @@ def test_range_marker_drawn_as_translucent_area_and_dragged(tab, monkeypatch):
     got = ctl.draft.get(m.id)
     assert abs(got.at_us - (START.timestamp() + 110) * 1e6) < 2 and abs(got.end_us - (START.timestamp() + 170) * 1e6) < 2
     assert tuple(round(x, 3) for x in tab.plot.mitems[m.id]["main"].getRegion()) == (110.0, 170.0)
-    assert "→" in tab.plot.mitems[m.id]["data"]["tip"]
+    tip = tab.plot.mitems[m.id]["data"]["tip"]
+    assert "Od:" in tip and "Do:" in tip and "Zakres czasu" in tip
     # the V1 / V2 cursors offer a range marker in the chart menu
     tab.plot.set_v_mode(True)
     tab.plot._add_marker(tab.plot.vmarks, 20.0, 90)
@@ -479,13 +480,13 @@ def test_marker_for_chosen_plots_only(tab, monkeypatch):
     m = ctl.add_at_us(ctl.to_wall(100.0), end_us=ctl.to_wall(160.0))
     assert m.signals == ["Temp"]
     cur = tab.plot.mitems[m.id]
-    assert len(cur["extras"]) == 1                                             # an area in the lane of Temp only
+    assert len(cur["extras"]) == 3                                             # in the lane of Temp only: the area + 2 edge bars
     geo = tab.plot.lane_geometry()
     r = cur["extras"][0].rect()
     assert abs(r.height() - (geo[0][1] - geo[0][0])) < 1e-9
     _accept(monkeypatch, signals=["Temp", "Run"])                              # the assignment can be changed in the editor
     ctl.edit(m.id)
-    assert ctl.draft.get(m.id).signals == ["Temp", "Run"] and len(tab.plot.mitems[m.id]["extras"]) == 2
+    assert ctl.draft.get(m.id).signals == ["Temp", "Run"] and len(tab.plot.mitems[m.id]["extras"]) == 6
     _accept(monkeypatch)
     d = mu.MarkerEditDialog(ctl.draft.get(m.id), False, tab, ["Temp", "Run"])
     d.rb_all.setChecked(True)                                                   # ... also back to 'all plots'
@@ -573,3 +574,201 @@ def test_hover_opens_the_bubble_with_the_description(tab, monkeypatch):
     assert len(shown) == n                                                          # not re-opened while the cursor stays
     pv._on_hover(far)
     assert shown[-1] is None
+
+
+def test_hover_pen_keeps_colour_and_width_is_the_same_for_points_and_ranges(tab, monkeypatch):
+    ctl = tab.mk
+    p = ctl.store.add(ctl.to_wall(50.0), title="p", color="#3fc380", conn="Linia 1")
+    r = ctl.store.add(ctl.to_wall(100.0), end_us=ctl.to_wall(150.0), kind="range", title="r", color="#4aa3ff", conn="Linia 1")
+    ctl.sync(True)
+    pv = tab.plot
+    hp = pv.mitems[p.id]["main"].hoverPen
+    assert hp.color().name() == "#3fc380" and hp.width() == pv.mlook["width_hover"]
+    for ln in pv.mitems[r.id]["main"].lines:
+        assert ln.hoverPen.color().name() == "#4aa3ff" and ln.hoverPen.width() == pv.mlook["width_hover"]
+    # the line widths come from the settings (marker width 0 = 'wg ustawień')
+    tab.apply_marker_look({"width_all": 5, "width_sel": 7, "width_other": 2, "width_hover": 9})
+    assert pv.mitems[p.id]["main"].pen.width() == 5 and pv.mitems[p.id]["main"].hoverPen.width() == 9
+    assert "5 px" in pv.mitems[p.id]["data"]["tip"] or "wg ustawień" in pv.mitems[p.id]["data"]["tip"]
+    pv.set_signals([Signal(name="Temp", dtype="REAL", color="#ffb347"), Signal(name="Run", dtype="BOOL", color="#4eb8f0")])
+    pv.set_y_layout("lanes")
+    q = ctl.store.add(ctl.to_wall(70.0), title="q", signals=["Temp"], conn="Linia 1")
+    ctl.sync(True)
+    cur = pv.mitems[q.id]
+    assert cur["main"].pen.width() == 2 and cur["extras"][0].opts["pen"].width() == 7        # thin guide / the chosen lane
+    own = ctl.store.add(ctl.to_wall(80.0), title="own", line_width=3, conn="Linia 1")
+    ctl.sync(True)
+    assert pv.mitems[own.id]["main"].pen.width() == 3                                          # an own width wins
+
+
+def test_double_click_on_a_marker_opens_the_editor(tab, monkeypatch):
+    ctl = tab.mk
+    m = ctl.store.add(ctl.to_wall(50.0), title="x", conn="Linia 1")
+    ctl.sync(True)
+    seen = []
+    monkeypatch.setattr(ctl, "edit", lambda mid: seen.append(mid))
+    tab.plot.markerEdit.disconnect()
+    tab.plot.markerEdit.connect(lambda mid: seen.append(mid))
+
+    class Ev:
+        def __init__(self, double):
+            self._d = double
+
+        def button(self):
+            return Qt.LeftButton
+
+        def double(self):
+            return self._d
+    tab.plot._marker_clicked(m.id, Ev(False))
+    assert seen == []
+    tab.plot._marker_clicked(m.id, Ev(True))
+    assert seen == [m.id]
+
+
+def test_tip_layout_and_yellow_changed_fields(tab, monkeypatch):
+    ctl = tab.mk
+    r = ctl.store.add(ctl.to_wall(100.0), end_us=ctl.to_wall(102.7), kind="range", title="Zakres", author="jan", conn="Linia 1")
+    ctl.sync(True)
+    tip = tab.plot.mitems[r.id]["data"]["tip"]
+    assert "Od:" in tip and "Do:" in tip and "Consolas" in tip                      # the two dates: a monospaced table, one under the other
+    assert tip.index("Autor:") < tip.index("Założono:") < tip.index("Zmodyfikował:") < tip.index("Zmieniono:")
+    assert "#ffd24a" not in tip                                                      # nothing changed: nothing highlighted
+    _accept(monkeypatch, title="Zmieniony tytuł", prio=3)
+    ctl.edit(r.id)
+    tip = tab.plot.mitems[r.id]["data"]["tip"]
+    assert ctl.draft.changed_fields(r.id) == {"title", "priority"}
+    assert tip.count("#ffd24a") == 2 and "Zmieniony tytuł" in tip and "Krytyczny" in tip
+
+
+def test_recording_starts_when_rec_is_pressed(tmp_path):
+    from datetime import datetime, timedelta
+    from s7trace.core import store as st
+    from s7trace.core.types import Signal as Sg
+    cfg = st.StoreConfig(kind="sqlite", sqlite_path=str(tmp_path / "r.db"), mode="changes")
+    start = datetime(2026, 10, 4, 12, 0, 0)
+    rec = st.DbRecorder(cfg, [Sg(name="A", dtype="INT")], start, {"title": "t"}, t0=60.0)      # REC pressed 60 s after Start
+    for i in range(21):
+        rec.write(60.0 + i, [5.0])                                                             # value never changes after the first row
+    rec.close()
+    b = st.open_backend(cfg, str(tmp_path))
+    (s,) = b.sessions()
+    b.close()
+    assert abs((s["end_us"] - s["start_us"]) / 1e6 - 20.0) < 0.01                               # 20 s, not 80 s
+
+
+# ------------------------------------------------------------------ the marker look belongs to the interface configuration
+def test_marker_look_is_saved_with_the_interface_configuration(app, tmp_path, monkeypatch):
+    import json
+    from s7trace.ui import theme as th
+    from s7trace.ui.main_window import MainWindow
+    monkeypatch.setattr("s7trace.ui.main_window.save_app_config", lambda *a, **k: None)
+    look = {"width_all": 5, "width_sel": 6, "width_other": 2, "width_hover": 9}
+    w = MainWindow(config_file=str(tmp_path / "c.json"))
+    w._apply_marker_look(look)
+    assert w.theme["marker_look"] == look
+    assert w._config_dict()["ui"]["theme"]["marker_look"] == look and "marker_look" not in w._config_dict()["ui"]
+    p = str(tmp_path / "interfejs.json")
+    th.save_profile(p, w.theme)                                          # "Zapisz konfigurację interfejsu"
+    data = json.load(open(p, encoding="utf-8"))
+    assert data["marker_width_all"] == 5 and data["marker_width_hover"] == 9
+    w._apply_marker_look({"width_all": 1})                               # something else in the meantime
+    assert w.marker_look["width_all"] == 1
+    w._load_theme_file(p)                                                # loading the file brings the marker look back
+    assert w.marker_look == look and w.theme["marker_look"] == look
+    assert w.tabs.widget(0).plot.mlook["width_all"] == 5
+    # a file of an older version (no marker keys) leaves the current look alone
+    old = {k: v for k, v in data.items() if not k.startswith("marker_")}
+    json.dump(old, open(p, "w", encoding="utf-8"))
+    w._apply_marker_look({"width_all": 3})
+    w._load_theme_file(p)
+    assert w.marker_look["width_all"] == 3
+    w.close()
+
+
+def test_marker_look_of_an_older_config_moves_into_the_theme(app, tmp_path, monkeypatch):
+    import json
+    from s7trace.ui.main_window import MainWindow
+    monkeypatch.setattr("s7trace.ui.main_window.save_app_config", lambda *a, **k: None)
+    cfg = tmp_path / "c.json"
+    cfg.write_text(json.dumps({"tabs": [], "ui": {"theme": {"profile": "dark"}, "marker_look": {"width_all": 7}}}), encoding="utf-8")
+    w = MainWindow(config_file=str(cfg))
+    assert w.marker_look["width_all"] == 7 and w.theme["marker_look"]["width_all"] == 7
+    w.close()
+
+
+# ------------------------------------------------------------------ legend: bubble of a signal, name / address
+def test_legend_shows_name_or_address_and_signal_bubble(app, monkeypatch):
+    from s7trace.core.types import signal_tip
+    tab = TraceTab(TabConfig(), lambda: [])
+    sigs = tab.cfg.signals
+    tab.plot.set_signals(tab.display_signals())
+    names = [lab.text for _s, lab in tab.plot.legend.items]
+    assert names == [s.name for s in sigs if s.plot]
+    tab.set_legend_mode("address")
+    assert [lab.text for _s, lab in tab.plot.legend.items] == [s.address for s in sigs if s.plot]
+    assert tab.to_config().legend_mode == "address"
+    tab.toggle_legend_mode()
+    assert tab.cfg.legend_mode == "name"
+    tip = tab._legend_signal_tip(0)
+    assert tip == signal_tip(sigs[0], None, reading=False) and "Adres:" in tip and "Aktualna wartość" in tip
+    assert "Legenda pokazuje" in [a.text() for a in tab._build_legend_menu().actions() if a.menu()] + [a.text() for a in tab._build_legend_menu().actions()]
+    tab.shutdown()
+
+
+# ------------------------------------------------------------------ foldable groups of the left panel
+def test_left_panel_groups_fold_and_unfold(app):
+    from PySide6.QtCore import QPoint, QPointF
+    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtCore import QEvent
+    tab = TraceTab(TabConfig(), lambda: [])
+    tab.resize(1200, 800)
+    tab.show()
+    assert list(tab.folds) == ["Połączenie", "Sterownik", "Zakres okna wykresu", "Trigger", "Nagrywanie REC"]
+    g = tab.folds["Trigger"]
+    assert g.title() == "Trigger" and g.windowTitle() is not None and g.folded() is False
+    full = g.height()
+    r = g._label_rect()
+    ev = QMouseEvent(QEvent.MouseButtonPress, QPointF(r.center()), Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+    g.mousePressEvent(ev)                                           # a click on the title folds the group (animated)
+    assert g.folded() is True
+    g.set_folded(True, animate=False)
+    assert g.height() < full / 2 and not g._body.isVisible() and g._t == 0.0
+    tab._layout_moved()
+    assert tab.ui_state["folds"]["Trigger"] is True and tab.ui_state["folds"]["Połączenie"] is False
+    g.set_folded(False, animate=False)
+    assert g._body.isVisible() and g.maximumHeight() > 10000 and g._t == 1.0
+    tab.ui_state["folds"] = {"Sterownik": True}
+    tab.apply_layout()
+    assert tab.folds["Sterownik"].folded() and not tab.folds["Trigger"].folded()
+    tab.shutdown()
+
+
+# ------------------------------------------------------------------ help mode ('?')
+def test_help_mode_describes_elements(app, monkeypatch):
+    from PySide6.QtCore import QPoint
+    from PySide6.QtWidgets import QDialog
+    from s7trace.core import help_texts as ht
+    from s7trace.ui import help_mode as hm
+    from s7trace.ui.signals_dialog import SignalsDialog
+    tab = TraceTab(TabConfig(), lambda: [])
+    tab.show()
+    t = hm.help_for(tab.btn_sig, QPoint(0, 0))                     # a button with its own text
+    assert "Do czego służy" in t and "Jak ustawić" in t
+    t = hm.help_for(tab.sp_cycle, QPoint(0, 0))                    # a field: described by its form label
+    assert "cykl" in t.lower() and "1–60000" in t
+    assert "Zakres" in hm.help_for(tab.cb_tsig, QPoint(0, 0)) or "Sygnał" in hm.help_for(tab.cb_tsig, QPoint(0, 0))
+    assert hm.help_for(tab.folds["Trigger"], QPoint(0, 0)).startswith("Co to jest")
+    assert ht.norm("Cykle [ms]:") == "cykle [ms]" and ht.lookup("Pobierz")
+    d = SignalsDialog(tab.cfg.signals, False, lambda: [], {"autonumber": True, "name_mode": "prev", "own_name": "SIG", "offset_step": 1.1}, tab.current_values)
+    d.show()
+    h = d.table.horizontalHeader()
+    names = [str(d.table.model().headerData(i, Qt.Horizontal)) for i in range(d.table.columnCount())]
+    assert all(ht.lookup(n) for n in names if n not in ("", "Opis") or n == "Opis"), [n for n in names if not ht.lookup(n)]
+    mode = hm.instance()
+    seen = []
+    mode.modeChanged.connect(seen.append)
+    mode.set_active(True)
+    mode.set_active(False)
+    assert seen == [True, False]
+    d.close()
+    tab.shutdown()

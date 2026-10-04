@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QApplication, QDialog
 
 from s7trace.core import store
 from s7trace.core.config import TabConfig
-from s7trace.core.store import KINDS, StoreConfig
+from s7trace.core.store import KINDS, StoreConfig, open_backend
 from s7trace.ui.main_window import MainWindow
 from s7trace.ui.store_dialog import FIELDS, StoreDialog, StoreImportDialog
 from s7trace.ui.theme import apply_dark
@@ -124,6 +124,26 @@ def test_db_status_text_shows_progress_and_errors(app, tmp_path):
     tab.recorder.last_error = "serwer nie odpowiada"
     assert "BŁĄD" in tab._rec_status()
     tab._close_recorder()
+    tab.shutdown()
+
+
+def test_db_recording_stores_the_controller_data(app, tmp_path):
+    tab = _tab()
+    tab.cb_rkind.setCurrentIndex(tab.cb_rkind.findData("sqlite"))
+    tab.cfg.store.sqlite_path = str(tmp_path / "dev.db")
+    tab.device = {"ip": "10.1.1.1", "method": "s7", "rack": 0, "slot": 2,
+                  "info": {"model": "CPU 315-2 PN/DP", "serial": "S C-1", "plc_name": "Piec", "firmware": "V3.3"}}
+    tab._run_signals = list(tab.cfg.signals)
+    tab.start_wall = datetime.now()
+    tab._open_recorder()
+    tab.recorder.write(0.0, [1.0, 2.0])
+    tab._on_info({**tab.device, "info": {**tab.device["info"], "firmware": "V3.4"}})     # the PLC reports newer data after a reconnect
+    tab._close_recorder()
+    b = open_backend(tab.cfg.store)
+    (s,) = b.sessions()
+    assert s["device"]["info"]["model"] == "CPU 315-2 PN/DP" and s["device"]["info"]["firmware"] == "V3.4"
+    assert s["device"]["slot"] == 2
+    b.close()
     tab.shutdown()
 
 

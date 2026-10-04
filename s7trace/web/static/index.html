@@ -14,14 +14,19 @@
     <button data-view="chart">Podgląd na żywo</button>
     <button data-view="recs">Nagrania</button>
     <button data-view="markers">Znaczniki</button>
+    <button data-view="diag">Diagnostyka</button>
     <button data-view="targets" id="nav-targets" hidden>Cele zapisu</button>
     <button data-view="users" id="nav-users" hidden>Użytkownicy</button>
   </nav>
   <span class="spacer"></span>
+  <button id="help-btn" title="Tryb pomocy: po włączeniu najedź kursorem na dowolny element, aby zobaczyć jego opis (Esc kończy)">?</button>
+  <button id="about-btn" title="O programie">O programie</button>
   <span id="who"></span>
   <button id="mk-pending" class="warn" hidden title="Znaczniki założone, zmienione lub usunięte na wykresie są robocze, dopóki ich nie zapiszesz">Zapisz znaczniki (0)</button>
   <button id="logout" hidden>Wyloguj</button>
 </header>
+<dialog id="about"><h3>O programie</h3><pre id="about-text"></pre><button id="about-ok">OK</button></dialog>
+<div id="helpbubble" hidden></div>
 <main>
   <section id="login" hidden>
     <h2 id="login-title">Logowanie</h2>
@@ -49,23 +54,37 @@
     <h2 id="e-title">Połączenie</h2>
     <p class="muted" id="e-note"></p>
     <form id="e-form">
-      <div class="grid">
-        <label>Nazwa <input id="e-name" maxlength="64"></label>
-        <label>Adres IP (ew. :port) <input id="e-ip" maxlength="100" required></label>
-        <label>Rack <input id="e-rack" type="number" min="0" max="7"></label>
-        <label>Slot <input id="e-slot" type="number" min="0" max="31"></label>
-        <label>Cykl [ms] <input id="e-cycle" type="number" min="5" max="60000"></label>
-        <label>Okno czasu [s] <input id="e-window" type="number" min="1" max="86400"></label>
-        <label>Sposób połączenia <select id="e-type"></select></label>
-        <label>Tryb odczytu <select id="e-mode"></select></label>
-      </div>
-      <div class="inline" style="margin:8px 0"><button type="button" id="e-detect">Kreator: rozpoznaj sterownik</button>
-        <button type="button" id="e-apply" hidden>Zastosuj zalecenia</button><span id="e-detmsg" class="muted"></span></div>
-      <pre id="e-report" hidden></pre>
+      <div class="fold" data-fold="Połączenie"><h3 class="fold-h">Połączenie<span class="tri"></span></h3><div class="fold-body"><div>
+        <div class="grid">
+          <label>Nazwa <input id="e-name" maxlength="64"></label>
+          <label>Adres IP (ew. :port) <input id="e-ip" maxlength="100" required></label>
+          <label>Rack <input id="e-rack" type="number" min="0" max="7"></label>
+          <label>Slot <input id="e-slot" type="number" min="0" max="31"></label>
+          <label>Cykl [ms] <input id="e-cycle" type="number" min="5" max="60000"></label>
+          <label>Sposób połączenia <select id="e-type"></select></label>
+          <label>Tryb odczytu <select id="e-mode"></select></label>
+        </div>
+        <div class="inline" style="margin:8px 0"><button type="button" id="e-detect">Kreator: rozpoznaj sterownik</button>
+          <button type="button" id="e-apply" hidden>Zastosuj zalecenia</button><span id="e-detmsg" class="muted"></span></div>
+        <pre id="e-report" hidden></pre>
+      </div></div></div>
+      <div class="fold" data-fold="Sterownik"><h3 class="fold-h">Sterownik<span class="tri"></span></h3><div class="fold-body"><div>
+        <table class="dg"><tbody id="e-device"></tbody></table>
+      </div></div></div>
+      <div class="fold" data-fold="Zakres okna wykresu"><h3 class="fold-h">Zakres okna wykresu<span class="tri"></span></h3><div class="fold-body"><div>
+        <div class="grid">
+          <label>Okno czasu [s] <input id="e-window" type="number" min="1" max="86400"></label>
+          <label>Układ wykresu <select id="e-ylayout"><option value="lanes">Pasma wg Share</option><option value="offset">Offset Y + wzmocnienie</option></select></label>
+          <label><input id="e-autoy" type="checkbox"> Auto Y (układ offset)</label>
+          <label>Y min <input id="e-ymin" type="number" step="any"></label><label>Y maks <input id="e-ymax" type="number" step="any"></label>
+          <label><input id="e-points" type="checkbox"> Punkty próbek na wykresie</label>
+          <label>Legenda pokazuje <select id="e-legend"><option value="name">Nazwę sygnału</option><option value="address">Adres / węzeł OPC</option></select></label>
+        </div>
+      </div></div></div>
       <h3>Sygnały</h3>
       <table id="e-sig"><thead><tr><th>Nazwa</th><th>Źródło</th><th>Typ</th><th>DB</th><th>Bajt</th><th>Bit</th><th>Węzeł / zmienna</th>
         <th>Share</th><th>Kolor</th><th>Pobieraj</th><th>Wykres</th><th>Opis</th><th></th></tr></thead><tbody></tbody></table>
-      <h3>Wyzwalacz (trigger)</h3>
+      <div class="fold" data-fold="Trigger"><h3 class="fold-h">Trigger<span class="tri"></span></h3><div class="fold-body"><div>
       <div class="grid" id="e-trig">
         <label>Włączony <input id="t-enabled" type="checkbox"></label>
         <label>Sygnał <select id="t-signal"></select></label>
@@ -77,12 +96,14 @@
         <label>Akcja <select id="t-action"></select></label>
         <label>Nazwa pliku zapisu <input id="t-file" maxlength="120"></label>
       </div>
-      <h3>REC</h3>
+      </div></div></div>
+      <div class="fold" data-fold="Nagrywanie REC"><h3 class="fold-h">Nagrywanie REC<span class="tri"></span></h3><div class="fold-body"><div>
       <div class="grid" id="e-rec">
         <label>Cel zapisu <select id="r-target"></select></label>
         <label>Tryb <select id="r-mode"><option value="changes">tylko zmiany</option><option value="all">wszystkie próbki</option></select></label>
         <label>Nazwa pliku CSV <input id="r-file" maxlength="120"></label>
       </div>
+      </div></div></div>
       <p class="muted">Znaczniki w nazwach plików: {confname} {ip} {tab} {date} {time}. Pliki CSV trafiają do folderu konta na serwerze
         (lista i pobieranie: „Podgląd na żywo” → Pliki); „sqlite” to plik konta, pozostałe cele konfiguruje administrator.</p>
       <div class="inline" style="margin-top:8px"><button type="button" id="e-add">+ Sygnał</button>
@@ -103,7 +124,9 @@
       <button id="c-live" hidden>Wróć do danych na żywo</button><button id="c-files">Pliki</button></div>
     <details id="c-search"><summary>Wyszukiwarka danych (kiedy sygnał miał daną wartość / zmienił się) w pamięci połączenia</summary><div id="c-search-box"></div></details>
     <div id="c-filelist" hidden></div>
+    <div id="c-tools" class="bar tools"></div>
     <canvas id="canvas" width="1200" height="520"></canvas>
+    <canvas id="ov-live" class="ov" width="1200" height="56" title="Przegląd: cały zapamiętany przebieg. Przeciągnij ramkę, aby przesunąć okno; kliknij, aby je wycentrować."></canvas>
     <div id="c-legend" class="legend"></div>
   </section>
   <section id="recs" hidden>
@@ -112,18 +135,26 @@
       <input id="rv-q" type="search" placeholder="szukaj (tytuł, tagi, właściciel, połączenie, sygnał)">
       <label><input type="checkbox" id="rv-trash"> kosz</label><button id="rv-refresh">Odśwież</button>
       <span id="rv-msg" class="muted"></span></div>
-    <table id="t-recs"><thead><tr><th>Tytuł</th><th>Start</th><th>Czas</th><th>Właściciel</th><th>Komputer</th><th>Połączenie</th>
+    <table id="t-recs"><thead><tr><th>Tytuł</th><th>Start</th><th>Czas</th><th>Właściciel</th><th>Komputer</th><th>Połączenie</th><th>Sterownik</th>
       <th>Sygnały</th><th>Tagi</th><th></th></tr></thead><tbody></tbody></table>
     <div id="rv-edit" class="inline" hidden>
       <input id="rv-title" placeholder="tytuł" maxlength="200"><input id="rv-notes" placeholder="uwagi" maxlength="500">
       <input id="rv-tags" placeholder="tagi (po przecinku)" maxlength="500"><button id="rv-save">Zapisz opis</button>
       <button id="rv-cancel">Anuluj</button></div>
     <div id="rv-view" hidden>
-      <div class="bar"><b id="rv-name"></b><span id="rv-info" class="muted"></span><button id="rv-all">Cały przebieg</button>
-        <a id="rv-csv" href="#" download>CSV (widoczny zakres)</a><span class="muted">Przeciągnij myszą po wykresie, aby przybliżyć zakres.</span></div>
-      <canvas id="rv-canvas" width="1200" height="480"></canvas><div id="rv-legend" class="legend"></div>
+      <div class="bar"><b id="rv-name"></b><span id="rv-info" class="muted"></span><span id="rv-dev" class="muted" style="cursor:help"></span><button id="rv-all">Cały przebieg</button>
+        <a id="rv-csv" href="#" download>CSV (widoczny zakres)</a></div>
+      <div id="rv-tools" class="bar tools"></div>
+      <canvas id="rv-canvas" width="1200" height="480"></canvas>
+      <canvas id="ov-rec" class="ov" width="1200" height="56" title="Przegląd: cały przebieg. Przeciągnij ramkę, aby przesunąć zakres; kliknij, aby go wycentrować."></canvas><div id="rv-legend" class="legend"></div>
       <details id="rv-search"><summary>Wyszukiwarka w tym nagraniu</summary><div id="rv-search-box"></div></details>
     </div>
+  </section>
+  <section id="diag" hidden>
+    <h2>Diagnostyka połączenia</h2>
+    <div class="bar"><select id="dg-conn"></select><button id="dg-refresh">Odśwież</button><button id="dg-ping">Ping sterownika</button>
+      <label><input type="checkbox" id="dg-auto" checked> odświeżaj co 2 s</label><span id="dg-msg" class="muted"></span></div>
+    <div id="dg-body"></div>
   </section>
   <section id="markers" hidden>
     <h2>Znaczniki na wykresach</h2>
@@ -133,9 +164,10 @@
       <select id="mkl-prio"><option value="">Priorytet: każdy</option><option value="0">Niski</option><option value="1">Normalny</option><option value="2">Wysoki</option><option value="3">Krytyczny</option></select>
       <select id="mkl-group"><option value="*">Grupa: każda</option></select>
       <select id="mkl-author"><option value="">Autor: każdy</option></select>
+      <select id="mkl-scope" title="Które połączenia: jak w programie okienkowym – lista ma domyślnie zakres bieżącego połączenia, gdy otwierasz ją z wykresu"><option value="">Zakres: wszystkie połączenia</option><option value="conn">Zakres: połączenie z wykresu</option></select>
       <select id="mkl-order"><option value="at">wg czasu znacznika</option><option value="modified">wg ostatniej zmiany</option><option value="priority">wg priorytetu</option></select></div>
     <div class="bar"><label><input type="checkbox" id="mkl-range"> tylko od</label><input type="datetime-local" id="mkl-from" step="1"><span>do</span><input type="datetime-local" id="mkl-to" step="1">
-      <button id="mkl-refresh">Odśwież</button><button id="mkl-group-btn">Grupuj zaznaczone…</button><button id="mkl-ungroup-btn">Wyjmij z grupy</button><button id="mkl-save" class="warn">Zapisz znaczniki…</button><span id="mkl-msg" class="muted"></span></div>
+      <button id="mkl-refresh">Odśwież</button><button id="mkl-group-btn">Grupuj zaznaczone…</button><button id="mkl-ungroup-btn">Wyjmij z grupy</button><button id="mkl-save" class="warn">Zapisz znaczniki…</button><button id="mkl-look">Wygląd znaczników…</button><span id="mkl-msg" class="muted"></span></div>
     <table id="t-mkl"><thead><tr><th></th><th>Czas</th><th>Tytuł</th><th>Rodzaj</th><th>Priorytet</th><th>Dotyczy</th><th>Grupa</th><th>Autor</th><th>Połączenie</th><th>Zmieniono</th><th></th></tr></thead><tbody></tbody></table>
   </section>
   <section id="targets" hidden>
@@ -201,7 +233,7 @@
       <label id="mk-to-l">Do <input id="mk-to" type="datetime-local" step="0.001"></label>
       <label>Kolor <input id="mk-color" type="color" value="#ff9f1c"></label>
       <label>Priorytet <select id="mk-prio"><option value="0">0 – Niski</option><option value="1" selected>1 – Normalny</option><option value="2">2 – Wysoki</option><option value="3">3 – Krytyczny</option></select></label>
-      <label>Grubość linii [px] (0 = wg priorytetu) <input id="mk-width" type="number" min="0" max="8" value="0"></label>
+      <label>Grubość linii [px] (0 = wg ustawień) <input id="mk-width" type="number" min="0" max="8" value="0"></label>
       <label>Rodzaj linii <select id="mk-style"><option value="solid">ciągła</option><option value="dash">kreskowana</option><option value="dot">kropkowana</option><option value="dashdot">kreska-kropka</option></select></label>
       <label id="mk-transp-l">Przezroczystość obszaru <input id="mk-transp" type="range" min="0" max="100" value="76"><span id="mk-transp-v">76 %</span></label>
       <label>Grupa <input id="mk-group" list="mk-groups" maxlength="120" placeholder="(bez grupy)"><datalist id="mk-groups"></datalist></label>
@@ -216,6 +248,17 @@
       <button type="button" id="mk-delete" hidden>Usuń</button><span id="mk-error" class="error"></span></div>
   </form>
 </dialog>
+<dialog id="mk-look">
+  <form method="dialog">
+    <h3>Wygląd znaczników – grubość linii</h3>
+    <p class="muted">Dotyczy znaczników bez własnej grubości (w oknie znacznika: 0 = wg ustawień). Ustawienia są zapamiętywane w tej przeglądarce.</p>
+    <label>Znacznik dla wszystkich przebiegów [px] <input id="mkw-width_all" type="number" step="1"></label>
+    <label>Wybrane przebiegi [px] <input id="mkw-width_sel" type="number" step="1"></label>
+    <label>Pozostałe przebiegi – cienka prowadnica [px] <input id="mkw-width_other" type="number" step="1"></label>
+    <label>Linia podświetlona po najechaniu myszą [px] <input id="mkw-width_hover" type="number" step="1"></label>
+    <div class="inline"><button type="button" id="mkw-default">Domyślne</button><button type="button" id="mkw-ok">OK</button><button type="button" id="mkw-cancel">Anuluj</button></div>
+  </form>
+</dialog>
 <dialog id="mk-pend">
   <form method="dialog">
     <h3 id="mkp-h">Zapisz znaczniki</h3>
@@ -227,6 +270,7 @@
 </dialog>
 <div id="ctx" class="ctxmenu" hidden></div>
 <div id="bubble" hidden></div>
+<script src="/static/chartx.js"></script>
 <script src="/static/markers.js"></script>
 <script src="/static/app.js"></script>
 </body>

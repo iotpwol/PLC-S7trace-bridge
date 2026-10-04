@@ -2,6 +2,7 @@
 
 Format:
     # s7trace v1
+    # device: {json}         (REC files only, optional: the PLC the data comes from - model, MLFB, firmware, serial ...)
     # signal: {json}         (one line per signal, restores colour/offset/gain)
     time_s,timestamp,SIG1,SIG2,...
 """
@@ -34,12 +35,15 @@ def write_csv(path: str, signals: list[Signal], t: np.ndarray, v: np.ndarray,
 class CsvRecorder:
     """Streaming writer for the REC button (flushes periodically)."""
 
-    def __init__(self, path: str, signals: list[Signal], start_wall: datetime | None = None, mode: str = "all"):
+    def __init__(self, path: str, signals: list[Signal], start_wall: datetime | None = None, mode: str = "all",
+                 device: dict | None = None):
         self.start_wall = start_wall or datetime.now()
         self.changes_only = mode == "changes"            # a row only when at least one value differs from the previous row
         self._prev: list[float] | None = None
         self._f = open(path, "w", newline="", encoding="utf-8")
         self._f.write("# s7trace v1\n")
+        if device:
+            self._f.write("# device: " + json.dumps(device, ensure_ascii=False) + "\n")
         for s in signals:
             self._f.write("# signal: " + json.dumps(s.to_dict(), ensure_ascii=False) + "\n")
         self._k = len(signals)

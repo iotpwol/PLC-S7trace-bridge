@@ -54,6 +54,7 @@ def view(cfg: TabConfig, web: dict | None = None, targets: list[str] | None = No
     t = cfg.trigger
     return {"name": cfg.name, "ip": cfg.ip, "rack": cfg.rack, "slot": cfg.slot, "cycle_ms": cfg.cycle_ms,
             "conn_type": cfg.conn_type, "conn": conn, "mode": cfg.mode, "window_s": cfg.window_s,
+            "legend_mode": cfg.legend_mode, "y_layout": cfg.y_layout, "auto_y": cfg.auto_y, "y_min": cfg.y_min, "y_max": cfg.y_max, "show_points": cfg.show_points,
             "signals": [s.to_dict() for s in cfg.signals],
             "trigger": {"enabled": t.enabled, "signal": t.signal, "mode": t.mode, "a": t.a, "b": t.b, "hysteresis": t.hysteresis,
                         "pretrigger": t.pretrigger, "action": t.action, "filename": t.filename},
@@ -125,6 +126,20 @@ def apply(cfg: TabConfig, patch: dict, running: bool, web: dict | None = None, r
         new["cycle_ms"] = _num(patch, "cycle_ms", 5, 60000, "Cykl [ms]")
     if "window_s" in patch:
         new["window_s"] = _num(patch, "window_s", 1, 86400, "Okno czasu [s]", float)
+    if "y_layout" in patch:                                   # the look of the chart: allowed while running, too
+        if patch["y_layout"] not in ("lanes", "offset"):
+            raise EditError("Układ wykresu: „lanes” albo „offset”.")
+        new["y_layout"] = patch["y_layout"]
+    if "legend_mode" in patch:
+        if patch["legend_mode"] not in ("name", "address"):
+            raise EditError("Legenda: „name” albo „address”.")
+        new["legend_mode"] = patch["legend_mode"]
+    for k in ("auto_y", "show_points"):
+        if k in patch:
+            new[k] = bool(patch[k])
+    for k in ("y_min", "y_max"):
+        if k in patch:
+            new[k] = _num(patch, k, -1e12, 1e12, "Zakres Y" , float)
     if "conn_type" in patch:
         if patch["conn_type"] not in CONN_KINDS:
             raise EditError("Nieznany sposób połączenia.")

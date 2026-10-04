@@ -8,6 +8,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont, QGuiApplication, QPalette
 from PySide6.QtWidgets import QApplication
 
+from ..core import marker_look
 from ..core.config import app_dir
 
 # key -> (label shown in the 'Interfejs' dialog, default dark colour)
@@ -110,6 +111,8 @@ def normalize(theme: dict | None) -> dict:
             out["status_lines"] = max(1, min(10, int(theme.get("status_lines", 1))))   # most lines of the status bar
         except (TypeError, ValueError):
             pass
+    # the look of the marker lines belongs to the interface configuration (saved in a profile file, switched with it)
+    out["marker_look"] = marker_look.normalize((theme or {}).get("marker_look"))
     return out
 
 
@@ -133,6 +136,7 @@ def save_profile(path: str, theme: dict) -> None:
                "rec_blink_hz": t["rec_blink_hz"], "bar_always": t["bar_always"],
                "status_lines": t["status_lines"]}
     ordered.update({k: t[k] for k in COLOR_KEYS})
+    ordered.update({"marker_" + k: v for k, v in t["marker_look"].items()})          # one flat parameter per line
     with open(path, "w", encoding="utf-8") as f:
         json.dump(ordered, f, ensure_ascii=False, indent=2)       # indent -> each parameter on its own line
         f.write("\n")
@@ -143,7 +147,11 @@ def load_profile(path: str) -> dict:
         data = json.load(f)
     if not isinstance(data, dict):
         raise ValueError("plik nie zawiera konfiguracji interfejsu")
-    return normalize(data)
+    look = {k[len("marker_"):]: v for k, v in data.items() if k.startswith("marker_")}
+    t = normalize({**data, "marker_look": look})
+    if not look:                                     # a file of an older version: leave the current marker look as it is
+        t.pop("marker_look")
+    return t
 
 
 def _disabled(c: str) -> str:

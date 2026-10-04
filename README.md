@@ -66,8 +66,11 @@ Typy: BOOL, BYTE, SINT, USINT, WORD, INT, UINT, DWORD, DINT, UDINT, REAL, LREAL.
   Nazwa pliku (domyślnie `snapshot_{confname}_{ip}_{tab}_{date}_{time}.csv`): `{confname}`, `{ip}`, `{tab}`, `{date}`, `{time}`.
   Ścieżka względna (domyślnie `snapshots`, `rec`) oznacza folder w `Dokumenty\S7Trace` bieżącego użytkownika Windows,
   więc przy wielu kontach każdy ma własne pliki.
-* REC – pełny opis baz danych, trybów, czasów i buforów: [BAZY_DANYCH.md](BAZY_DANYCH.md). Nagrania w bazach mają tytuł, uwagi, tagi, właściciela
-  i komputer; **Plik → Przegląd nagrań…** pokazuje je z sortowaniem, wyszukiwaniem i filtrem użytkownika, pozwala edytować opis, usuwać do kosza
+* **Legenda wykresu:** po najechaniu na pozycję pokazuje dymek z opisem sygnału (jak w oknie „Sygnały…”); prawy przycisk → „Legenda pokazuje” przełącza napisy między nazwą a adresem / węzłem OPC (osobno dla każdej karty; w Web: lista w edycji połączenia i w pasku wykresu).
+* **Tryb pomocy „?”:** przycisk obok „X” każdego okna (w oknie głównym w pasku menu, Shift+F1) – po włączeniu najechanie na element (przycisk, pole, nazwa kolumny / wiersza, tytuł pola) pokazuje dymek: co to, do czego, jak ustawić, zakres. Teksty: `s7trace/core/help_texts.py` (wspólne dla programu i Web, `/api/help`).
+* **Zwijane pola** panelu bocznego (Połączenie, Sterownik, Zakres okna wykresu, Trigger, Nagrywanie REC; w Web – w edycji połączenia): klik w tytuł, trójkąt obraca się o 90°. Podpowiedzi nad kolorowymi polami mają zawsze czytelny kontrast. Menu Pomoc → „O programie”: autor, wersja, data (`s7trace/version.py`).
+* REC – pełny opis baz danych, trybów, czasów i buforów: [BAZY_DANYCH.md](BAZY_DANYCH.md). Nagrania w bazach mają tytuł, uwagi, tagi, właściciela,
+  komputer i **dane sterownika PLC** (model, numer katalogowy, firmware, numer seryjny, nazwa stacji…, żeby wiązać dane z właściwym sterownikiem; w CSV – linia `# device:`); **Plik → Przegląd nagrań…** pokazuje je z sortowaniem, wyszukiwaniem i filtrem użytkownika, pozwala edytować opis, usuwać do kosza
   (przywracanie, czas przechowywania w ustawieniach), usuwać trwale, eksportować do CSV i wczytywać na wykres. Kiedy program pyta o nazwę nagrania
   (na początku / w trakcie / na końcu / wcale) ustawia się w ustawieniach bazy, zakładka „Nagrania i użytkownicy”.
 * REC: cel zapisu (panel „Nagrywanie REC”): plik CSV, SQLite, InfluxDB 1.x / 2.x (HTTP, line protocol) lub TimescaleDB
@@ -134,7 +137,7 @@ Typy: BOOL, BYTE, SINT, USINT, WORD, INT, UINT, DWORD, DINT, UDINT, REAL, LREAL.
 * Aktywne sesje programu (Ustawienia → Aktywne sesje programu…): kto ma program otwarty na tym komputerze i które karty skanują
   sterowniki. Każde okno programu zapisuje co 2 s mały plik w `%ProgramData%\S7Trace\sessions` (albo `C:\Users\Public\S7Trace\sessions`);
   nieodświeżany wpis (zamknięty / zawieszony program) znika po ok. 10 s. Start na już skanowany sterownik tylko ostrzega. Zasięg: ten komputer.
-* Diagnostyka połączenia (przycisk „Diagnostyka…”, Ustawienia → Diagnostyka połączenia…, Ctrl+D): ocena łącza, czas odczytu (chwilowy / średni 10 s, 60 s, od startu /
+* Diagnostyka połączenia (przycisk „Diagnostyka…”, menu Diagnostyka → Diagnostyka połączenia…, Ctrl+D): ocena łącza, czas odczytu (chwilowy / średni 10 s, 60 s, od startu /
   min / max / odch. std. / P95 / P99), jitter próbkowania, histogram, pominięte cykle i błędy, zerwania, dostępność, przepustowość,
   ping ICMP z procentem utraty pakietów, test portu TCP, wykresy w czasie, raport do schowka / pliku.
 * Metody połączenia (menu Ustawienia): S7comm (snap7), OPC UA (asyncua), Web API (JSON-RPC, eksperymentalne), Modbus TCP.

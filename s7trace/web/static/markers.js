@@ -5,27 +5,41 @@ const MK_STYLES = { solid: [], dash: [8, 5], dot: [2, 4], dashdot: [8, 4, 2, 4] 
 const MK_STYLE_PL = { solid: "ciągła", dash: "kreskowana", dot: "kropkowana", dashdot: "kreska-kropka" };
 const MK_PRIO_PL = ["Niski", "Normalny", "Wysoki", "Krytyczny"];
 const MK_PALETTE = ["#ff9f1c", "#ff4d4d", "#3fc380", "#4aa3ff", "#b07cff", "#ffd24a", "#2ec4b6", "#ffffff"];
-const mkWidth = (m) => m.line_width || [1, 2, 3, 4][m.priority] || 2;
+// Line widths (Znaczniki -> Wygląd znaczników): saved on the server per account (/api/prefs), like the desktop program keeps them in
+// its interface configuration.
+const MK_LOOK_DEF = { width_all: 2, width_sel: 3, width_other: 1, width_hover: 4 };
+const MK_LOOK_LIM = { width_all: [1, 12], width_sel: [1, 12], width_other: [1, 12], width_hover: [1, 16] };
+let MKLOOK = { ...MK_LOOK_DEF };
+const mkLookFrom = (raw) => { const o = { ...MK_LOOK_DEF }; for (const k of Object.keys(MK_LOOK_DEF)) if (Number.isFinite(+raw?.[k])) o[k] = Math.min(Math.max(Math.round(+raw[k]), MK_LOOK_LIM[k][0]), MK_LOOK_LIM[k][1]); return o; };
+// after logging in: the account's settings come from the server (the same look in every browser)
+async function mkLoadPrefs() { try { MKLOOK = mkLookFrom((await api("/api/prefs")).prefs.marker_look); for (const c of Object.values(MK)) if (c) c.redraw(); } catch (e) { /* defaults */ } }
+// A marker with its own width (> 0) keeps it; 0 = from the settings. case: all / sel / other / hover
+const mkWidthOf = (m, c) => { const own = m.line_width | 0; return c === "hover" ? Math.max(MKLOOK.width_hover, own + 1) : c === "other" ? MKLOOK.width_other : own || MKLOOK[c === "all" ? "width_all" : "width_sel"]; };
 const mkStamp = (us) => { if (!us) return "–"; const d = new Date(us / 1000), p = (n, l = 2) => String(n).padStart(l, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`; };
 const mkInput = (us) => mkStamp(us).replace(" ", "T");              // value of <input type=datetime-local step=0.001>
 const mkFromInput = (v, old) => { const ms = new Date(v).getTime(); return old && Math.floor(old / 1000) === ms ? old : ms * 1000; };
 const mkDur = (s) => s < 1 ? Math.round(s * 1000) + " ms" : s < 120 ? s.toFixed(2) + " s" : s < 7200 ? Math.floor(s / 60) + " min " + Math.round(s % 60) + " s" : Math.floor(s / 3600) + " h " + Math.floor(s % 3600 / 60) + " min";
 
-function mkTip(m) {
-  const rows = [`<b>${esc(m.title || "(bez tytułu)")}</b> <span style="color:${esc(m.color)}">■</span>`,
-    m.kind === "range" ? `Zakres: ${mkStamp(m.at_us)} → ${mkStamp(m.end_us)} (${mkDur((m.end_us - m.at_us) / 1e6)})` : `Czas: ${mkStamp(m.at_us)}`,
-    `Priorytet: ${MK_PRIO_PL[m.priority] || m.priority}`, "Dotyczy: " + (m.signals.length ? esc(m.signals.join(", ")) : "wszystkich przebiegów"),
-    `Linia: ${mkWidth(m)} px, ${MK_STYLE_PL[m.line_style] || m.line_style}` + (m.kind === "range" ? `; przezroczystość obszaru ${100 - m.opacity} %` : "")];
-  if (m.group_name) rows.push(`Grupa: <b>${esc(m.group_name)}</b>`);
-  if (m.description) rows.push(esc(m.description).replace(/\n/g, "<br>"));
-  if (m.notes) rows.push("<i>Uwagi:</i> " + esc(m.notes).replace(/\n/g, "<br>"));
-  const st = mkdState(m.id);
-  if (st) rows.splice(1, 0, `<span style="color:#e0a030">✱ niezapisany (${st === "new" ? "nowy" : "zmieniony"}) – użyj „Zapisz znaczniki”</span>`);
-  rows.push(`Autor: ${esc(m.author || "–")} · założono ${mkStamp(m.created_us).slice(0, 19)}`);
-  rows.push(`Zmieniono: ${mkStamp(m.modified_us).slice(0, 19)}${m.modified_by ? " (" + esc(m.modified_by) + ")" : ""}`);
+function mkTip(m) {   // the bubble: times in a monospaced table (digit under digit), changed fields highlighted yellow
+  const st = mkdState(m.id), ch = new Set(st === "edited" && MKD.orig.get(m.id) ? mkdChanged(MKD.orig.get(m.id), m) : []);
+  const hl = (t, ...f) => f.some((x) => ch.has(x)) ? `<span class="mk-chg">${t}</span>` : t;
+  const rows = [hl(`<b>${esc(m.title || "(bez tytułu)")}</b>`, "title") + " " + hl(`<span style="color:${esc(m.color)}">■</span>`, "color")];
+  if (st) rows.push(`<span style="color:#e0a030">✱ niezapisany (${st === "new" ? "nowy" : "zmieniony"}) – użyj „Zapisz znaczniki”</span>`);
+  if (m.kind === "range") rows.push(hl(`Zakres czasu (${mkDur((m.end_us - m.at_us) / 1e6)}):`, "kind", "at_us", "end_us") +
+    `<table class="mk-t"><tr><td>Od:</td><td class="mono">${hl(mkStamp(m.at_us), "at_us", "kind")}</td></tr><tr><td>Do:</td><td class="mono">${hl(mkStamp(m.end_us), "end_us", "kind")}</td></tr></table>`);
+  else rows.push(hl(`Czas: <span class="mono">${mkStamp(m.at_us)}</span>`, "at_us", "kind"));
+  rows.push(hl(`Priorytet: ${MK_PRIO_PL[m.priority] || m.priority}`, "priority"));
+  rows.push(hl(`Linia: ${m.line_width ? m.line_width + " px" : MKLOOK.width_all + " px (wg ustawień)"}, ${MK_STYLE_PL[m.line_style] || m.line_style}` + (m.kind === "range" ? `; przezroczystość obszaru ${100 - m.opacity} %` : ""), "line_width", "line_style", "opacity"));
+  rows.push(hl("Dotyczy: " + (m.signals.length ? esc(m.signals.join(", ")) : "wszystkich przebiegów"), "signals"));
+  if (m.group_name || ch.has("group_name")) rows.push(hl(`Grupa: <b>${esc(m.group_name) || "(brak)"}</b>`, "group_name"));
+  if (m.show_label === 0 || ch.has("show_label")) rows.push(hl("Nazwa na wykresie: " + (m.show_label === 0 ? "ukryta" : "pokazywana"), "show_label"));
+  if (m.description) rows.push(hl(esc(m.description).replace(/\n/g, "<br>"), "description")); else if (ch.has("description")) rows.push(hl("(opis usunięty)", "description"));
+  if (m.notes) rows.push(hl("<i>Uwagi:</i> " + esc(m.notes).replace(/\n/g, "<br>"), "notes")); else if (ch.has("notes")) rows.push(hl("(uwagi usunięte)", "notes"));
+  rows.push(`Autor: ${esc(m.author || "–")}`, `Założono: ${mkStamp(m.created_us).slice(0, 19)}`, `Zmodyfikował: ${esc(m.modified_by || "–")}`, `Zmieniono: ${mkStamp(m.modified_us).slice(0, 19)}`);
   return rows.join("<br>");
 }
+
 
 
 // ---------------------------------------------------------------- unsaved changes (the draft)
@@ -123,6 +137,18 @@ function mkMenu(x, y, items) {
   }
   box.hidden = false; box.style.left = Math.min(x, innerWidth - 260) + "px"; box.style.top = Math.min(y, innerHeight - box.offsetHeight - 8) + "px";
 }
+function mkLookOpen() {
+  const dlg = $("mk-look"), keys = Object.keys(MK_LOOK_DEF), orig = { ...MKLOOK };
+  for (const k of keys) { const el = $("mkw-" + k); el.min = MK_LOOK_LIM[k][0]; el.max = MK_LOOK_LIM[k][1]; el.value = MKLOOK[k]; }
+  const apply = () => { for (const k of keys) { const v = Math.round(+$("mkw-" + k).value); if (Number.isFinite(v)) MKLOOK[k] = Math.min(Math.max(v, MK_LOOK_LIM[k][0]), MK_LOOK_LIM[k][1]); }
+    for (const c of Object.values(MK)) if (c) c.redraw(); };
+  for (const k of keys) $("mkw-" + k).oninput = apply;
+  $("mkw-default").onclick = () => { for (const k of keys) $("mkw-" + k).value = MK_LOOK_DEF[k]; apply(); };
+  $("mkw-cancel").onclick = () => { MKLOOK = { ...orig }; for (const c of Object.values(MK)) if (c) c.redraw(); dlg.close(); };
+  $("mkw-ok").onclick = async () => { dlg.close(); try { MKLOOK = mkLookFrom((await api("/api/prefs", { marker_look: MKLOOK })).prefs.marker_look); } catch (e) { alert("Nie udało się zapisać ustawień na koncie: " + e.message); } };
+  dlg.oncancel = () => { MKLOOK = { ...orig }; for (const c of Object.values(MK)) if (c) c.redraw(); };
+  dlg.showModal();
+}
 function mkMenuClose() { $("ctx").hidden = true; }
 document.addEventListener("click", (e) => { if (!e.target.closest("#ctx")) mkMenuClose(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") { mkMenuClose(); for (const c of Object.values(MK)) if (c) c.place = null; } });
@@ -193,21 +219,24 @@ function mkDrawable(ctx) {   // marks with their times as seconds on the chart's
 function mkPaint(g, cv, ctx, geo, lanes) {   // lanes: [{top, bot}] one per signal in order (same as drawChart)
   if (!ctx) return;
   const items = mkDrawable(ctx), names = ctx.ds().names, { t0, t1, pad, W, H } = geo, X = (t) => pad.l + (t - t0) / ((t1 - t0) || 1) * (W - pad.l - pad.r);
-  const col = (it) => ctx.hi.has(it.m.id) || (ctx.place === it.m.id) ? "#ffffff" : it.m.color;
   const rgba = (hex, a) => { const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16},${n >> 8 & 255},${n & 255},${a})`; };
   g.save(); g.font = "11px sans-serif";
   items.forEach((it, idx) => {
-    const m = it.m, a = X(it.x0), b = X(it.x1), c = col(it), w = ctx.hi.has(m.id) ? mkWidth(m) + 2 : mkWidth(m);
+    const m = it.m, a = X(it.x0), b = X(it.x1), hiG = ctx.hi.has(m.id) || ctx.place === m.id, c = hiG ? "#ffffff" : m.color;
     if ((it.x1 < t0 && it.x0 < t0) || (it.x0 > t1 && it.x1 > t1)) return;
-    const idxs = m.signals.length ? names.map((n, k) => m.signals.includes(n) ? k : -1).filter((k) => k >= 0) : null;
-    const op = ctx.hi.has(m.id) ? 0.4 : m.opacity / 100;
+    const idxs = m.signals.length ? names.map((n, k) => m.signals.includes(n) ? k : -1).filter((k) => k >= 0) : null, hv = ctx.hover && ctx.hover.id === m.id ? ctx.hover.part : "";
     if (m.kind === "range") {
-      g.fillStyle = rgba(c, op);
+      g.fillStyle = rgba(c, hiG ? 0.4 : m.opacity / 100);
       if (idxs) idxs.forEach((k) => g.fillRect(a, lanes[k].top, b - a, lanes[k].bot - lanes[k].top)); else g.fillRect(a, pad.t, b - a, H - pad.t - pad.b);
     }
-    g.strokeStyle = idxs ? rgba(c, 0.5) : c; g.lineWidth = idxs ? 1 : w; g.setLineDash(MK_STYLES[m.line_style] || []);
-    for (const x of m.kind === "range" ? [a, b] : [a]) { g.beginPath(); g.moveTo(x, pad.t); g.lineTo(x, H - pad.b); g.stroke(); }
-    if (idxs && m.kind === "point") { g.strokeStyle = c; g.lineWidth = w + 2; idxs.forEach((k) => { g.beginPath(); g.moveTo(a, lanes[k].top); g.lineTo(a, lanes[k].bot); g.stroke(); }); }
+    for (const [x, part] of m.kind === "range" ? [[a, "x0"], [b, "x1"]] : [[a, "x0"]]) {
+      const hov = hiG || hv === part;                                               // the line under the mouse: thicker, the marker's own colour
+      g.setLineDash(hov ? [] : MK_STYLES[m.line_style] || []);
+      g.strokeStyle = hov ? c : idxs ? rgba(c, 0.5) : c; g.lineWidth = hov ? mkWidthOf(m, "hover") : mkWidthOf(m, idxs ? "other" : "all");
+      g.beginPath(); g.moveTo(x, pad.t); g.lineTo(x, H - pad.b); g.stroke();
+      if (idxs) { g.setLineDash(MK_STYLES[m.line_style] || []); g.strokeStyle = c; g.lineWidth = hov ? mkWidthOf(m, "hover") : mkWidthOf(m, "sel");
+        idxs.forEach((k) => { g.beginPath(); g.moveTo(x, lanes[k].top); g.lineTo(x, lanes[k].bot); g.stroke(); }); }
+    }
     g.setLineDash([]); g.fillStyle = c;
     if (m.show_label !== 0 && m.title) g.fillText((mkdState(m.id) ? "✱ " : "") + m.title.slice(0, 28), a + 4, pad.t + 12 + (idx % 3) * 12);
   });
@@ -260,8 +289,14 @@ function mkAttach(ctx) {
     const h = ctx.marks.length ? mkHit(ctx, e) : null;
     cv.style.cursor = ctx.place ? "crosshair" : h && ctx.canEdit(h.it.m) ? (h.part === "body" ? "move" : "col-resize") : "";
     mkBubble(h ? mkTip(h.it.m) : "", e.clientX, e.clientY);
+    const nh = h && h.part !== "body" ? { id: h.it.m.id, part: h.part } : null;           // a hovered line is drawn thicker
+    if ((nh && nh.id) !== (ctx.hover && ctx.hover.id) || (nh && nh.part) !== (ctx.hover && ctx.hover.part)) { ctx.hover = nh; ctx.redraw(); }
   });
-  cv.addEventListener("mouseleave", () => mkBubble(""));
+  cv.addEventListener("mouseleave", () => { mkBubble(""); if (ctx.hover) { ctx.hover = null; ctx.redraw(); } });
+  cv.addEventListener("dblclick", async (e) => {      // double click on a marker = its edit window (details when it may not be edited)
+    const h = ctx.marks.length ? mkHit(ctx, e) : null; if (!h) return;
+    mkBubble(""); await mkOpenDialog(h.it.m, { names: ctx.ds().names, groups: await mkGroups(), readonly: !ctx.canEdit(h.it.m) });
+  });
   cv.addEventListener("click", async (e) => {
     if (!ctx.place || !cv._geo) return;
     const m = ctx.marks.find((x) => x.id === ctx.place); ctx.place = null; cv.style.cursor = "";
@@ -277,11 +312,17 @@ function mkAttach(ctx) {
     if (h) return mkMarkerMenu(ctx, h.it.m, e.clientX, e.clientY);
     if (!ctx.canAdd() || !cv._geo) return;
     const s0 = ctx.startUs(), t = mkTimeAt(ctx, mkPx(ctx, e)), at = Math.round(s0 + t * 1e6), w = Math.max((cv._geo.t1 - cv._geo.t0) * 0.1, 0.5);
+    const vm = [...(cv._cx?.v || [])].sort((a, b) => a - b);
     mkMenu(e.clientX, e.clientY, [
       { label: "Dodaj znacznik (punkt) tutaj…", fn: () => mkAdd(ctx, mkBlank(at)) },
       { label: "Dodaj znacznik zakresu czasu tutaj…", fn: () => mkAdd(ctx, mkBlank(at, { kind: "range", end_us: Math.round(at + w * 1e6) })) },
+      ...(vm.length === 2 && vm[1] > vm[0] ? [{ label: "Znacznik zakresu z kursorów V1–V2…", fn: () => mkAdd(ctx, mkBlank(Math.round(s0 + vm[0] * 1e6), { kind: "range", end_us: Math.round(s0 + vm[1] * 1e6) })) }] : []),
       ...(ctx.hi.size ? ["-", { label: "Wyłącz podświetlenie grupy", fn: () => { ctx.hi = new Set(); ctx.hiGroup = ""; ctx.redraw(); } }] : []),
-      "-", { label: mkdCount() ? `Zapisz znaczniki (${mkdCount()})…` : "Zapisz znaczniki (brak zmian)", fn: () => mkSave() }]);
+      "-", { label: mkdCount() ? `Zapisz znaczniki (${mkdCount()})…` : "Zapisz znaczniki (brak zmian)", fn: () => mkSave() },
+      { label: "Lista znaczników…", fn: () => mkOpenList(ctx) },
+      { label: "Szukaj w danych…", fn: () => mkOpenSearch(ctx) },
+      ...(ctx.kind === "live" ? [{ label: (ctx.showAll ? "✓ " : "") + "Pokaż też znaczniki z innych połączeń", fn: () => { ctx.showAll = !ctx.showAll; ctx.reload(); } }] : []),
+      { label: "Wygląd znaczników (grubość linii)…", fn: mkLookOpen }]);
   });
 }
 async function mkAdd(ctx, m) {   // the marker joins the draft (see above); nothing is sent to the server yet
@@ -346,6 +387,7 @@ async function gotoMarker(m) {
 let mkList = [], mkSel = new Set();
 function mkMatches(m, f) {   // the filters of the list view applied to a draft marker
   const hay = [m.title, m.description, m.notes, m.author, m.group_name, m.conn_name, ...(m.signals || [])].join(" ").toLowerCase();
+  if (f.conn && m.conn !== f.conn) return false;
   if (f.q && !f.q.toLowerCase().split(/\s+/).filter(Boolean).every((w) => hay.includes(w))) return false;
   if (f.priority !== "" && m.priority !== +f.priority) return false;
   if (f.group !== "*" && (m.group_name || "").toLowerCase() !== f.group.toLowerCase()) return false;
@@ -361,9 +403,10 @@ async function refreshMarkers() {
   if (v("mkl-group") !== "*") qs.set("group", v("mkl-group"));
   if (v("mkl-author")) qs.set("author", v("mkl-author"));
   if ($("mkl-range").checked && v("mkl-from") && v("mkl-to")) { qs.set("from", mkFromInput(v("mkl-from"))); qs.set("to", mkFromInput(v("mkl-to"))); }
+  if (v("mkl-scope") === "conn" && $("c-conn").value) qs.set("conn", $("c-conn").value);
   qs.set("order", v("mkl-order")); qs.set("limit", 1000);
   let d; try { d = await api("/api/markers?" + qs); } catch (e) { $("mkl-msg").textContent = "Błąd: " + e.message; return; }
-  const flt = { q: v("mkl-q"), priority: v("mkl-prio"), group: v("mkl-group"), author: v("mkl-author"),
+  const flt = { conn: v("mkl-scope") === "conn" ? $("c-conn").value : "", q: v("mkl-q"), priority: v("mkl-prio"), group: v("mkl-group"), author: v("mkl-author"),
     from: $("mkl-range").checked && v("mkl-from") && v("mkl-to") ? mkFromInput(v("mkl-from")) : 0, to: $("mkl-range").checked && v("mkl-to") ? mkFromInput(v("mkl-to")) : 0 };
   const rows = d.markers.map((m) => MKD.deleted.has(m.id) ? m : MKD.edited.has(m.id) ? (mkMatches(MKD.edited.get(m.id), flt) ? MKD.edited.get(m.id) : null) : m).filter(Boolean);
   for (const m of MKD.added.values()) if (mkMatches(m, flt)) rows.push(m);
@@ -395,14 +438,34 @@ function initMarkersView() {
     if (act === "del") mkdDelete(m);
     if (act === "undo") mkdRevert(m.id);
   });
-  for (const id of ["mkl-prio", "mkl-group", "mkl-author", "mkl-order", "mkl-range", "mkl-from", "mkl-to"]) $(id).addEventListener("change", refreshMarkers);
+  for (const id of ["mkl-prio", "mkl-group", "mkl-author", "mkl-scope", "mkl-order", "mkl-range", "mkl-from", "mkl-to"]) $(id).addEventListener("change", refreshMarkers);
   let tm = null; $("mkl-q").addEventListener("input", () => { clearTimeout(tm); tm = setTimeout(refreshMarkers, 250); });
   $("mkl-refresh").addEventListener("click", refreshMarkers);
   $("mkl-group-btn").addEventListener("click", () => { if (mkSel.size) mkGroupDialog(null, mkList.filter((m) => mkSel.has(m.id))); else alert("Zaznacz znaczniki (pola po lewej)."); });
   $("mkl-ungroup-btn").addEventListener("click", () => { if (!mkSel.size) return alert("Zaznacz znaczniki (pola po lewej)."); for (const m of mkList.filter((x) => mkSel.has(x.id))) mkdUpdate(m, { group_name: "" }); });
   $("mkl-save").addEventListener("click", () => mkSave());
+  $("mkl-look").addEventListener("click", mkLookOpen);
   const now = Date.now(); $("mkl-to").value = mkInput(now * 1000); $("mkl-from").value = mkInput((now - 86400e3) * 1000);
 }
+
+// ---------------------------------------------------------------- list / search from the chart, keyboard shortcuts
+function mkOpenList(ctx) {   // opened from a chart: the scope is that chart's connection (like the program), from the menu: every connection
+  $("mkl-scope").value = ctx && ctx.kind === "live" ? "conn" : "";
+  go("markers");
+}
+function mkOpenSearch(ctx) {
+  const d = ctx && ctx.kind === "rec" ? $("rv-search") : $("c-search"); d.open = true; d.scrollIntoView({ block: "center" });
+  d.querySelector("select, input")?.focus();
+}
+// Ctrl+M list, Ctrl+Shift+M add a marker now, Ctrl+Shift+S save markers, Ctrl+F search in the data (only while a chart is shown)
+window.addEventListener("keydown", (e) => {
+  if (!e.ctrlKey || e.altKey || !me?.user || document.querySelector("dialog[open]")) return;
+  const k = e.key.toLowerCase(), live = view === "chart", chart = live || view === "recs";
+  if (k === "m" && !e.shiftKey && (chart || view === "markers")) { e.preventDefault(); mkOpenList(live ? MK.live : null); }
+  else if (k === "m" && e.shiftKey && live) { e.preventDefault(); $("c-addmark").click(); }
+  else if (k === "s" && e.shiftKey && (chart || view === "markers")) { e.preventDefault(); mkSave(); }
+  else if (k === "f" && !e.shiftKey && chart) { e.preventDefault(); mkOpenSearch(live ? MK.live : MK.rec); }
+});
 
 // ---------------------------------------------------------------- search panel (values of signals): live connection and recordings
 const MK_OPS = { "==": "jest równe", "!=": "jest różne od", ">": "jest większe niż", ">=": "jest ≥", "<": "jest mniejsze niż", "<=": "jest ≤", between: "jest w przedziale",
@@ -411,7 +474,8 @@ const MK_OPS_N = { between: 2, outside: 2, changes: 0, rises: 0, falls: 0, nan: 
 const MK_EVENTS = ["changes", "rises", "falls"];
 // box: container; cfg = {names(): [...], run(body) -> result, pick(hit), mark(hit, signals, event)}
 function mkSearchPanel(box, cfg) {
-  box.innerHTML = `<div class="sr-rows"></div><div class="inline"><label>Trwa co najmniej [s] <input class="sr-min" type="number" min="0" step="any" value="0" style="width:90px"></label>
+  box.innerHTML = `<div class="inline sr-goto"><span>Przejdź do daty i godziny:</span><input class="sr-when" type="datetime-local" step="0.001"><button class="sr-gobtn">Przejdź</button><span class="sr-gmsg muted"></span></div>
+    <div class="sr-rows"></div><div class="inline"><label>Trwa co najmniej [s] <input class="sr-min" type="number" min="0" step="any" value="0" style="width:90px"></label>
     <button class="sr-go">Szukaj</button><span class="sr-msg muted"></span></div><table class="sr-res" hidden><thead><tr><th>Początek</th><th>Trwa</th><th>Wartości na początku</th><th>Min … maks</th><th></th></tr></thead><tbody></tbody></table>`;
   const rows = box.querySelector(".sr-rows"); let hits = [], used = [];
   const build = () => {
@@ -431,6 +495,13 @@ function mkSearchPanel(box, cfg) {
     }
   };
   build(); box._rebuild = build;
+  box.querySelector(".sr-when").value = mkInput(Date.now() * 1000);
+  box.querySelector(".sr-gobtn").onclick = async () => {
+    const us = mkFromInput(box.querySelector(".sr-when").value), gm = box.querySelector(".sr-gmsg"), s0 = cfg.startUs();
+    if (!us || !s0) { gm.textContent = "Brak danych."; return; }
+    gm.textContent = ""; try { const ok = await cfg.pick({ t0: (us - s0) / 1e6, t1: (us - s0) / 1e6, duration: 0, t0_us: us, t1_us: us }, true); gm.textContent = ok === false ? "Tego momentu nie ma w danych." : "Pokazano " + mkStamp(us) + "."; }
+    catch (err) { gm.textContent = "Błąd: " + err.message; }
+  };
   box.querySelector(".sr-go").onclick = async () => {
     const conds = [...rows.children].filter((r) => r.querySelector(".sr-on").checked).map((r) => ({ signal: r.querySelector(".sr-sig").value, op: r.querySelector(".sr-op").value,
       a: +r.querySelector(".sr-a").value, b: +r.querySelector(".sr-b").value, tol: +r.querySelector(".sr-t").value }));

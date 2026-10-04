@@ -47,28 +47,49 @@ def color_icon(col: str, size: int = 14) -> QIcon:
     return QIcon(pm)
 
 
-def marker_tip(m: mk.Marker, state: str = "") -> str:
+def marker_tip(m: mk.Marker, state: str = "", changed=frozenset(), look: dict | None = None) -> str:
+    """The bubble over a marker. `changed` = internal names of the fields changed since the saved version: they are
+    highlighted yellow. Times are in a monospaced font in a table, so the digits of two dates are one under the other."""
     e = html.escape
-    rows = [f"<b>{e(m.title or '(bez tytułu)')}</b>  <span style='color:{m.color}'>■</span>"]
+    changed = set(changed)
+
+    def hl(text: str, *fields: str) -> str:
+        return f"<span style='background-color:#ffd24a;color:#000000'>&nbsp;{text}&nbsp;</span>" if changed & set(fields) else text
+
+    mono = "font-family:Consolas,\"Courier New\",monospace"
+    rows = [hl(f"<b>{e(m.title or '(bez tytułu)')}</b>", "title") + "  " + hl(f"<span style='color:{m.color}'>■</span>", "color")]
     if state:
         rows.append(f"<span style='color:#e0a030'>* niezapisany ({'nowy' if state == 'new' else 'zmieniony'}) – "
                     "użyj „Zapisz znaczniki”</span>")
     if m.kind == "range":
-        rows.append(f"Zakres: {fmt_us(m.at_us)} → {fmt_us(m.end_us)} ({_dur((m.end_us - m.at_us) / 1e6)})")
+        rows.append(hl(f"Zakres czasu ({_dur((m.end_us - m.at_us) / 1e6)}):", "kind", "at_us", "end_us") +
+                    f"<table cellspacing='0' cellpadding='0'><tr><td>Od:&nbsp;</td><td style='{mono}'>"
+                    f"{hl(fmt_us(m.at_us), 'at_us', 'kind')}</td></tr><tr><td>Do:&nbsp;</td><td style='{mono}'>"
+                    f"{hl(fmt_us(m.end_us), 'end_us', 'kind')}</td></tr></table>")
     else:
-        rows.append(f"Czas: {fmt_us(m.at_us)}")
-    rows.append(f"Priorytet: {mk.PRIORITIES.get(m.priority, m.priority)}")
-    rows.append(f"Linia: {m.width_px()} px, {mk.LINE_STYLES.get(m.line_style, m.line_style)}"
-                + (f"; przezroczystość obszaru {100 - m.opacity} %" if m.kind == "range" else ""))
-    rows.append("Dotyczy: " + (e(", ".join(m.signals)) if m.signals else "wszystkich przebiegów"))
-    if m.group_name:
-        rows.append(f"Grupa: <b>{e(m.group_name)}</b>")
+        rows.append(hl(f"Czas: <span style='{mono}'>{fmt_us(m.at_us)}</span>", "at_us", "kind"))
+    rows.append(hl(f"Priorytet: {mk.PRIORITIES.get(m.priority, m.priority)}", "priority"))
+    width = f"{m.line_width} px" if m.line_width else (f"{look['width_all']} px (wg ustawień)" if look else "wg ustawień")
+    rows.append(hl(f"Linia: {width}, {mk.LINE_STYLES.get(m.line_style, m.line_style)}"
+                   + (f"; przezroczystość obszaru {100 - m.opacity} %" if m.kind == "range" else ""),
+                   "line_width", "line_style", "opacity"))
+    rows.append(hl("Dotyczy: " + (e(", ".join(m.signals)) if m.signals else "wszystkich przebiegów"), "signals"))
+    if m.group_name or "group_name" in changed:
+        rows.append(hl(f"Grupa: <b>{e(m.group_name) or '(brak)'}</b>", "group_name"))
+    if not m.show_label or "show_label" in changed:
+        rows.append(hl("Nazwa na wykresie: " + ("pokazywana" if m.show_label else "ukryta"), "show_label"))
     if m.description:
-        rows.append(e(m.description).replace("\n", "<br>"))
+        rows.append(hl(e(m.description).replace("\n", "<br>"), "description"))
+    elif "description" in changed:
+        rows.append(hl("(opis usunięty)", "description"))
     if m.notes:
-        rows.append("<i>Uwagi:</i> " + e(m.notes).replace("\n", "<br>"))
-    rows.append(f"Autor: {e(m.author or '–')} · założono {fmt_us(m.created_us, False)}")
-    rows.append(f"Zmieniono: {fmt_us(m.modified_us, False)}" + (f" ({e(m.modified_by)})" if m.modified_by else ""))
+        rows.append(hl("<i>Uwagi:</i> " + e(m.notes).replace("\n", "<br>"), "notes"))
+    elif "notes" in changed:
+        rows.append(hl("(uwagi usunięte)", "notes"))
+    rows.append(f"Autor: {e(m.author or '–')}")
+    rows.append(f"Założono: {fmt_us(m.created_us, False)}")
+    rows.append(f"Zmodyfikował: {e(m.modified_by) if m.modified_by else '–'}")
+    rows.append(f"Zmieniono: {fmt_us(m.modified_us, False)}")
     return "<br>".join(rows)
 
 
@@ -139,7 +160,7 @@ class MarkerEditDialog(QDialog):
         self.cb_prio = priority_combo(marker.priority)
         self.sp_width = QSpinBox()
         self.sp_width.setRange(0, mk.MAX_WIDTH)
-        self.sp_width.setSpecialValueText("wg priorytetu")
+        self.sp_width.setSpecialValueText("wg ustawień")
         self.sp_width.setSuffix(" px")
         self.sp_width.setValue(marker.line_width)
         self.cb_style = QComboBox()
@@ -366,6 +387,7 @@ class TabMarkers:
         p.markerMoved.connect(self.moved)
         p.markerPlaced.connect(self.placed)
         p.markerOpened.connect(self.opened)
+        p.markerEdit.connect(self.edit)                  # double click on a marker opens its edit window
 
     # ---- basics
     @property
@@ -436,9 +458,9 @@ class TabMarkers:
             label = (m.title if m.show_label else "")
             items.append({"id": m.id, "kind": m.kind, "x0": self.to_rel(m.at_us),
                           "x1": self.to_rel(m.end_us) if m.kind == "range" else self.to_rel(m.at_us),
-                          "color": m.color, "width": m.width_px(), "style": m.line_style, "opacity": m.opacity,
+                          "color": m.color, "width": m.line_width, "style": m.line_style, "opacity": m.opacity,
                           "priority": m.priority, "title": ("* " + label) if (label and state) else label,
-                          "tip": marker_tip(m, state), "signals": list(m.signals)})
+                          "tip": marker_tip(m, state, dr.changed_fields(m.id), self.tab.plot.mlook), "signals": list(m.signals)})
         self.tab.plot.set_markers(items)
         if self.hi_group:                                                # the group chosen with 'Podświetl grupę'
             self.tab.plot.set_marker_highlight({m.id for m in found if m.group_name == self.hi_group})

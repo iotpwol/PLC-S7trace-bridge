@@ -477,15 +477,18 @@ def test_clamp_view_without_data_and_min_window(app):
     tab.shutdown()
 
 
-def test_diagnostics_entry_lives_in_settings_menu(app, tmp_path, monkeypatch):
+def test_diagnostics_entries_live_in_the_diagnostics_menu(app, tmp_path, monkeypatch):
     from s7trace.ui.main_window import MainWindow
     monkeypatch.setattr("s7trace.ui.main_window.save_app_config", lambda *a, **k: None)
     w = MainWindow(config_file=str(tmp_path / "c.json"))
     menus = {a.text().replace("&", ""): a.menu() for a in w.menuBar().actions() if a.menu()}
     names = lambda m: [x.text() for x in m.actions()]
-    assert "Diagnostyka połączenia…" in names(menus["Ustawienia"])
-    assert "Diagnostyka połączenia…" not in names(menus["Widok"])
-    act = next(x for x in menus["Ustawienia"].actions() if x.text() == "Diagnostyka połączenia…")
+    assert "Diagnostyka połączenia…" in names(menus["Diagnostyka"])
+    assert "Diagnostyka połączenia…" not in names(menus["Widok"]) + names(menus["Ustawienia"])
+    assert any("Informacje o sterowniku" in t for t in names(menus["Diagnostyka"]))
+    assert any("Zaległe bufory" in t for t in names(menus["Diagnostyka"]))
+    assert [a.text().replace("&", "") for a in w.menuBar().actions()] == ["Plik", "Widok", "Diagnostyka", "Znaczniki", "Ustawienia", "Pomoc"]
+    act = next(x for x in menus["Diagnostyka"].actions() if x.text() == "Diagnostyka połączenia…")
     assert act.shortcut().toString() == "Ctrl+D"
     w.close()
 

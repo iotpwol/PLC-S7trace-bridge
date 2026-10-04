@@ -161,6 +161,25 @@ Po usunięciu konta jego połączenia zostają w pliku i widzi je administrator.
   domyślne), przeglądarka użyje własnej palety.
 - Serwer wysyła do 4000 punktów na zapytanie (przerzedzanie równomierne); brakujące odczyty (przerwa w łączności) to przerwa w linii.
 - Przy rozłączeniu proces odczytu sam ponawia połączenie (stan „ponawianie”); wykres pokazuje przerwę.
+- **Narzędzia wykresu** (pasek nad wykresem; te same na „Podgląd na żywo” i w „Nagrania”, odpowiednik programu okienkowego):
+  - **Kursory V** – klik na wykresie stawia kursor czasu (najwyżej 2, można je przeciągać); odczyt w ramce: czas każdego kursora i wartości sygnałów, Δt i częstotliwość;
+  - **Kursory H** – kursory wartości (najwyżej 2): w układzie pasm wartość w pasie pod linią (albo „poza pasmem sygnału”), ΔY; w układzie offset – wartość na osi Y;
+  - **przybliżanie i przesuwanie:** Ctrl + kółko myszy przybliża / oddala wokół kursora, przeciągnięcie przesuwa, Shift + przeciągnięcie = przybliżenie do zaznaczonego zakresu
+    (najmniejsze okno 0,1 s). Na żywo widok zostaje w miejscu (dane dalej napływają), przycisk „Wróć do danych na żywo” przywraca okno kroczące; w nagraniach serwer
+    czyta wtedy wybrany zakres dokładniej, „Cały przebieg” wraca do całości;
+  - **pasek przeglądowy** pod wykresem: cały zapamiętany przebieg z ramką bieżącego zakresu – przeciągnij ramkę (przesuwanie), jej brzeg (zmiana zakresu) albo kliknij obok (wyśrodkowanie);
+  - **Punkty** – pokazuje punkty próbek na krzywych (do 3000 widocznych naraz);
+  - **Układ** – „Pasma wg Share” (domyślny) albo „Offset Y + wzmocnienie” (jedna oś Y: wartość × wzmocnienie + offset; zakres Y z „Auto Y” albo z pól Y min / Y maks).
+    Wybór w pasku jest tylko dla oglądającego; wartość domyślną (układ, Auto Y, Y min / maks, punkty) ustawia się w edycji połączenia (pola „Układ wykresu” …),
+    także w trakcie pracy połączenia. Nagrania w bazach nie niosą układu – używają „Pasma”, offset sygnału jest zapisany w nagraniu.
+- **Legenda** pod wykresem: po najechaniu na pozycję dymek z opisem sygnału (nazwa, adres, źródło, typ, skala, opis i ostatnia wartość); lista „Legenda” w pasku narzędzi (albo „Legenda pokazuje” w edycji połączenia) przełącza napisy między nazwą a adresem / węzłem OPC.
+- **Pola zwijane** w edycji połączenia (Połączenie, Sterownik, Zakres okna wykresu, Trigger, Nagrywanie REC): klik w tytuł zwija pole, trójkąt za nazwą (w prawo = zwinięte, w dół = rozwinięte) obraca się o 90°; stan pamięta przeglądarka. Pole „Sterownik” pokazuje dane sterownika połączenia.
+- **Przycisk „?”** w nagłówku strony włącza tryb pomocy (Shift+F1, Esc kończy): najechanie na przycisk, pole, nazwę kolumny albo tytuł pokazuje dymek – co to, do czego, jak ustawić, zakres (teksty z `/api/help`, wspólne z programem okienkowym). „O programie” w nagłówku: autor, wersja, data (`/api/version`).
+- **Strona „Diagnostyka”** (odpowiednik menu Diagnostyka programu okienkowego): wybór połączenia; ocena łącza (pasek i opis przyczyn), czasy odczytu i okresy próbkowania
+  (chwilowo, średnie 10 s / 60 s / całość, min, maks, odchylenie, P95, P99), cykl ustawiony i rzeczywisty, pominięte cykle, błędy i zerwania, dostępność, przepustowość,
+  **tabela „Informacje o sterowniku”** i czas sterownika (z chwili połączenia) z różnicą do zegara serwera, przycisk „Ping sterownika” (ICMP z serwera), lista
+  **kto jeszcze odczytuje ten sterownik** (programy okienkowe zgłaszające się do serwera i inne połączenia serwera) oraz – dla administratora – **zaległe bufory zapisu**
+  nagrań do baz sieciowych (tylko lista; dane są dosyłane przy następnym nagraniu do tej samej bazy, usuwanie bufora jest w programie okienkowym). Odświeża się co 2 s.
 
 ---
 
@@ -218,9 +237,9 @@ Odpowiednik okna „Przegląd nagrań” programu okienkowego.
 
 - **Źródła:** „Moje nagrania” (SQLite konta), „Wspólne połączenia” (SQLite wspólnych połączeń – widoczne dla wszystkich), cele z listy administratora,
   a dla administratora pliki SQLite innych kont. Nagrania zapisane w CSV są w „Plikach”, nie w tym przeglądzie.
-- **Lista:** tytuł, uwagi, start, czas trwania, właściciel, komputer, połączenie, sygnały, tagi; wyszukiwanie po wszystkim naraz.
+- **Lista:** tytuł, uwagi, start, czas trwania, właściciel, komputer, połączenie, **sterownik** (model i nazwa stacji, pod spodem numer seryjny; dymek z całą tabelą), sygnały, tagi; wyszukiwanie po wszystkim naraz (także po danych sterownika). Dane sterownika są zapisywane z każdym nagraniem w każdej bazie (patrz `BAZY_DANYCH.md`, p. 1.4); po wczytaniu nagrania widać je nad wykresem.
 - **Wczytaj:** wykres z pasami jak na żywo; długie nagrania zmniejszane do ok. 6000 punktów metodą min/maks (szczyty nie znikają); przeciągnięcie
-  myszą po wykresie przybliża zakres (serwer czyta wtedy ten zakres dokładniej), „Cały przebieg” wraca. W nagraniach „tylko zmiany” ostatnia
+  myszą po wykresie przesuwa, Ctrl + kółko albo Shift + przeciągnięcie przybliża zakres (serwer czyta wtedy ten zakres dokładniej), pasek przeglądowy i „Cały przebieg” wracają do całości; dostępne są też kursory, punkty i układ (p. 6). W nagraniach „tylko zmiany” ostatnia
   wartość trzyma się do końca zakresu.
 - **CSV:** wszystkie wiersze nagrania lub widocznego zakresu (bez przerzedzania), format zgodny z programem okienkowym.
 - **Opis:** tytuł, uwagi, tagi (właściciela nie da się zmienić).
@@ -290,6 +309,7 @@ serwer weryfikuje je przez **SSPI** (`secur32.dll`, `ctypes`) – hasło nigdy n
 | `web_cert.pem`, `web_key.pem` | certyfikat i klucz prywatny TLS (przy `--tls`) | wysoka |
 | `workspaces\u_<konto>.json`, `_shared.json` | połączenia kont (konfiguracje; hasła tylko przy „zapamiętaj”) | średnia |
 | `files\u_<konto>\snapshots`, `\rec`, `recordings.db` | pliki CSV i SQLite konta; `files\_shared\…` dla wspólnych połączeń | dane pomiarowe |
+| `prefs\u_<konto>.json` | ustawienia interfejsu konta (wygląd linii znaczników) | niska |
 | `dbs\` | wspólne pliki SQLite celów | dane pomiarowe |
 | `spool\` | bufory dyskowe nagrań do baz sieciowych | dane pomiarowe |
 
@@ -321,10 +341,12 @@ dla zamkniętych połączeń; nagłówki `Cache-Control: no-store`, `X-Content-T
 
 Tryb Web **nie zastępuje** programu okienkowego, tylko go uzupełnia. Czego w przeglądarce nie ma (lub działa inaczej):
 
-- Wykres: pasy na sygnał skalowane do min…maks okna; **brak** układu „offset” (Offset Y / Gain / Auto Y), przełącznika „Punkty”, kursorów i pomiarów,
-  przesuwania i powiększania wykresu na żywo (są tylko okna czasu 30 s…15 min), podglądu przeglądowego, przeciągania legendy, motywów i profili kolorów,
-  stałej skali BOOL 0…1 (BOOL skaluje się jak inne sygnały). Powiększanie istnieje tylko w przeglądzie nagrań.
-- Brak importu symboli TIA, okna diagnostyki połączenia/PING/czasu PLC, edycji formatu wyświetlania wartości, wzmocnienia i offsetu (zachowywane, ale
+- Wykres: pasy na sygnał (wysokość wg „Share”, jak w programie) albo układ offset, etykiety osi w kolorze pasa, kursory V / H, przybliżanie i przesuwanie, pasek przeglądowy,
+  „Punkty” (p. 6). **Różnice:** przybliżanie kółkiem wymaga Ctrl (zwykłe kółko przewija stronę); zakres przesuwania na żywo ogranicza to, co strona zebrała od otwarcia
+  wykresu; wyboru układu / punktów w pasku wykresu nie pamięta serwer (wartości domyślne są w konfiguracji połączenia); brak przeciągania legendy, motywów i profili kolorów interfejsu
+  (wygląd linii znaczników jest pamiętany na koncie – `prefs\`, p. 19.2).
+- Diagnostyka w przeglądarce (p. 6) pokazuje to samo co okno programu okienkowego, ale **bez wykresów opóźnień, bez zapisu raportu i bez ciągłego pingu** (jeden ping na żądanie, z serwera);
+  nie ma też czasu sterownika odczytywanego na żądanie (jest z chwili połączenia) ani usuwania / dosyłania zaległych buforów. Brak importu symboli TIA, edycji formatu wyświetlania wartości, wzmocnienia i offsetu (zachowywane, ale
   nieedytowalne), wartości bieżących w tabeli sygnałów, edycji sygnałów **w trakcie** pracy połączenia (w programie okienkowym można dodać sygnał w locie).
 - REC: brak pytania o nazwę „na początku / na końcu” (nazwa przy starcie lub w trakcie); parametry czasowe baz tylko przez plik celu.
 - Nagrania w CSV nie mają przeglądu w przeglądarce (lista + pobranie w „Plikach”).
@@ -409,6 +431,9 @@ Wszystkie odpowiedzi to JSON (poza plikami CSV, strumieniem SSE i plikami statyc
 | POST `/api/connections/<id>/rec` | operator | `{"action":"start"|"stop"|"info", "title":…}` |
 | GET `/api/connections/<id>/series` | podgląd | dane: `seconds`, `since`, albo `from`+`to` |
 | GET `/api/connections/<id>/stream` | podgląd | strumień SSE (`seconds`) |
+| GET `/api/connections/<id>/diag` | podgląd | diagnostyka: ocena łącza, statystyki, tabela sterownika, czas PLC, kto jeszcze skanuje, (admin) bufory zapisu; `?ping=1` – jeden ping |
+| GET `/api/help`, `/api/version` | – | teksty trybu pomocy; autor / wersja / data programu |
+| GET/POST `/api/prefs` | podgląd | ustawienia interfejsu konta (`marker_look`), walidowane i zapisywane per konto |
 | GET `/api/connections/<id>/files[/<rodzaj>/<nazwa>]` | podgląd | lista / pobranie pliku CSV konta |
 | POST `/api/connections/<id>/files` | edycja | usunięcie pliku |
 | GET `/api/recordings/sources`, `/api/recordings`, `/api/recordings/data`, `/api/recordings/csv` | podgląd | źródła, lista, odczyt, CSV |
@@ -447,9 +472,15 @@ wykresu na żywo i do nagrania w bazie; znacznik założony na nagraniu zapamię
 - **Prawy przycisk na znaczniku** – menu: edycja (albo „Szczegóły”, gdy nie wolno edytować), zmiana pozycji (znacznik się podświetla, klik w nowe miejsce),
   ukrycie / pokazanie nazwy na wykresie, grupy (dodaj / przenieś / usuń z grupy, podświetl grupę, następny i poprzedni znacznik grupy, zmiana nazwy grupy),
   cofnięcie niezapisanej zmiany, usunięcie.
+- Menu prawego przycisku zawiera też: **„Znacznik zakresu z kursorów V1–V2…”** (gdy stoją oba kursory V), „Lista znaczników…” (lista z zakresem bieżącego połączenia), „Szukaj w danych…” oraz – na wykresie na żywo – przełącznik **„Pokaż też znaczniki z innych połączeń”**.
+- **Skróty klawiszowe** (gdy jest otwarty wykres lub lista): Ctrl+M – lista znaczników, Ctrl+Shift+M – dodaj znacznik teraz (na żywo), Ctrl+Shift+S – zapisz znaczniki, Ctrl+F – wyszukiwarka danych (zastępuje wyszukiwanie przeglądarki tylko na tych stronach).
+- **Dwuklik na znaczniku** – okno edycji (albo szczegółów, gdy nie wolno edytować).
 - **Przeciąganie myszą** – punkt przesuwa się w całości, zakres można chwycić za brzeg albo za wnętrze.
+- **Podświetlenie po najechaniu** – linia (punktu albo brzegu zakresu – ten sam standard) robi się grubsza i zachowuje kolor znacznika.
+- **Dymek**: czas zakresu jako „Od:” i „Do:” jedno pod drugim (czcionka o stałej szerokości), potem Autor, Założono, Zmodyfikował, Zmieniono; pola zmienione od ostatniego zapisu są podświetlone na żółto.
+- **Grubości linii** – przycisk „Wygląd znaczników…” (zakładka Znaczniki i menu wykresu): znacznik dla wszystkich przebiegów, wybrane przebiegi, cienka prowadnica przez pozostałe, linia podświetlona. Znacznik z własną grubością ją zachowuje (0 = wg ustawień; priorytet nie zmienia grubości). Ustawienia są pamiętane **na koncie, na serwerze** (`/api/prefs`, plik `prefs\u_<konto>.json`) – te same w każdej przeglądarce i na każdym komputerze; w programie okienkowym leżą w konfiguracji interfejsu (razem z plikiem „Zapisz konfigurację interfejsu”).
 - Zakres jest półprzezroczystym obszarem koloru znacznika; znacznik dotyczący wybranych przebiegów rysuje się tylko w ich pasach.
-- Zakładka **Znaczniki** – lista z wyszukiwaniem (tytuł, opis, uwagi, autor, grupa, przebieg), filtrami (priorytet, grupa, autor, zakres dat, kolejność),
+- Zakładka **Znaczniki** – lista z wyszukiwaniem (tytuł, opis, uwagi, autor, grupa, przebieg), filtrami (priorytet, grupa, autor, **zakres: wszystkie połączenia / połączenie z wykresu**, zakres dat, kolejność; z wykresu lista otwiera się z zakresem jego połączenia – jak w programie, z menu – ze wszystkimi),
   przyciskami Pokaż / Edytuj / Usuń / Cofnij zmianę i grupowaniem zaznaczonych. „Pokaż” otwiera wykres, który zawiera znacznik (połączenie albo nagranie).
 
 ### 19.3. Zapis: znaczniki robocze
@@ -459,8 +490,8 @@ staje się dopiero po poleceniu **Zapisz znaczniki** (przycisk w nagłówku stro
 (z nazwami pól) / do usunięcia”, a po potwierdzeniu strona wysyła **jedną paczkę** (`POST /api/markers`, `{"action":"batch","adds":[…],"updates":[…],"deletes":[…]}`)
 zapisywaną w jednej transakcji – albo wszystko, albo nic (sprawdzane są najpierw wszystkie prawa, potem poprawność pól; najwyżej 500 zmian naraz).
 Przy **wyjściu z wykresu** (Podgląd na żywo / Nagrania → inna zakładka), **wylogowaniu** i zamknięciu karty przeglądarki (`beforeunload`) strona przypomina
-o niezapisanych znacznikach i pokazuje ich wykaz (Zapisz / Odrzuć zmiany / Wróć do wykresu). Zmiana połączenia albo nagrania **nie** kasuje roboczych
-znaczników (czekają, aż wrócisz na ten wykres; licznik jest cały czas widoczny w nagłówku).
+o niezapisanych znacznikach i pokazuje ich wykaz (Zapisz / Odrzuć zmiany / Wróć do wykresu). Przypomnienie pojawia się też przy **zmianie połączenia** na wykresie na żywo, przy **wczytaniu innego nagrania** i przy zmianie źródła nagrań; wybór „Wróć”
+zostawia wszystko bez zmian. Robocze znaczniki nie znikają same (licznik jest cały czas widoczny w nagłówku).
 
 ### 19.4. Kto co widzi i zmienia
 
@@ -475,7 +506,7 @@ W Podglądzie na żywo (sekcja „Wyszukiwarka danych”) i w Nagraniach (sekcja
 minimalny czas trwania. Wynik: początek, czas trwania (albo „zdarzenie” dla zmian i zboczy), wartości na początku, min…maks (najwyżej 5000 wyników, w tabeli
 pierwsze 500). „Pokaż” ustawia wykres na wynik (na żywo: zamrożony widok z przyciskiem powrotu), „Dodaj znacznik…” zakłada roboczy znacznik (zakres, gdy wynik
 trwał) z listą przebiegów z warunków. W nagraniu serwer przeszukuje bazę kawałkami (przy zbyt dużym kawałku dzieli go na pół), a przy limicie czasu zwraca wynik
-częściowy z adnotacją. W programie okienkowym dodatkowo „Przejdź do daty i godziny”.
+częściowy z adnotacją. Na górze panelu jest też **„Przejdź do daty i godziny”** (jak w programie okienkowym): na żywo pokazuje ten moment w danych zapamiętanych przez połączenie, w nagraniu – część nagrania wokół niego; poza danymi pojawia się komunikat.
 
 ### 19.6. Co zostało sprawdzone / czego nie
 

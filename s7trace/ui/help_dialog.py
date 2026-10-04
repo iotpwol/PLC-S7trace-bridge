@@ -110,6 +110,9 @@ i przywracane po ponownym uruchomieniu (<tt>%APPDATA%\\S7Trace\\config.json</tt>
          "Przy Start na sterownik, który już skanuje inny użytkownik, program tylko ostrzega (nie blokuje)."),
         ("Wymagania, ograniczenia i blokady…", "Opis ograniczeń każdej metody oraz ograniczeń systemowych i sieciowych."),
         ("Interfejs…, Zapisane konfiguracje interfejsu, Profil kolorów", "Kolory, czcionki, profile ciemny / jasny / systemowy i zapisane konfiguracje wyglądu."),
+        ("Tryb pomocy („?”, Shift+F1)", "W prawym górnym rogu każdego okna (obok „X”) i w pasku menu głównego okna jest przycisk „?”. Po jego włączeniu najedź kursorem na dowolny element – przycisk, pole, nazwę kolumny albo wiersza, tytuł pola – a pojawi się dymek: co to jest, do czego służy, jak ustawić i zakres. Esc albo ponowne „?” kończy tryb."),
+        ("Zwijane pola panelu", "Kliknięcie tytułu pola („Połączenie”, „Sterownik”, „Zakres okna wykresu”, „Trigger”, „Nagrywanie REC”) zwija lub rozwija jego zawartość; trójkąt za nazwą (w prawo = zwinięte, w dół = rozwinięte) obraca się płynnie. Stan jest pamiętany."),
+        ("O programie", "Autor, wersja i data programu (wersja rośnie o 0,01 z każdą zmianą)."),
         ("Zapisz / Wczytaj konfigurację karty…", "To samo co w menu Plik."),
     ])))
 
@@ -211,7 +214,7 @@ Najwęższe okno to <b>0,1 s</b> – kółko myszy dalej nie powiększa.</li>
 Wstrzymuje to widok na żywo (zbieranie trwa dalej) – <b>Wznów</b> wraca do podglądu bieżących danych.</li>
 <li><b>Legenda</b> (lewy górny róg) – pokazuje nazwy i kolory sygnałów widocznych na wykresie. Przeciągnij ją myszą, aby zmienić położenie,
 albo wybierz narożnik w Widok → Położenie legendy (ta karta). Pozycja jest zapamiętywana osobno dla każdej karty.
-Podwójne kliknięcie legendy otwiera okno „Sygnały…”.</li>
+Podwójne kliknięcie legendy otwiera okno „Sygnały…”. Po najechaniu kursorem na pozycję legendy pojawia się dymek z opisem sygnału (jak w oknie „Sygnały…”: adres, typ, skala, opis, aktualna wartość), a prawy przycisk → „Legenda pokazuje” przełącza napisy między nazwą sygnału a jego adresem / węzłem OPC (ustawienie karty).</li>
 <li><b>V znacznik / H znacznik</b>: kliknięcie na wykresie stawia pionowy / poziomy kursor (maks. 2, przesuwalne);
 w ramce wyświetlane są wartości sygnałów w miejscu kursora, Δt (z częstotliwością) i ΔY.</li>
 <li>Pionowa czerwona linia <b>TRIG</b> oznacza chwilę wyzwolenia triggera.</li>
@@ -241,9 +244,9 @@ aby zmienić okno czasu.</li>
          "gdy różni się od poprzedniej (plus pierwsza wartość każdej zmiennej) – to kilkadziesiąt razy mniej danych przy zapisie "
          "godzin i dni; wykres z takiego zapisu odtwarza się dokładnie (krzywa schodkowa). Bazy zapisują w osobnym wątku "
          "(paczki co ok. 0,5 s, ponawianie przy zaniku serwera, w pasku statusu licznik zapisanych wpisów i błędy). "
-         "Każde nagranie w bazie ma tytuł, uwagi, tagi, właściciela (konto Windows) i komputer. Kiedy program pyta o nazwę (na początku, w trakcie, na końcu "
+         "Każde nagranie w bazie ma tytuł, uwagi, tagi, właściciela (konto Windows), komputer i dane sterownika (model, numer katalogowy, firmware, numer seryjny, nazwa stacji – kolumny „Sterownik” i „Nr seryjny” oraz przycisk „Sterownik…” w przeglądzie nagrań). Kiedy program pyta o nazwę (na początku, w trakcie, na końcu "
          "albo wcale) – ustawia się w „...” → zakładka „Nagrania i użytkownicy”. Przegląd, opisy, kosz i usuwanie: Plik → Przegląd nagrań w bazach…; "
-         "zaległe bufory: Ustawienia → Zaległe bufory zapisu do baz…. "
+         "zaległe bufory: Diagnostyka → Zaległe bufory zapisu do baz…. "
          "Odczyt: Plik → Przegląd nagrań w bazach… (lista nagrań, opcjonalnie wybrany zakres czasu; bardzo długie nagrania są "
          "zmniejszane do min/max z każdego przedziału; „Zapisz jako CSV…” eksportuje wszystkie wiersze). Wszystkie czasy zapisu "
          "(pełny stan co N minut w trybie zmian – domyślnie 10, wysyłka paczek, ponawianie, limity czasu, bufor na dysku, rotacja "
@@ -309,7 +312,7 @@ dochodzi do prawej krawędzi paska, a początek do lewej – tekst nie ucieka po
 w dół) oraz jego <b>kolor tła i tekstu</b>.</p>"""))
 
     s.append(("15. Diagnostyka połączenia", """
-<h2>Diagnostyka połączenia (przycisk „Diagnostyka…”, Ustawienia → Diagnostyka połączenia…, Ctrl+D)</h2>
+<h2>Diagnostyka połączenia (przycisk „Diagnostyka…”, menu Diagnostyka → Diagnostyka połączenia…, Ctrl+D)</h2>
 <p>Okno pokazuje na żywo (odświeżanie co 0,5 s) pełne statystyki łącza z bieżącą kartą i można je trzymać otwarte obok wykresu.
 Na górze jest <b>ocena łącza</b> (Bardzo dobre / Dobre / Przeciętne / Słabe / Brak połączenia) oraz <b>poziomym paskiem (bargrafem)</b> o 10 segmentach, wraz z listą konkretnych spostrzeżeń
 i zaleceń, np. „zwiększ cykl do ≥ 41 ms”. Statystyki zerują się przy każdym Start; po Stop zostają widoczne do następnego Start.</p>
@@ -419,7 +422,8 @@ wykresem przeglądowym): kolor oraz „zawsze widoczne” – domyślnie belka j
 <li>Zmiany widać na żywo; <b>Anuluj</b> przywraca poprzedni wygląd, <b>Domyślne</b> – ustawienia fabryczne.</li>
 <li><b>Zapisane konfiguracje</b>: „Zapisz jako…” zapisuje wygląd do pliku .json (każdy parametr w osobnej linii) w
 <tt>%APPDATA%\\S7Trace\\interfejs\\</tt>; zapisane wybierasz z listy (także w Widok → Zapisane konfiguracje interfejsu).
-„Wczytaj z pliku…” otwiera plik z dowolnego miejsca.</li>
+„Wczytaj z pliku…” otwiera plik z dowolnego miejsca. W pliku jest też <b>wygląd linii znaczników</b> (Znaczniki → Wygląd
+znaczników…: cztery grubości linii) – wczytanie konfiguracji przywraca go; plik starszej wersji bez tych parametrów zostawia bieżące.</li>
 </ul>
 """))
 

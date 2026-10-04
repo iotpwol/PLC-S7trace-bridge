@@ -376,11 +376,11 @@ def test_connection_dialog_saves_settings_and_menu(app, tmp_path, monkeypatch):
     from s7trace.ui.conn_dialog import ConnectionDialog
     w = MainWindow(config_file=str(tmp_path / "c.json"))
     names = [a.text() for a in w.menuBar().actions()]
-    assert names.index("&Ustawienia") == names.index("&Widok") + 1 and names[-1] == "&Pomoc"
+    assert names == ["&Plik", "&Widok", "&Diagnostyka", "&Znaczniki", "&Ustawienia", "&Pomoc"]
     st = next(a for a in w.menuBar().actions() if a.text() == "&Ustawienia").menu()
     texts = [a.text() for a in st.actions()]
     assert any("Metoda połączenia" in t for t in texts) and any("Kreator" in t for t in texts)
-    assert any("Informacje o sterowniku" in t for t in texts) and any("Interfejs" in t for t in texts)
+    assert any("Interfejs" in t for t in texts) and not any("Informacje o sterowniku" in t for t in texts)   # (these are in Diagnostyka)
     wv = next(a for a in w.menuBar().actions() if a.text() == "&Widok").menu()
     assert not any("Interfejs" in a.text() for a in wv.actions())
     tab = w.tabs.currentWidget()

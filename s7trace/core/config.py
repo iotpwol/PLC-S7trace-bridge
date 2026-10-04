@@ -64,6 +64,7 @@ class TabConfig:
     own_name: str = "SIG"
     offset_step: float = -1.1      # Offset Y step for newly added signals
     y_layout: str = "lanes"        # "lanes" = every signal in its own band (Share), "offset" = Offset Y + Gain
+    legend_mode: str = "name"      # what the chart legend shows: "name" or "address" (the OPC node for OPC / Web sources)
     legend_pos: list = field(default_factory=lambda: [0.0, 0.0])    # per tab: (0,0) top-left ... (1,1) bottom-right
     rec_folder: str = "rec"        # REC recordings
     rec_filename: str = DEFAULT_REC_NAME
@@ -86,7 +87,7 @@ class TabConfig:
             c.conn = {**conn_defaults(), **d["conn"]}
         for k in ("name", "conf_name", "conn_type", "ip", "rack", "slot", "cycle_ms", "mode", "window_s", "auto_y",
                   "y_min", "y_max", "show_points", "autonumber", "name_mode", "own_name", "offset_step",
-                  "y_layout", "legend_pos", "rec_folder", "rec_filename"):
+                  "y_layout", "legend_pos", "legend_mode", "rec_folder", "rec_filename"):
             if k in d:
                 setattr(c, k, d[k])
         if d.get("signals"):
@@ -101,6 +102,8 @@ class TabConfig:
             c.legend_pos = [0.0, 0.0]
         if c.y_layout not in ("lanes", "offset"):
             c.y_layout = "lanes"
+        if c.legend_mode not in ("name", "address"):
+            c.legend_mode = "name"
         return c
 
 

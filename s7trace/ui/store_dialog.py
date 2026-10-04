@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime
 
-from PySide6.QtCore import QDateTime, Qt
+from PySide6.QtCore import QDateTime, QTimer, Qt
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QDateTimeEdit, QDialog,
                                QDoubleSpinBox, QFileDialog, QFormLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
                                QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QSpinBox, QTableWidget,
@@ -371,7 +371,7 @@ class StoreImportDialog(QDialog):
 
     COLS = [("start", "Początek"), ("dur", "Czas trwania"), ("title", "Tytuł"), ("tags", "Tagi"), ("notes", "Uwagi"),
             ("owner", "Użytkownik"), ("computer", "Komputer"), ("conf", "Konfiguracja"), ("ip", "IP"), ("tab", "Karta"),
-            ("mode", "Zapis"), ("sigs", "Sygnały"), ("events", "Wpisy")]
+            ("plc", "Sterownik"), ("plc_sn", "Nr seryjny"), ("mode", "Zapis"), ("sigs", "Sygnały"), ("events", "Wpisy")]
 
     def __init__(self, cfg: st.StoreConfig, parent=None, can_load: bool = True, base_dir: str | None = None):
         super().__init__(parent)
@@ -383,6 +383,7 @@ class StoreImportDialog(QDialog):
         self.result: tuple | None = None                         # (meta, t_us, matrix, store config)
         self.note = ""                                           # e.g. "thinned out from N to M rows"
         self._policies_done = False
+        self._shown_once = False
         self.setWindowTitle("Przegląd nagrań")
         self.resize(1180, 560)
         lay = QVBoxLayout(self)
@@ -455,13 +456,16 @@ class StoreImportDialog(QDialog):
         self.btn_props = QPushButton("Właściwości…")
         self.btn_props.setToolTip("Tytuł, uwagi i tagi wybranego nagrania.")
         self.btn_props.clicked.connect(self.edit_properties)
+        self.btn_plc = QPushButton("Sterownik…")
+        self.btn_plc.setToolTip("Dane sterownika PLC zapisane razem z nagraniem (model, numer katalogowy, firmware, numer seryjny…).")
+        self.btn_plc.clicked.connect(self.show_device)
         self.btn_del = QPushButton("Usuń")
         self.btn_del.clicked.connect(self.delete_selected)
         self.btn_restore = QPushButton("Przywróć")
         self.btn_restore.clicked.connect(self.restore_selected)
         self.btn_empty = QPushButton("Opróżnij kosz")
         self.btn_empty.clicked.connect(self.empty_trash)
-        for b in (self.btn_props, self.btn_del, self.btn_restore, self.btn_empty):
+        for b in (self.btn_props, self.btn_plc, self.btn_del, self.btn_restore, self.btn_empty):
             row.addWidget(b)
         row.addStretch(1)
         self.btn_load = QPushButton("Wczytaj")
@@ -487,6 +491,12 @@ class StoreImportDialog(QDialog):
         self.dt1.setDateTime(now)
         self._range_enabled(False)
         self._update_buttons()
+
+    def showEvent(self, e) -> None:
+        super().showEvent(e)
+        if not self._shown_once:                                 # the list is read when the window opens
+            self._shown_once = True
+            QTimer.singleShot(0, self.refresh)
 
     # ---- helpers
     def cell(self, row: int, key: str) -> str:
@@ -528,6 +538,7 @@ class StoreImportDialog(QDialog):
         self._policies_done = False
         self.all, self.sessions = [], []
         self._fill()
+        self.refresh()                                           # the other database is read at once
 
     def edit_settings(self) -> None:
         d = StoreDialog(self.cfg, self.cb_kind.currentData(), self)
@@ -623,8 +634,8 @@ class StoreImportDialog(QDialog):
                 continue
             if who and who.startswith("u:") and s["owner"] != who[2:]:
                 continue
-            hay = " ".join(str(s.get(k, "")) for k in ("title", "notes", "tags", "conf", "name", "tab", "ip", "owner",
-                                                          "computer")).lower()
+            hay = " ".join([str(s.get(k, "")) for k in ("title", "notes", "tags", "conf", "name", "tab", "ip", "owner",
+                                                           "computer")] + [v for _l, v in st.device_lines(s.get("device"))]).lower()
             if needle and needle not in hay:
                 continue
             rows.append(s)
@@ -664,6 +675,8 @@ class StoreImportDialog(QDialog):
                 "notes": (s["notes"].replace("\n", " "), None), "owner": (s["owner"], None),
                 "computer": (s["computer"], None), "conf": (s.get("conf") or s.get("name") or "", None),
                 "ip": (s.get("ip", ""), None), "tab": (s.get("tab", ""), None),
+                "plc": (st.device_title(s.get("device")), None),
+                "plc_sn": (str((s.get("device") or {}).get("info", {}).get("serial", "")), None),
                 "mode": (st.MODE_LABEL.get(s.get("mode"), s.get("mode", "")), None),
                 "sigs": (str(len(s.get("signals", []))), len(s.get("signals", []))),
                 "events": ("" if s["_events"] is None else f"{s['_events']:,}".replace(",", " "), s["_events"] or 0)}
@@ -673,6 +686,8 @@ class StoreImportDialog(QDialog):
                 f = it.font()
                 f.setBold(True)
                 it.setFont(f)
+                if key in ("plc", "plc_sn") and s.get("device"):
+                    it.setToolTip("\n".join(f"{a}: {b}" for a, b in st.device_lines(s["device"])))
                 if key == "start":
                     it.setData(Qt.UserRole, idx)
                     if s["deleted_us"] or not self.can_modify(s):
@@ -713,6 +728,7 @@ class StoreImportDialog(QDialog):
         self.btn_load.setToolTip("" if self.can_load else "Wczytanie na wykres jest możliwe, gdy karta jest zatrzymana.")
         self.btn_csv.setEnabled(one)
         self.btn_props.setEnabled(one and self.can_modify(sel[0]))
+        self.btn_plc.setEnabled(one)
         mods = bool(sel) and all(self.can_modify(s) for s in sel)
         self.btn_del.setEnabled(mods)
         self.btn_del.setText("Usuń trwale" if trash else "Usuń")
@@ -743,6 +759,18 @@ class StoreImportDialog(QDialog):
         s.update(d.values())
         self._fill()
         self._status_line()
+
+    def show_device(self) -> None:
+        sel = self._picked()
+        if len(sel) != 1:
+            return
+        rows = st.device_lines(sel[0].get("device"))
+        if not rows:
+            QMessageBox.information(self, "Sterownik", "To nagranie nie ma zapisanych danych sterownika (powstało w starszej wersji "
+                                    "programu albo przed odczytem danych sterownika).")
+            return
+        html = "<table cellpadding='3'>" + "".join(f"<tr><td>{a}</td><td><b>{b}</b></td></tr>" for a, b in rows) + "</table>"
+        QMessageBox.information(self, "Sterownik – " + (sel[0]["title"] or sel[0].get("conf") or sel[0]["id"]), html)
 
     def _describe(self, sel: list[dict]) -> str:
         names = [f"• {datetime.fromtimestamp(s['start_us'] / 1e6):%Y-%m-%d %H:%M}  {s['title'] or s.get('conf') or s['id']}"
