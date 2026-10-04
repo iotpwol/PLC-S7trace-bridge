@@ -62,6 +62,6 @@ Ten projekt bywa edytowany z więcej niż jednego komputera na przemian. `git pu
 
 **Aktualny stan:**
 
-- `PL-LAP-00354` (Windows 11) — **zmiany gotowe, czekają na push** (commit trybu Web etapy 2–3; ostatni push: 2026-10-04, `f7c100a` tryb Web etap 1).
+- `PL-LAP-00354` (Windows 11) — **brak aktywnych zmian** (ostatni push: 2026-10-04, `337439a` opis trybu Web `WEB.md`; wcześniej `8d7fffd` tryb Web etapy 2–3 i `f7c100a` etap 1).
 
 **Zasada:** na początku sesji sprawdź tę listę i `ListAgents`; jeśli inny komputer ma „w trakcie edycji”, powiedz o tym przed commitem/push. Po realnym `git push` zaktualizuj swój wpis.
