@@ -13,11 +13,13 @@
     <button data-view="overview" class="on">Przegląd</button>
     <button data-view="chart">Podgląd na żywo</button>
     <button data-view="recs">Nagrania</button>
+    <button data-view="markers">Znaczniki</button>
     <button data-view="targets" id="nav-targets" hidden>Cele zapisu</button>
     <button data-view="users" id="nav-users" hidden>Użytkownicy</button>
   </nav>
   <span class="spacer"></span>
   <span id="who"></span>
+  <button id="mk-pending" class="warn" hidden title="Znaczniki założone, zmienione lub usunięte na wykresie są robocze, dopóki ich nie zapiszesz">Zapisz znaczniki (0)</button>
   <button id="logout" hidden>Wyloguj</button>
 </header>
 <main>
@@ -97,7 +99,9 @@
       <button id="c-rearm" hidden>Wznów (uzbrój wyzwalacz)</button>
       <input id="c-title" placeholder="nazwa nagrania (opcjonalnie)" maxlength="200" hidden>
       <button id="c-rec" hidden>● REC</button><span id="c-recinfo" class="muted"></span>
-      <button id="c-files">Pliki</button></div>
+      <button id="c-addmark" title="Znacznik w ostatniej próbce (albo prawy przycisk myszy na wykresie)">+ Znacznik</button>
+      <button id="c-live" hidden>Wróć do danych na żywo</button><button id="c-files">Pliki</button></div>
+    <details id="c-search"><summary>Wyszukiwarka danych (kiedy sygnał miał daną wartość / zmienił się) w pamięci połączenia</summary><div id="c-search-box"></div></details>
     <div id="c-filelist" hidden></div>
     <canvas id="canvas" width="1200" height="520"></canvas>
     <div id="c-legend" class="legend"></div>
@@ -118,7 +122,21 @@
       <div class="bar"><b id="rv-name"></b><span id="rv-info" class="muted"></span><button id="rv-all">Cały przebieg</button>
         <a id="rv-csv" href="#" download>CSV (widoczny zakres)</a><span class="muted">Przeciągnij myszą po wykresie, aby przybliżyć zakres.</span></div>
       <canvas id="rv-canvas" width="1200" height="480"></canvas><div id="rv-legend" class="legend"></div>
+      <details id="rv-search"><summary>Wyszukiwarka w tym nagraniu</summary><div id="rv-search-box"></div></details>
     </div>
+  </section>
+  <section id="markers" hidden>
+    <h2>Znaczniki na wykresach</h2>
+    <p class="muted">Znacznik (punkt albo zakres czasu) zakładasz prawym przyciskiem myszy na wykresie (Podgląd na żywo, Nagrania). Widzisz swoje
+      znaczniki oraz znaczniki wspólnych połączeń serwera; administrator widzi wszystkie.</p>
+    <div class="bar"><input id="mkl-q" type="search" placeholder="szukaj: tytuł, opis, uwagi, autor, grupa, przebieg" style="min-width:280px">
+      <select id="mkl-prio"><option value="">Priorytet: każdy</option><option value="0">Niski</option><option value="1">Normalny</option><option value="2">Wysoki</option><option value="3">Krytyczny</option></select>
+      <select id="mkl-group"><option value="*">Grupa: każda</option></select>
+      <select id="mkl-author"><option value="">Autor: każdy</option></select>
+      <select id="mkl-order"><option value="at">wg czasu znacznika</option><option value="modified">wg ostatniej zmiany</option><option value="priority">wg priorytetu</option></select></div>
+    <div class="bar"><label><input type="checkbox" id="mkl-range"> tylko od</label><input type="datetime-local" id="mkl-from" step="1"><span>do</span><input type="datetime-local" id="mkl-to" step="1">
+      <button id="mkl-refresh">Odśwież</button><button id="mkl-group-btn">Grupuj zaznaczone…</button><button id="mkl-ungroup-btn">Wyjmij z grupy</button><button id="mkl-save" class="warn">Zapisz znaczniki…</button><span id="mkl-msg" class="muted"></span></div>
+    <table id="t-mkl"><thead><tr><th></th><th>Czas</th><th>Tytuł</th><th>Rodzaj</th><th>Priorytet</th><th>Dotyczy</th><th>Grupa</th><th>Autor</th><th>Połączenie</th><th>Zmieniono</th><th></th></tr></thead><tbody></tbody></table>
   </section>
   <section id="targets" hidden>
     <h2>Cele zapisu nagrań (bazy danych)</h2>
@@ -173,6 +191,43 @@
     </form>
   </section>
 </main>
+<dialog id="mk-dlg">
+  <form id="mk-form" method="dialog">
+    <h3 id="mk-title-h">Znacznik</h3>
+    <div class="grid2">
+      <label>Tytuł <input id="mk-title" maxlength="200"></label>
+      <label>Rodzaj <select id="mk-kind"><option value="point">Punkt</option><option value="range">Zakres czasu</option></select></label>
+      <label>Czas (od) <input id="mk-from" type="datetime-local" step="0.001" required></label>
+      <label id="mk-to-l">Do <input id="mk-to" type="datetime-local" step="0.001"></label>
+      <label>Kolor <input id="mk-color" type="color" value="#ff9f1c"></label>
+      <label>Priorytet <select id="mk-prio"><option value="0">0 – Niski</option><option value="1" selected>1 – Normalny</option><option value="2">2 – Wysoki</option><option value="3">3 – Krytyczny</option></select></label>
+      <label>Grubość linii [px] (0 = wg priorytetu) <input id="mk-width" type="number" min="0" max="8" value="0"></label>
+      <label>Rodzaj linii <select id="mk-style"><option value="solid">ciągła</option><option value="dash">kreskowana</option><option value="dot">kropkowana</option><option value="dashdot">kreska-kropka</option></select></label>
+      <label id="mk-transp-l">Przezroczystość obszaru <input id="mk-transp" type="range" min="0" max="100" value="76"><span id="mk-transp-v">76 %</span></label>
+      <label>Grupa <input id="mk-group" list="mk-groups" maxlength="120" placeholder="(bez grupy)"><datalist id="mk-groups"></datalist></label>
+    </div>
+    <label class="inline"><input type="checkbox" id="mk-label" checked> Pokazuj nazwę znacznika na wykresie</label>
+    <label>Opis <textarea id="mk-desc" rows="2" maxlength="4000"></textarea></label>
+    <label>Uwagi <textarea id="mk-notes" rows="2" maxlength="8000"></textarea></label>
+    <fieldset><legend>Dotyczy</legend><label><input type="radio" name="mk-scope" id="mk-all" checked> wszystkich przebiegów</label>
+      <label><input type="radio" name="mk-scope" id="mk-sel"> wybranych przebiegów:</label><div id="mk-sigs" class="legend"></div></fieldset>
+    <p id="mk-info" class="muted"></p>
+    <div class="inline"><button type="submit" id="mk-save">Zapisz</button><button type="button" id="mk-cancel">Anuluj</button>
+      <button type="button" id="mk-delete" hidden>Usuń</button><span id="mk-error" class="error"></span></div>
+  </form>
+</dialog>
+<dialog id="mk-pend">
+  <form method="dialog">
+    <h3 id="mkp-h">Zapisz znaczniki</h3>
+    <p id="mkp-intro"></p>
+    <div style="max-height:50vh;overflow:auto"><table id="mkp-t"><thead><tr><th>Zmiana</th><th>Znacznik</th><th>Czas</th><th>Szczegóły</th></tr></thead><tbody></tbody></table></div>
+    <div class="inline"><button type="button" id="mkp-save">Zapisz znaczniki</button><button type="button" id="mkp-discard" hidden>Odrzuć zmiany</button>
+      <button type="button" id="mkp-cancel">Anuluj</button><span id="mkp-error" class="error"></span></div>
+  </form>
+</dialog>
+<div id="ctx" class="ctxmenu" hidden></div>
+<div id="bubble" hidden></div>
+<script src="/static/markers.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

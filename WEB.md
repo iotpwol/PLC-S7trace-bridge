@@ -414,6 +414,9 @@ Wszystkie odpowiedzi to JSON (poza plikami CSV, strumieniem SSE i plikami statyc
 | GET `/api/recordings/sources`, `/api/recordings`, `/api/recordings/data`, `/api/recordings/csv` | podgląd | źródła, lista, odczyt, CSV |
 | POST `/api/recordings` | operator | `update` / `trash` / `restore` / `purge` |
 | GET/POST `/api/targets` | podgląd (lista) / admin (zmiany, test) | cele zapisu |
+| GET `/api/markers` | podgląd | lista znaczników widocznych dla konta (filtry: `q`, `from`, `to`, `color`, `priority`, `author`, `group`, `conn`, `rec`, `order`, `limit`) + grupy i autorzy |
+| POST `/api/markers` | operator | `add` / `update` / `delete` / `group` / `rename_group` / **`batch`** (zapis roboczych zmian jedną transakcją) |
+| POST `/api/search` | podgląd | wyszukiwarka wartości w pamięci połączenia (`conn`) albo w nagraniu (`source`, `id`) |
 | POST `/api/detect` | operator | kreator połączenia |
 | GET/POST `/api/users` | admin | konta |
 | GET/POST `/api/agent-tokens` | admin | tokeny programów okienkowych |
@@ -421,3 +424,63 @@ Wszystkie odpowiedzi to JSON (poza plikami CSV, strumieniem SSE i plikami statyc
 
 Kod: `s7trace/web/` (`server.py` – HTTP, `auth.py` – konta, `hosted.py` – połączenia/trigger/REC, `editing.py` – walidacja, `files.py`, `targets.py`,
 `recordings.py`, `agents.py`, `sso.py`, `static/` – strona), strona programu okienkowego: `s7trace/core/web_agent.py`, `s7trace/ui/web_server_dialog.py`.
+
+---
+
+## 19. Znaczniki na wykresach i wyszukiwarka wartości
+
+Ta sama funkcja istnieje w programie okienkowym (przycisk „Znaczniki…”, „Zapisz znaczniki”, „Szukaj…”) i w przeglądarce; oba korzystają z tego samego
+modelu (`core/markers.py`, `core/marker_draft.py`, `core/search.py`), ale **mają osobne bazy**: program okienkowy – `Dokumenty\S7Trace\markers.db`
+(konto Windows), serwer Web – `web_markers.db` w folderze danych serwera. Znaczniki nie leżą w nagraniach, więc kasowanie nagrania ich nie usuwa.
+
+### 19.1. Znacznik
+
+Pola: tytuł, opis, uwagi, kolor, priorytet (niski … krytyczny), **autor**, data założenia, data modyfikacji i kto zmienił, rodzaj (**punkt** albo
+**zakres czasu**), lista przebiegów (pusta = wszystkie), grupa, grubość linii (0 = wg priorytetu), rodzaj linii (ciągła / kreskowana / kropkowana /
+kreska-kropka), przezroczystość obszaru (tylko zakres), „pokazuj nazwę na wykresie”. Czas jest bezwzględny (mikrosekundy epoki), więc znacznik pasuje do
+wykresu na żywo i do nagrania w bazie; znacznik założony na nagraniu zapamiętuje jego identyfikator (`źródło|id`), a założony na wykresie na żywo – połączenie.
+
+### 19.2. Obsługa na wykresie (Podgląd na żywo i Nagrania)
+
+- **Prawy przycisk na wykresie** – dodanie punktu albo zakresu czasu w tym miejscu (zakres: początek + 10 % widoku; można zmienić w oknie znacznika).
+- **Najechanie myszą** na znacznik – dymek z tytułem, czasem, priorytetem, przebiegami, opisem, uwagami, autorem i datami.
+- **Prawy przycisk na znaczniku** – menu: edycja (albo „Szczegóły”, gdy nie wolno edytować), zmiana pozycji (znacznik się podświetla, klik w nowe miejsce),
+  ukrycie / pokazanie nazwy na wykresie, grupy (dodaj / przenieś / usuń z grupy, podświetl grupę, następny i poprzedni znacznik grupy, zmiana nazwy grupy),
+  cofnięcie niezapisanej zmiany, usunięcie.
+- **Przeciąganie myszą** – punkt przesuwa się w całości, zakres można chwycić za brzeg albo za wnętrze.
+- Zakres jest półprzezroczystym obszarem koloru znacznika; znacznik dotyczący wybranych przebiegów rysuje się tylko w ich pasach.
+- Zakładka **Znaczniki** – lista z wyszukiwaniem (tytuł, opis, uwagi, autor, grupa, przebieg), filtrami (priorytet, grupa, autor, zakres dat, kolejność),
+  przyciskami Pokaż / Edytuj / Usuń / Cofnij zmianę i grupowaniem zaznaczonych. „Pokaż” otwiera wykres, który zawiera znacznik (połączenie albo nagranie).
+
+### 19.3. Zapis: znaczniki robocze
+
+Znacznik założony, zmieniony albo usunięty na wykresie jest tylko **roboczy** (w stronie, oznaczony gwiazdką w nazwie i w dymku) – serwer o nim nie wie. Trwały
+staje się dopiero po poleceniu **Zapisz znaczniki** (przycisk w nagłówku strony, w zakładce Znaczniki i w menu wykresu): okno wylicza „nowy / zmieniony
+(z nazwami pól) / do usunięcia”, a po potwierdzeniu strona wysyła **jedną paczkę** (`POST /api/markers`, `{"action":"batch","adds":[…],"updates":[…],"deletes":[…]}`)
+zapisywaną w jednej transakcji – albo wszystko, albo nic (sprawdzane są najpierw wszystkie prawa, potem poprawność pól; najwyżej 500 zmian naraz).
+Przy **wyjściu z wykresu** (Podgląd na żywo / Nagrania → inna zakładka), **wylogowaniu** i zamknięciu karty przeglądarki (`beforeunload`) strona przypomina
+o niezapisanych znacznikach i pokazuje ich wykaz (Zapisz / Odrzuć zmiany / Wróć do wykresu). Zmiana połączenia albo nagrania **nie** kasuje roboczych
+znaczników (czekają, aż wrócisz na ten wykres; licznik jest cały czas widoczny w nagłówku).
+
+### 19.4. Kto co widzi i zmienia
+
+- Znacznik widzą: jego autor, administratorzy oraz – gdy założono go na **wspólnym** połączeniu serwera – wszyscy, którzy mogą to połączenie oglądać.
+- Zakładają operatorzy i administratorzy (rola „podgląd” tylko czyta); zmieniać i usuwać może autor i administrator.
+- Autor, daty i połączenie są nadawane przez serwer (nie da się ich podmienić z przeglądarki). Limit: 20 000 znaczników na konto.
+
+### 19.5. Wyszukiwarka wartości
+
+W Podglądzie na żywo (sekcja „Wyszukiwarka danych”) i w Nagraniach (sekcja „Wyszukiwarka w tym nagraniu”): do 3 warunków naraz (**i**) na sygnałach:
+`==` / `!=` (z tolerancją), `>`, `≥`, `<`, `≤`, w przedziale, poza przedziałem, **zmienia wartość**, **zbocze narastające / opadające**, brak wartości; opcjonalnie
+minimalny czas trwania. Wynik: początek, czas trwania (albo „zdarzenie” dla zmian i zboczy), wartości na początku, min…maks (najwyżej 5000 wyników, w tabeli
+pierwsze 500). „Pokaż” ustawia wykres na wynik (na żywo: zamrożony widok z przyciskiem powrotu), „Dodaj znacznik…” zakłada roboczy znacznik (zakres, gdy wynik
+trwał) z listą przebiegów z warunków. W nagraniu serwer przeszukuje bazę kawałkami (przy zbyt dużym kawałku dzieli go na pół), a przy limicie czasu zwraca wynik
+częściowy z adnotacją. W programie okienkowym dodatkowo „Przejdź do daty i godziny”.
+
+### 19.6. Co zostało sprawdzone / czego nie
+
+- Testy automatyczne: `tests/test_markers.py`, `tests/test_marker_draft.py`, `tests/test_markers_ui.py` (offscreen), `tests/test_web_markers.py` (prawdziwy serwer HTTP:
+  widoczność, role, zakresy, grupy, style, walidacja, paczka `batch` – atomowość i prawa, wyszukiwarka w połączeniu i w nagraniu).
+- Strona obsłużona ręcznie w wbudowanej przeglądarce (Chromium): dodanie / edycja / usunięcie roboczego znacznika, okno zapisu, zapis paczką, przypomnienie przy
+  wyjściu, widok listy z oznaczeniem stanu. **Nie sprawdzono** w Edge / Firefox / Safari ani na ekranach dotykowych (przeciąganie myszą jest zdarzeniami `mouse*`).
+- Wyszukiwarka w bazach sieciowych (InfluxDB, TimescaleDB) działa przez te same funkcje odczytu co przegląd nagrań; testowana była tylko SQLite i atrapy serwerów.

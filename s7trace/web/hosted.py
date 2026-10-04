@@ -305,7 +305,8 @@ class HostedConnection:
             t, v = t[idx], v[idx]
         cols = [[None if x != x else float(x) for x in v[:, k]] for k in range(n)] if len(t) else [[] for _ in range(n)]
         return {"t": [float(x) for x in t], "names": [s.name for s in self.signals], "values": cols,
-                "colors": [s.color for s in self.signals], "last": float(last), "state": self.state}
+                "colors": [s.color for s in self.signals], "last": float(last), "state": self.state,
+                "start_us": int(self.start_wall.timestamp() * 1e6)}
 
 
 class HostManager:

@@ -175,7 +175,9 @@ def test_right_click_on_legend_opens_menu(app, monkeypatch):
     assert tab.cfg.legend_pos == [1.0, 1.0]
     next(a for a in menu.actions() if a.text() == "Ukryj legendę").trigger()
     assert hidden == [1]
-    QTest.mouseClick(p.glw.viewport(), Qt.RightButton, pos=QPoint(400, 300))      # elsewhere on the chart: no menu
+    chart_menus = []                                                               # elsewhere on the chart: the markers menu, not the legend one
+    monkeypatch.setattr(type(tab.mk), "_run_menu", staticmethod(lambda menu, pos: chart_menus.append(menu)))
+    QTest.mouseClick(p.glw.viewport(), Qt.RightButton, pos=QPoint(400, 300))
     assert len(seen) == 1
     tab.shutdown()
 

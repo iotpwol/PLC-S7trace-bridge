@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 
 from PySide6.QtCore import QEvent, QTimer, Qt, Signal as QtSignal
 from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
+from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
                                QGroupBox, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMenu, QMessageBox,
                                QPushButton, QScrollArea, QSizePolicy, QSpinBox, QSplitter, QVBoxLayout, QWidget)
 
@@ -24,7 +24,7 @@ from ..core.acquisition import parse_host
 from ..core.diagnostics import PingProbe
 from ..core.buffer import TraceBuffer
 from ..core.config import TabConfig, data_dir
-from ..core.csvio import CsvRecorder, read_csv, write_csv
+from ..core.csvio import CsvRecorder, csv_start_wall, read_csv, write_csv
 from ..core.planner import MODES
 from ..core.symbols import Symbol
 from ..core.netaddr import ACCEPTABLE, ipv4_state
@@ -32,6 +32,7 @@ from ..core.types import Signal
 from ..core.drivers import CONN_LABEL, SOURCE_OF, family_of
 from .diag_dialog import DiagDialog
 from .duration_combo import DurationCombo
+from .markers_ui import TabMarkers
 from .plotview import PlotView
 from .signals_dialog import SignalsDialog
 from ..core import ip_history, sessions
@@ -338,6 +339,15 @@ class TraceTab(QWidget):
         self.btn_v.setCheckable(True)
         self.btn_h = QPushButton("H znacznik")
         self.btn_h.setCheckable(True)
+        self.btn_mrk = QPushButton("Znaczniki…")
+        self.btn_mrk.setToolTip("Lista znaczników (zakładek) na wykresie: wyszukiwanie, edycja, przejście do punktu.\n"
+                                "Znacznik dodasz też prawym przyciskiem myszy na wykresie.")
+        self.btn_msave = QPushButton("Zapisz znaczniki")
+        self.btn_msave.setToolTip("Znaczniki założone, zmienione lub usunięte na wykresie są robocze, dopóki ich nie zapiszesz.\n"
+                                  "Przycisk pokazuje liczbę niezapisanych zmian i listę tego, co zostanie zapisane.")
+        self.btn_msave.setEnabled(False)
+        self.btn_find = QPushButton("Szukaj…")
+        self.btn_find.setToolTip("Wyszukiwarka: kiedy sygnał miał daną wartość / zmienił się; w danych karty albo w nagraniu z bazy")
         self.btn_sig = QPushButton("Sygnały...")
         self.btn_diag = QPushButton("Diagnostyka…")
         self.btn_diag.setToolTip("Szczegółowa diagnostyka połączenia: opóźnienia, utracone cykle, ping, przepustowość")
@@ -347,7 +357,7 @@ class TraceTab(QWidget):
                   self.btn_v, self.btn_h):
             bar.addWidget(b)
         bar.addStretch()
-        for b in (self.btn_sig, self.btn_diag, self.btn_exp, self.btn_imp):
+        for b in (self.btn_mrk, self.btn_msave, self.btn_find, self.btn_sig, self.btn_diag, self.btn_exp, self.btn_imp):
             bar.addWidget(b)
         right.addLayout(bar)
         self.lbl_status = PanLabel()                  # right aligned; a long text can be dragged with the mouse
@@ -384,6 +394,10 @@ class TraceTab(QWidget):
         self.btn_pts.toggled.connect(self.plot.set_points)
         self.btn_v.toggled.connect(self.plot.set_v_mode)
         self.btn_h.toggled.connect(self.plot.set_h_mode)
+        self.mk = TabMarkers(self)                    # bookmarks on the chart (right click) + the search window
+        self.btn_mrk.clicked.connect(lambda: self.mk.open_list())
+        self.btn_find.clicked.connect(lambda: self.mk.open_search())
+        self.btn_msave.clicked.connect(lambda: self.mk.save())
         self.btn_sig.clicked.connect(self.edit_signals)
         self.btn_diag.clicked.connect(self.open_diag)
         self.btn_exp.clicked.connect(self.export_window)
@@ -403,6 +417,9 @@ class TraceTab(QWidget):
             w.editingFinished.connect(self._trigger_changed)
         for w in (self.ed_rfolder, self.ed_rname):
             w.editingFinished.connect(self._collect)
+        self.ed_tfolder.textChanged.connect(self._folder_tips)
+        self.ed_rfolder.textChanged.connect(self._folder_tips)
+        self._folder_tips()
 
     # ======================================================= buttons / layout
     @staticmethod
@@ -714,17 +731,37 @@ class TraceTab(QWidget):
         elif not t.enabled and self.trig_state != "hold":
             self.trig_state = "idle"
 
+    @staticmethod
+    def _portable_folder(path: str) -> str:
+        """A folder picked inside the user's data folder (Documents/S7Trace) is stored relative to it, so the setting stays valid for
+        every Windows account and computer; anything else stays an absolute path."""
+        base = os.path.normcase(os.path.abspath(data_dir()))
+        full = os.path.normcase(os.path.abspath(path))
+        if full == base:
+            return "."
+        if full.startswith(base + os.sep):
+            return os.path.relpath(os.path.abspath(path), data_dir())
+        return path
+
+    def _folder_tips(self, *_):
+        """The folder fields show the full system path a (relative) name resolves to."""
+        for ed, default in ((self.ed_tfolder, "snapshots"), (self.ed_rfolder, "rec")):
+            full = self._abs_folder(ed.text().strip() or default)
+            ed.setToolTip(f"Zapis do: {full}<br>Nazwa względna to folder w Dokumentach bieżącego użytkownika Windows "
+                          f"({data_dir()}); ścieżka bezwzględna działa tak, jak wpisano.")
+            ed.setPlaceholderText(default)
+
     def _pick_folder(self):
         d = QFileDialog.getExistingDirectory(self, "Folder zapisu", self._abs_folder())
         if d:
-            self.ed_tfolder.setText(d)
+            self.ed_tfolder.setText(self._portable_folder(d))
             self._trigger_changed()
 
     def _pick_rec_folder(self):
         d = QFileDialog.getExistingDirectory(self, "Folder nagrań REC", self._abs_folder(self.ed_rfolder.text().strip()
                                                                                           or "rec"))
         if d:
-            self.ed_rfolder.setText(d)
+            self.ed_rfolder.setText(self._portable_folder(d))
             self._collect()
 
     # ========================================================== lifecycle
@@ -917,6 +954,7 @@ class TraceTab(QWidget):
             self.acq.stop()
             self.acq.join(2.0)
         self._close_recorder()
+        self.mk.shutdown()
         self.timer.stop()
 
     def _on_state(self, state: str, msg: str):
@@ -982,6 +1020,8 @@ class TraceTab(QWidget):
                 self.plot.touch()                              # up to date at once when the tab comes back
             self.plot.refresh()
         self._stat_tick += 1
+        if self._stat_tick % 4 == 0 and self.plot.isVisible():
+            self.mk.sync()
         if self._stat_tick % 8 == 0:
             self._update_status()
 
@@ -1135,6 +1175,7 @@ class TraceTab(QWidget):
         except Exception as e:
             QMessageBox.warning(self, "S7Trace", f"Import nie powiódł się: {e}")
             return
+        self.start_wall = csv_start_wall(path) or self.start_wall        # markers are tied to the wall-clock time
         self._show_loaded(sigs, t, v, f"Zaimportowano {len(t)} próbek z {os.path.basename(path)}")
 
     def _show_loaded(self, sigs, t, v, message: str, info: dict | None = None) -> None:
@@ -1149,6 +1190,7 @@ class TraceTab(QWidget):
         self._on_zoomed(self.plot.window)
         self.status_msg = message
         self._update_status()
+        self.mk.sync(True)
 
     def _connected(self) -> bool:
         return self.state in ("running", "connecting", "reconnecting")
@@ -1209,6 +1251,39 @@ class TraceTab(QWidget):
                           {"meta": meta, "used": used, "samples": len(t)})
         if name:
             self.rename(name)
+
+    def open_recording_at(self, rec_id: str, a_us: int, b_us: int, width_s: float, sess: dict | None = None) -> None:
+        """Opens the part of a recording of this tab's database target around [a, b] (a marker, a search result) and shows it
+        (in this tab when it is empty, otherwise the user chooses, as for 'Przegląd nagrań')."""
+        from ..core import search as sr
+        from ..core import store as st
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            if sess is None:
+                sess = next((s for s in sr.list_sessions(self.cfg.store, data_dir()) if s["id"] == rec_id), None)
+                if sess is None:
+                    raise st.StoreError("Tego nagrania nie ma w bazie, którą ma ustawioną ta karta (albo trafiło do kosza).")
+            c = sess["_cfg"]
+            w = int(max(width_s, (b_us - a_us) / 1e6 * 1.6, 1.0) * 1e6)
+            mid = (a_us + b_us) // 2
+            be = st.open_backend(c, data_dir())
+            try:
+                meta, t, v = be.read(sess["id"], max(int(sess["start_us"]), mid - w), mid + w, c.read_max_points)
+            finally:
+                be.close()
+            if len(t) == 0:
+                raise st.StoreError("W tym zakresie nagranie nie ma danych.")
+            t, v = st.downsample_minmax(t, v, c.read_max_points)
+        except Exception as e:
+            QMessageBox.warning(self, "S7Trace", f"Nie można otworzyć nagrania: {e}")
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+        target = self._target_for_recording()
+        if target is None:
+            return
+        target.load_recording(meta, t, v, c, note="; fragment wokół wybranego punktu")
+        target.mk.goto_us(a_us, b_us)
 
     # ---- the tooltip of the tab: everything about what the tab holds and where it records
     @staticmethod

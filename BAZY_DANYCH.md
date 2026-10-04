@@ -6,7 +6,7 @@ domyślnymi. Kod: `s7trace/core/store.py` (bez Qt), okna: `s7trace/ui/store_dial
 
 Spis treści: 1. Jak zapisywane są dane · 2. Dostępne cele zapisu i ich porównanie · 3. Tryb próbek (zmiany / każda) ·
 4. Szczegóły każdej bazy · 5. Parametry czasowe i buforowe · 6. Niezawodność (test, ponawianie, bufor na dysku) ·
-7. Odczyt i import · 8. Rotacja plików SQLite · 9. Eksport do CSV · 10. Menu i okna · 11. Czego nie sprawdzono · 12. Mapa kodu i testów
+7. Odczyt i import · 8. Rotacja plików SQLite · 9. Eksport do CSV · 10. Menu i okna · 11. Czego nie sprawdzono · 12. Mapa kodu i testów · 13. Znaczniki i wyszukiwarka danych
 
 ---
 
@@ -363,6 +363,8 @@ przekazania danych do Excela lub innych narzędzi.
 | Zaległe bufory zapisu | Ustawienia → „Zaległe bufory zapisu do baz…” |
 | Eksport do CSV | „Zapisz jako CSV…” w przeglądzie nagrań |
 | Pomoc | F1 → „Przyciski sterujące” → REC |
+| Znaczniki, zapis znaczników, wyszukiwarka | przyciski „Znaczniki…”, „Zapisz znaczniki”, „Szukaj…” pod wykresem; prawy przycisk na wykresie i na znaczniku (patrz rozdz. 13) |
+| Folder plików CSV (snapshot, REC), baza znaczników | `Dokumenty\S7Trace` bieżącego użytkownika (patrz 13.9) |
 
 ---
 
@@ -437,3 +439,136 @@ Test sprawdzono wyłącznie na atrapie serwera HTTP – **jego pierwsze uruchomi
 | Pytania o nazwę | `TraceTab._open_recorder`, `_show_info_dialog`, `_close_recorder(ask=…)` |
 | Testy | `tests/test_store.py`, `tests/test_store_ui.py`, `tests/test_store_manage.py` (przegląd, kosz, pytania o nazwę, bufory), `tests/test_pg_diag.py` (atrapy: serwer Influx HTTP, `psycopg`) |
 | Kontrola paczki | `tools/check_deps.py`, `build-portable.ps1` (sprawdza sterownik PostgreSQL) |
+
+---
+
+## 13. Znaczniki na wykresie i wyszukiwarka danych
+
+Rozdział opisuje funkcje dodane do przeglądania zapisanych i bieżących przebiegów: **znaczniki** (zakładki na osi czasu, które pozwalają
+wrócić do konkretnego momentu) i **wyszukiwarkę** (znajdowanie momentów po godzinie i wartościach sygnałów). Działają w programie okienkowym i w trybie Web
+(opis przeglądarkowy: `WEB.md`, rozdz. 19). Kod: `s7trace/core/markers.py`, `core/marker_draft.py`, `core/search.py` (bez Qt), okna: `ui/markers_ui.py`,
+rysowanie: `ui/plotview.py`, strona: `web/markers_api.py`, `web/static/markers.js`.
+
+### 13.1. Do czego służą
+
+Przy nagraniu liczonym w godzinach i dniach trudno odnaleźć „ten moment, kiedy pompa stanęła”. Znacznik oznacza moment (albo przedział czasu) na wykresie,
+ma tytuł i opis, a potem można go znaleźć na liście, wyszukać po tekście, autorze, kolorze czy priorytecie i jednym kliknięciem wrócić na wykres w to miejsce –
+także wtedy, gdy dane leżą w nagraniu w bazie. Wyszukiwarka robi to samo z drugiej strony: zamiast pamiętać godzinę, szuka się wartości („kiedy Temp > 80 i
+Run = 1”), a wynik można od razu zamienić w znacznik.
+
+### 13.2. Rodzaje znaczników
+
+| Rodzaj | Wygląd na wykresie | Zastosowanie |
+|---|---|---|
+| **Punkt** | pionowa linia w jednym momencie (kolor, grubość i styl wg ustawień) | zdarzenie: alarm, ręczny start, zmiana nastaw |
+| **Zakres czasu** | dwie linie brzegowe i **półprzezroczysty obszar** koloru znacznika między nimi (lekko przykrywa wykres) | przedział: trwanie awarii, cykl produkcyjny, okres testu |
+
+Znacznik może dotyczyć **wszystkich przebiegów** (linia / obszar na całej wysokości wykresu) albo **tylko wybranych** (rysuje się wtedy tylko w pasach tych
+sygnałów). Przypisanie do przebiegów można zmienić w edycji znacznika.
+
+### 13.3. Parametry znacznika
+
+| Parametr | Znaczenie |
+|---|---|
+| Tytuł (do 200 znaków) | krótka nazwa, wyświetlana przy znaczniku na wykresie |
+| Opis (do 4000) | co się stało |
+| Uwagi (do 8000) | dodatkowe notatki (osobne od opisu) |
+| Rodzaj | punkt / zakres czasu |
+| Czas (od, do) | dokładność do milisekundy; można wpisać lub zmienić w oknie znacznika |
+| Kolor | paleta (pomarańczowy, czerwony, zielony, niebieski, fioletowy, żółty, turkusowy, biały) albo dowolny kolor |
+| Priorytet | Niski, Normalny, Wysoki, Krytyczny (wpływa też na domyślną grubość linii: 1–4 px) |
+| Grubość linii | 0 = według priorytetu, 1–8 px |
+| Rodzaj linii | ciągła, kreskowana, kropkowana, kreska-kropka |
+| Przezroczystość obszaru | tylko dla zakresu; domyślnie 76 % (obszar ledwo widoczny), 0 % = pełny kolor |
+| Dotyczy | wszystkie przebiegi albo lista wybranych (do 200) |
+| Grupa (do 120) | nazwa zdarzenia łączącego znaczniki (patrz 13.5) |
+| Pokazuj nazwę na wykresie | tak / nie – ukrywa napis przy znaczniku (znacznik i dymek zostają) |
+| **Autor** | konto, które założyło znacznik (nadawany automatycznie, nie do edycji) |
+| Data założenia, data modyfikacji, kto zmienił | nadawane automatycznie przy zapisie |
+| Komputer | nazwa komputera, na którym założono znacznik |
+| Połączenie / nagranie | znacznik założony na wykresie na żywo pamięta kartę (połączenie), założony na nagraniu z bazy – jego identyfikator, dzięki czemu „Przejdź do punktu” otwiera właściwe nagranie |
+
+Czas jest **bezwzględny** (mikrosekundy od 1970 r.), a nie „sekunda od startu wykresu”, więc ten sam znacznik pasuje do wykresu na żywo, nagrania z bazy i
+zaimportowanego pliku CSV (program zapamiętuje w CSV czas rozpoczęcia).
+
+### 13.4. Obsługa na wykresie (program okienkowy)
+
+- **Prawy przycisk na wykresie**: „Dodaj znacznik (punkt) tutaj…”, „Dodaj znacznik zakresu czasu tutaj…”, „Znacznik zakresu z kursorów V1–V2…” (gdy są ustawione oba
+  kursory pionowe), „Zapisz znaczniki”, „Lista znaczników…”, „Szukaj w danych…”, przełącznik „Pokaż też znaczniki z innych połączeń”.
+- **Najechanie kursorem na znacznik** otwiera **dymek** z tytułem, czasem, priorytetem, przebiegami, grupą, opisem, uwagami, autorem i datami.
+- **Prawy przycisk na znaczniku** otwiera menu: edycja; **zmiana pozycji** (znacznik się podświetla, klik na wykresie ustawia go w nowym miejscu, prawy przycisk anuluje;
+  zakres zachowuje długość, a środek trafia w kliknięte miejsce); **ukryj / pokaż nazwę na wykresie**; grupy; cofnięcie niezapisanej zmiany; usunięcie; „Pokaż na liście”.
+- **Przeciąganie myszą**: punkt – za linię; zakres – za brzeg (zmiana początku lub końca) albo za wnętrze (przesunięcie całości).
+- Domyślnie widać znaczniki **tej karty** (połączenia) z widocznego zakresu czasu; znaczniki niezwiązane z żadną kartą widać zawsze.
+- Przycisk „Znaczniki…” otwiera **listę**: wyszukiwanie po tekście (tytuł, opis, uwagi, autor, grupa – bez względu na wielkość liter i polskie znaki), filtry
+  (priorytet, kolor, autor, grupa, zakres czasu / dat, tylko widoczny zakres, ta karta / wszystkie połączenia), sortowanie (wg czasu znacznika, ostatniej zmiany,
+  priorytetu), kolumny: czas, tytuł, rodzaj, priorytet, dotyczy, grupa, autor, połączenie, zmieniono, stan; dwuklik albo „Przejdź do punktu” wraca na wykres
+  (w razie potrzeby otwiera nagranie z bazy).
+
+### 13.5. Grupy znaczników
+
+Podobne zdarzenia (np. kolejne awarie tej samej pompy) łączy się w grupę: menu znacznika → „Grupa znaczników” → dodaj do grupy (istniejącej albo nowej nazwy) /
+przenieś / usuń z grupy / **podświetl całą grupę** (znaczniki grupy rysują się na biało) / przejdź do następnego i poprzedniego znacznika grupy (także między nagraniami) /
+zmień nazwę grupy. W oknie listy można zaznaczyć wiele znaczników i użyć „Grupuj zaznaczone…” albo „Wyjmij z grupy”, a filtr „Grupa” pokazuje jedną grupę lub znaczniki bez grupy.
+
+### 13.6. Zapis: znaczniki robocze i „Zapisz znaczniki”
+
+Znacznik założony, zmieniony, przesunięty, zgrupowany albo usunięty na wykresie jest tylko **roboczy** – widać go na wykresie (z gwiazdką przy nazwie i
+adnotacją „niezapisany” w dymku), ale **nie ma go jeszcze w pliku**. Trwały staje się po poleceniu **Zapisz znaczniki**:
+
+1. Przycisk „Zapisz znaczniki (n)” (n = liczba niezapisanych zmian; nieaktywny, gdy nic nie ma do zapisania) albo pozycja w menu.
+2. Okno **wylicza, co zostanie zapisane**: wiersze „nowy”, „zmieniony” (z nazwami zmienionych pól, np. „zmieniono: tytuł, kolor, czas”) i „do usunięcia” (przekreślone),
+   z tytułem i czasem znacznika, oraz podsumowanie „x nowych, y zmienionych, z do usunięcia”.
+3. Po potwierdzeniu wszystko trafia do pliku **jedną transakcją** (albo cała paczka, albo nic – błąd nie zostawia połowy zmian).
+4. **Przypomnienie przy zamykaniu**: zamknięcie karty z wykresem albo całego programu przy niezapisanych znacznikach pokazuje to samo okno z wykazem i wyborem:
+   Zapisz / Odrzuć zmiany / Wróć do wykresu.
+5. Zmianę pojedynczego znacznika można cofnąć („Cofnij zmiany tego znacznika”, w liście „Cofnij zmianę”); usunięty znacznik trafia do wykazu „do usunięcia”
+   i do chwili zapisu można go przywrócić. Zmiana, która przywraca stan zapisany, sama znika z wykazu. Nowy znacznik usunięty przed zapisem nie zostawia śladu.
+
+### 13.7. Wyszukiwarka danych („Szukaj…”)
+
+Źródło: **bieżący odczyt na wykresie** (próbki z pamięci karty) albo **wybrane nagranie z bazy** (SQLite / InfluxDB / TimescaleDB; lista nagrań z bieżących ustawień bazy).
+
+- **Warunki** (do 3 naraz, łączone „i”): sygnał + operator: `==` / `!=` (z tolerancją), `>`, `≥`, `<`, `≤`, w przedziale, poza przedziałem, **zmienia wartość**, **zbocze narastające**,
+  **zbocze opadające**, brak wartości (NaN). Operatory „zmiany / zbocza” dają **zdarzenia** (punkty w czasie), pozostałe – **przedziały** (od kiedy do kiedy wszystkie warunki są spełnione).
+- **Minimalny czas trwania** wyniku oraz ograniczenie zakresu czasu (dla nagrań: od–do).
+- **Wynik**: początek, czas trwania, wartości sygnałów na początku, min…maks; najwyżej 5000 wyników. „Przejdź do” ustawia wykres na wyniku (na żywo – wstrzymuje przewijanie),
+  dla nagrania otwiera jego fragment wokół wyniku; **„Dodaj znacznik…”** zakłada roboczy znacznik (zakres, gdy wynik trwał) z wpisanymi przebiegami z warunków.
+- **Przejdź do daty i godziny**: pole z datą i godziną ustawia wykres w tym momencie.
+- Nagranie jest przeszukiwane **kawałkami** (domyślnie 30 min) z możliwością przerwania; gdy kawałek jest za duży dla bazy, dzieli się go na pół;
+  wyniki sąsiednich kawałków łączą się w jeden przedział. Wyszukiwanie w nagraniu trybu „tylko zmiany” działa na zdarzeniach (stan trzymany między nimi), tak jak odtwarzanie krzywej.
+
+### 13.8. Gdzie znaczniki są przechowywane
+
+- **Osobna baza SQLite, nie nagrania.** Program okienkowy: `Dokumenty\S7Trace\markers.db` (plik konta Windows); serwer Web: `web_markers.db` w folderze danych serwera.
+  Dzięki temu znacznik przeżywa usunięcie, rotację i eksport nagrania, a jedna baza obsługuje wykres na żywo, każde nagranie i pliki CSV.
+- Każdy wpis niesie autora, komputer i daty, więc w bazie wspólnej (Web) wiadomo, kto co zakładał; w programie okienkowym plik jest prywatny dla konta (folder `Dokumenty`).
+- Odczyt jest tani (zapytania SQL po czasie i tekście), zapis – jedną transakcją; plik może być odczytywany przez kilka procesów (zmiana pliku jest wykrywana, lista odświeża się sama).
+
+### 13.9. Jednolite foldery użytkownika (snapshot, REC, znaczniki)
+
+Wszystko, co program zapisuje na dysku, ma jeden standard: **`Dokumenty\S7Trace` bieżącego użytkownika Windows** – pliki CSV z wyzwalacza (`snapshots`), pliki REC (`rec`), bufory na dysku,
+pliki SQLite, baza znaczników. **Nazwa względna** w polu „Folder” (domyślnie `snapshots`, `rec`) oznacza podfolder tego katalogu, więc każde konto ma własne pliki, a konfiguracja
+przenosi się między kontami i komputerami. Pola folderów pokazują w podpowiedzi pełną ścieżkę systemową, a wybranie folderu przyciskiem „...” wewnątrz `Dokumenty\S7Trace` zapisuje go
+jako względny (poza nim – jako bezwzględny). Eksport okna → CSV i import CSV startują w tym samym folderze. W trybie Web pliki leżą w folderach kont na serwerze (`WEB.md`, rozdz. 8 i 13).
+
+### 13.10. Ograniczenia i czego nie sprawdzono
+
+- Po skasowaniu nagrania zostaje znacznik z nieaktualnym identyfikatorem (przejście do niego zgłosi, że nagrania nie ma).
+- Rozdzielenie znaczników między konta (program okienkowy) wynika z osobnych plików w folderach `Dokumenty` kont; przy wspólnym folderze wszystkie konta widziałyby jeden plik.
+- Wyszukiwarka w bazach sieciowych (InfluxDB, TimescaleDB) korzysta z tych samych funkcji odczytu co przegląd nagrań; w testach były tylko SQLite i atrapy serwerów.
+- Wyszukiwanie nie przeszukuje wielu nagrań naraz (jedno wybrane nagranie albo bieżący wykres – decyzja projektowa).
+- Strona Web sprawdzona ręcznie tylko w jednej przeglądarce (Chromium).
+
+### 13.11. Mapa kodu i testów
+
+| Element | Plik / symbol |
+|---|---|
+| Model znacznika, baza, walidacja | `core/markers.py`: `Marker`, `MarkerStore` (`add`, `update`, `delete`, `apply` = wiele zmian w jednej transakcji, `search`, `groups`), `default_path` |
+| Zmiany robocze | `core/marker_draft.py`: `MarkerDraft` (`add`, `update`, `delete`, `revert`, `changes`, `commit`), `Change` |
+| Wyszukiwarka | `core/search.py`: `find_hits`, `search_backend` (kawałkowanie nagrań), `Cond`, `OPS` |
+| Rysowanie, dymek, przeciąganie | `ui/plotview.py`: `set_markers`, `start_marker_placement`, `_on_hover` |
+| Obsługa na karcie, okna | `ui/markers_ui.py`: `TabMarkers`, `MarkerEditDialog`, `PendingDialog` (wykaz do zapisu), `MarkersDialog` (lista), `SearchDialog` |
+| Przypomnienie przy zamykaniu | `ui/main_window.py`: `close_tab`, `closeEvent` → `TabMarkers.confirm_close` |
+| Tryb Web | `web/markers_api.py` (`MarkerService`, `/api/markers`, `/api/search`), `web/static/markers.js`, `web/recordings.py` (`Library.search`) |
+| Testy | `tests/test_markers.py`, `tests/test_marker_draft.py`, `tests/test_markers_ui.py`, `tests/test_web_markers.py`, `tests/test_folders.py` |

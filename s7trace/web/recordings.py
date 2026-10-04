@@ -182,6 +182,38 @@ class Library:
                 "colors": [d.get("color", "#ffb347") for d in sigs], "start_us": meta["start_us"], "end_us": meta["end_us"],
                 "title": meta["title"], "rows": n0, "shown": len(t), "mode": meta["mode"]}
 
+    def search(self, src: Source, sid: str, user: str, role: str, d: dict, max_s: float = 60.0) -> dict:
+        """Where the signals of a recording had the given values (all conditions at once); times in seconds from its start.
+        The search is cut off after max_s seconds (the hits found so far are returned, 'timeout' is set)."""
+        import threading
+
+        from ..core import search as sr
+        from .markers_api import hit_dict, parse_conds
+        b = self._open(src)
+        cancel = threading.Event()
+        timer = threading.Timer(max_s, cancel.set)
+        try:
+            meta = self._session(b, sid)
+            if not self.visible(src, meta, user, role):
+                raise RecError("Brak dostępu do tego nagrania.")
+            names = [x.get("name", "") for x in meta.get("signals", []) if isinstance(x, dict)]
+            conds = parse_conds(d.get("conds"), names)
+            start = int(meta["start_us"])
+            end = sr.session_end_us(b, meta)
+            lo = start + int(float(d["from"]) * 1e6) if d.get("from") not in (None, "") else start
+            hi = start + int(float(d["to"]) * 1e6) if d.get("to") not in (None, "") else end
+            timer.start()
+            try:
+                hits, _m = sr.search_backend(b, sid, conds, lo, hi, min_duration=max(float(d.get("min_duration") or 0), 0.0),
+                                             cancel=cancel)
+            except st.StoreError as e:
+                raise RecError(str(e)) from None
+        finally:
+            timer.cancel()
+            b.close()
+        return {"hits": [hit_dict(h, start, True) for h in hits], "names": [names[c.signal] for c in conds], "start_us": start,
+                "truncated": len(hits) >= sr.MAX_HITS, "timeout": cancel.is_set()}
+
     def csv_bytes(self, src: Source, sid: str, user: str, role: str, t0=None, t1=None) -> tuple[str, bytes]:
         """(file name, CSV with every row of the recording or of its time range)."""
         b = self._open(src)

@@ -21,7 +21,7 @@ function fmtTime(us) { return us ? new Date(us / 1000).toLocaleString("pl-PL") :
 
 // ---------------------------------------------------------------- login
 function show(name) {
-  for (const id of ["login", "overview", "chart", "users", "editor", "targets", "recs"]) $(id).hidden = id !== name;
+  for (const id of ["login", "overview", "chart", "users", "editor", "targets", "recs", "markers"]) $(id).hidden = id !== name;
   document.querySelectorAll("#nav button").forEach((b) => b.classList.toggle("on", b.dataset.view === name));
 }
 async function showLogin() {
@@ -51,10 +51,13 @@ $("l-sso").addEventListener("click", async () => {
     await start();
   } catch (err) { $("l-error").textContent = err.message; }
 });
-$("logout").addEventListener("click", async () => { await api("/api/logout", {}); me = null; showLogin(); });
+$("logout").addEventListener("click", async () => { if (!(await mkConfirmLeave())) return; mkdDiscard(); await api("/api/logout", {}); me = null; showLogin(); });
 
 // ---------------------------------------------------------------- navigation
-document.querySelectorAll("#nav button").forEach((b) => b.addEventListener("click", () => go(b.dataset.view)));
+document.querySelectorAll("#nav button").forEach((b) => b.addEventListener("click", async () => {
+  if ((view === "chart" || view === "recs") && b.dataset.view !== view && !(await mkConfirmLeave())) return;   // unsaved markers: remind first
+  go(b.dataset.view);
+}));
 function go(v) {
   view = v; show(v); stopStream();
   if (v === "overview") refreshOverview();
@@ -62,6 +65,7 @@ function go(v) {
   if (v === "users") refreshUsers();
   if (v === "targets") refreshTargets();
   if (v === "recs") initRecs();
+  if (v === "markers") refreshMarkers();
 }
 async function start() {
   me = await api("/api/me");
@@ -203,7 +207,8 @@ $("e-delete").addEventListener("click", async () => {
 
 // ---------------------------------------------------------------- live chart
 const COLORS = ["#ffb347", "#4eb8f0", "#7bd88f", "#ff7b7b", "#c792ea", "#f1fa8c", "#8be9fd", "#ffa7d1"];
-function stopStream() { if (stream) { stream.close(); stream = null; } }
+let markTimer = null, searchNames = "", userFrozen = false;
+function stopStream() { if (stream) { stream.close(); stream = null; } clearInterval(markTimer); }
 window.openChart = async (id) => {
   if (view !== "chart") { view = "chart"; show("chart"); }
   stopStream();
@@ -215,17 +220,20 @@ window.openChart = async (id) => {
 function openChart() { window.openChart(); }
 let frozen = null, frozenKey = null, conn = null, lastDesc = null;
 function connectStream() {
-  stopStream(); frozen = null; frozenKey = null; lastDesc = null;
+  stopStream(); frozen = null; frozenKey = null; lastDesc = null; userFrozen = false; $("c-live").hidden = true;
   const id = $("c-conn").value; if (!id) return;
   conn = (overview?.connections || []).find((c) => c.id === id) || null;
   $("c-filelist").hidden = true;
-  series = { t: [], values: [], names: [], colors: [] };
+  series = { t: [], values: [], names: [], colors: [], start_us: 0 };
   const sec = +$("c-sec").value;
+  MK.live.marks = []; MK.live.hi = new Set(); clearInterval(markTimer); markTimer = setInterval(() => { if (view === "chart") loadLiveMarks(); }, 2000);
   stream = new EventSource(`/api/connections/${id}/stream?seconds=${sec}`);
   stream.onmessage = (ev) => {
     const d = JSON.parse(ev.data);
-    if (d.reset) { series = { t: d.t, values: d.values, names: d.names, colors: d.colors }; }   // (identical colours: palette below)
+    if (d.reset) { series = { t: d.t, values: d.values, names: d.names, colors: d.colors, start_us: d.start_us }; }   // (identical colours: palette below)
     else { series.t.push(...d.t); d.values.forEach((col, k) => (series.values[k] ||= []).push(...col)); }
+    if (d.start_us) series.start_us = d.start_us;
+    if (d.names?.length && d.names.join("\u0001") !== searchNames) { searchNames = d.names.join("\u0001"); $("c-search-box")._rebuild?.(); }
     if (d.names?.length) { series.names = d.names; series.colors = new Set(d.colors).size < d.colors.length ? d.colors.map((_, k) => COLORS[k % COLORS.length]) : d.colors; }
     if (d.description) { lastDesc = d.description; describeChart(d.description); }
     const cut = (series.t.at(-1) ?? 0) - sec;
@@ -247,7 +255,7 @@ function describeChart(d) {
     if (frozenKey !== key) { frozenKey = key; fetch(`/api/connections/${$("c-conn").value}/series?from=${t.x0}&to=${t.x1}`).then((r2) => r2.json())
       .then((f) => { if (frozenKey === key) { frozen = { ...f, x0: t.x0, x1: t.x1, trig: t.t }; if (!f.colors?.length) frozen.colors = series.colors;
         frozen.colors = new Set(f.colors).size < f.colors.length ? f.colors.map((_, k) => COLORS[k % COLORS.length]) : f.colors; draw(); } }); }
-  } else { frozen = null; frozenKey = null; }
+  } else if (!userFrozen) { frozen = null; frozenKey = null; }
 }
 $("c-rearm").addEventListener("click", async () => { try { await api(`/api/connections/${$("c-conn").value}/trigger`, { action: "rearm" }); } catch (e) { alert(e.message); } });
 $("c-rec").addEventListener("click", async () => {
@@ -271,18 +279,20 @@ let drawPending = false;
 function draw() { if (drawPending) return; drawPending = true; requestAnimationFrame(() => { drawPending = false; paint(); }); }
 function paint() {
   const ds = frozen || series, sec = +$("c-sec").value, t1 = frozen ? frozen.x1 : (ds.t.at(-1) ?? 0), t0 = frozen ? frozen.x0 : t1 - sec;
-  drawChart($("canvas"), ds, t0, t1, { markers: (lastDesc?.trigger?.events || []).map((e) => e.t), left: frozen ? "okno zamrożone triggerem" : `-${sec} s`,
+  drawChart($("canvas"), ds, t0, t1, { mk: MK.live, markers: (lastDesc?.trigger?.events || []).map((e) => e.t), left: frozen ? "okno zamrożone triggerem" : `-${sec} s`,
     right: frozen ? "" : "teraz", empty: "Brak danych – uruchom połączenie (Start) na stronie Przegląd.", legend: $("c-legend") });
 }
 // one lane per signal, scaled to its own min..max of the shown range; steps (the value holds until the next change)
 function drawChart(cv, ds, t0, t1, o) {
   const g = cv.getContext("2d"), W = cv.width, H = cv.height, pad = { l: 60, r: 10, t: 8, b: 24 }, n = ds.names.length;
   g.fillStyle = "#000"; g.fillRect(0, 0, W, H); g.font = "12px sans-serif"; g.strokeStyle = "#333"; g.fillStyle = "#aaa";
+  cv._geo = null;
   if (!n || !ds.t.length) { g.fillText(o.empty || "Brak danych.", 70, 30); return; }
   const colors = new Set(ds.colors).size < ds.colors.length ? ds.colors.map((_, k) => COLORS[k % COLORS.length]) : ds.colors;
-  const bandH = (H - pad.t - pad.b) / n, X = (t) => pad.l + (t - t0) / ((t1 - t0) || 1) * (W - pad.l - pad.r);
+  const bandH = (H - pad.t - pad.b) / n, X = (t) => pad.l + (t - t0) / ((t1 - t0) || 1) * (W - pad.l - pad.r), lanes = [];
   for (let k = 0; k < n; k++) {
     const col = ds.values[k] || [], top = pad.t + k * bandH, bot = top + bandH - 4, c = colors[k] || COLORS[k % COLORS.length];
+    lanes.push({ top, bot });
     const fin = col.filter((x, i) => x !== null && ds.t[i] >= t0 && ds.t[i] <= t1), lo = Math.min(...fin), hi = Math.max(...fin), span = hi - lo || 1;
     g.strokeStyle = "#333"; g.strokeRect(pad.l, top, W - pad.l - pad.r, bandH - 4);
     g.fillStyle = "#aaa"; g.fillText(Number.isFinite(hi) ? hi.toPrecision(4) : "", 4, top + 12); g.fillText(Number.isFinite(lo) ? lo.toPrecision(4) : "", 4, bot);
@@ -297,6 +307,8 @@ function drawChart(cv, ds, t0, t1, o) {
     if (o.hold && pen) g.lineTo(X(t1), py);          // a recording of changes: the last value holds to the end of the range
     g.stroke();
   }
+  cv._geo = { t0, t1, pad, W, H };
+  if (o.mk) mkPaint(g, cv, o.mk, cv._geo, lanes);                                    // markers (bookmarks) over the curves
   g.strokeStyle = "#ff4d4d"; g.fillStyle = "#ff4d4d"; g.lineWidth = 1; g.setLineDash([5, 4]);
   for (const t of o.markers || []) { if (t < t0 || t > t1) continue; const x = X(t); g.beginPath(); g.moveTo(x, pad.t); g.lineTo(x, H - pad.b); g.stroke(); g.fillText("T", x + 3, H - pad.b - 4); }
   g.setLineDash([]); g.fillStyle = "#aaa"; g.fillText(o.left || "", pad.l, H - 6);
@@ -356,14 +368,48 @@ window.loadRec = async (id, from, to) => {
   $("rv-msg").textContent = ""; rv.cur = id; rv.from = from ?? null; rv.to = to ?? null;
   $("rv-view").hidden = false; $("rv-name").textContent = (r.title || rv.data.title || id) + " ";
   $("rv-info").textContent = ` ${rv.data.rows} wierszy` + (rv.data.shown < rv.data.rows ? `, na wykresie ${rv.data.shown} (min/maks)` : "") + (rv.data.mode === "changes" ? " · zapis zmian" : "");
-  $("rv-csv").href = `/api/recordings/csv?${qs}`; drawRec(); $("rv-view").scrollIntoView({ behavior: "smooth" });
+  $("rv-csv").href = `/api/recordings/csv?${qs}`; $("rv-search-box")._rebuild?.(); await loadRecMarks(); drawRec(); $("rv-view").scrollIntoView({ behavior: "smooth" });
 };
 function recRange() { const d = rv.data, end = Math.max(d.t.length ? d.t.at(-1) : 0, d.end_us ? (d.end_us - d.start_us) / 1e6 : 0); return [rv.from ?? (d.t[0] ?? 0), rv.to ?? end]; }
 function drawRec() {
   const d = rv.data, [t0, t1] = recRange(), at = (t) => new Date(d.start_us / 1000 + t * 1000).toLocaleString("pl-PL");
-  drawChart($("rv-canvas"), d, t0, t1, { hold: d.mode === "changes", left: at(t0), right: at(t1), empty: "Brak danych w tym zakresie.", legend: $("rv-legend") });
+  drawChart($("rv-canvas"), d, t0, t1, { mk: MK.rec, hold: d.mode === "changes", left: at(t0), right: at(t1), empty: "Brak danych w tym zakresie.", legend: $("rv-legend") });
 }
 $("rv-all").addEventListener("click", () => { if (rv.cur) loadRec(rv.cur); });
+
+// ---------------------------------------------------------------- markers on the two charts
+const canMark = () => ROLE_RANK[me?.role] >= ROLE_RANK.operator;
+MK.live = { cv: $("canvas"), kind: "live", marks: [], srv: [], pred: (m) => m.conn === $("c-conn").value, hi: new Set(), hiGroup: "", place: null, drag: null, ds: () => frozen || series, startUs: () => (frozen || series).start_us || 0,
+  target: () => ({ conn: $("c-conn").value }), canAdd: () => canMark() && !!$("c-conn").value, canEdit: (m) => m.can_edit, redraw: () => { if (view === "chart" && (frozen || series)) draw(); }, reload: async () => { await loadLiveMarks(); } };
+MK.rec = { cv: $("rv-canvas"), kind: "rec", marks: [], srv: [], pred: (m) => !!rv.cur && m.rec_id === $("rv-src").value + "|" + rv.cur, hi: new Set(), hiGroup: "", place: null, drag: null, ds: () => rv.data || { names: [] }, startUs: () => rv.data?.start_us || 0,
+  target: () => ({ rec_id: $("rv-src").value + "|" + rv.cur }), canAdd: () => canMark() && !!rv.data, canEdit: (m) => m.can_edit, redraw: () => { if (view === "recs" && rv.data) drawRec(); }, reload: async () => { await loadRecMarks(); MK.rec.redraw(); } };
+async function loadMarks(ctx, qs) {
+  try { ctx.srv = (await api("/api/markers?" + qs)).markers; } catch (e) { ctx.srv = []; }
+  ctx.marks = mkdOverlay(ctx.srv, ctx.pred);
+  if (ctx.hiGroup) ctx.hi = new Set(ctx.marks.filter((m) => m.group_name === ctx.hiGroup).map((m) => m.id));
+}
+async function loadLiveMarks() {
+  const id = $("c-conn").value, ds = frozen || series; if (!id || !ds.start_us) return;
+  const last = ds.t.at(-1) ?? 0, sec = +$("c-sec").value, t0 = frozen ? frozen.x0 : last - sec, t1 = frozen ? frozen.x1 : last;
+  await loadMarks(MK.live, `conn=${encodeURIComponent(id)}&from=${Math.round(ds.start_us + t0 * 1e6)}&to=${Math.round(ds.start_us + t1 * 1e6)}&limit=500`);
+  draw();
+}
+async function loadRecMarks() { if (rv.cur) await loadMarks(MK.rec, "rec=" + encodeURIComponent($("rv-src").value + "|" + rv.cur) + "&limit=1000"); else { MK.rec.srv = []; MK.rec.marks = mkdOverlay([], MK.rec.pred); } }
+function showUserFrozen(d, x0, x1) {
+  const colors = new Set(d.colors).size < d.colors.length ? d.colors.map((_, k) => COLORS[k % COLORS.length]) : d.colors;
+  frozen = { ...d, colors, x0, x1, trig: null }; userFrozen = true; $("c-live").hidden = false; loadLiveMarks(); draw();
+}
+$("c-live").addEventListener("click", () => { userFrozen = false; frozen = null; frozenKey = null; $("c-live").hidden = true; loadLiveMarks(); draw(); });
+$("c-addmark").addEventListener("click", () => { const ds = frozen || series; if (!ds.start_us || !canMark()) return alert(canMark() ? "Brak danych – uruchom połączenie." : "Rola „podgląd” nie zakłada znaczników.");
+  mkAdd(MK.live, mkBlank(Math.round(ds.start_us + (ds.t.at(-1) ?? 0) * 1e6))); });
+mkAttach(MK.live); mkAttach(MK.rec); initMarkersView();
+mkSearchPanel($("c-search-box"), { names: () => series?.names || [], run: (b) => api("/api/search", { conn: $("c-conn").value, ...b }),
+  pick: async (h) => { const pad = Math.max(h.duration * 0.3, 10), f = h.t0 - pad, t = h.t1 + pad, d = await api(`/api/connections/${$("c-conn").value}/series?from=${f}&to=${t}`);
+    if (!d.t.length) return alert("Ten moment jest poza danymi, które połączenie trzyma w pamięci."); showUserFrozen(d, f, t); },
+  mark: (h, sigs, ev) => mkAdd(MK.live, mkBlank(h.t0_us, { title: "Wynik wyszukiwania", signals: sigs, ...(!ev && h.t1_us > h.t0_us ? { kind: "range", end_us: h.t1_us } : {}) })) });
+mkSearchPanel($("rv-search-box"), { names: () => rv.data?.names || [], run: (b) => api("/api/search", { source: $("rv-src").value, id: rv.cur, ...b }),
+  pick: (h) => { const pad = Math.max(h.duration * 0.3, 20); loadRec(rv.cur, Math.max(0, h.t0 - pad), h.t1 + pad); },
+  mark: (h, sigs, ev) => mkAdd(MK.rec, mkBlank(h.t0_us, { title: "Wynik wyszukiwania", signals: sigs, ...(!ev && h.t1_us > h.t0_us ? { kind: "range", end_us: h.t1_us } : {}) })) });
 (() => {   // zoom: drag a range on the chart
   const cv = $("rv-canvas"); let x0 = null;
   const tAt = (ev) => { const b = cv.getBoundingClientRect(), px = (ev.clientX - b.left) / b.width * cv.width, [a, z] = recRange();

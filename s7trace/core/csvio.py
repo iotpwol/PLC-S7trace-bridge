@@ -122,3 +122,27 @@ def read_csv(path: str) -> tuple[list[Signal], np.ndarray, np.ndarray]:
                        offset_y=round(-1.1 * j, 3))
         signals.append(s)
     return signals, t, v
+
+
+def csv_start_wall(path: str) -> datetime | None:
+    """Wall-clock time of t = 0 of a CSV written by S7Trace (first row: timestamp - time_s); None when the file has no timestamps."""
+    try:
+        with open(path, newline="", encoding="utf-8-sig") as f:
+            header = None
+            sep = ","
+            for line in f:
+                if line.startswith("#"):
+                    continue
+                if header is None:
+                    sep = ";" if line.count(";") > line.count(",") else ","
+                    header = [h.strip() for h in next(csv.reader([line], delimiter=sep))]
+                    if "timestamp" not in header:
+                        return None
+                    continue
+                row = next(csv.reader([line], delimiter=sep))
+                ts = datetime.fromisoformat(row[header.index("timestamp")])
+                t = float(row[header.index("time_s")].replace(",", ".")) if "time_s" in header and row[header.index("time_s")] else 0.0
+                return ts - timedelta(seconds=t)
+    except Exception:
+        return None
+    return None

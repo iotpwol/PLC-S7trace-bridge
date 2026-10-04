@@ -184,6 +184,10 @@ class MainWindow(QMainWindow):
         self.act_legend = self._act(v, "Legenda", self._set_legend, checked=self.ui.get("legend", True))
         self.act_grid = self._act(v, "Siatka", self._set_grid, checked=self.ui.get("grid", True))
         v.addSeparator()
+        self._act(v, "Znaczniki na wykresie…", lambda: self._cur(lambda t: t.mk.open_list()), "Ctrl+M")
+        self._act(v, "Dodaj znacznik teraz", lambda: self._cur(lambda t: t.mk.add_now()), "Ctrl+Shift+M")
+        self._act(v, "Wyszukiwarka danych…", lambda: self._cur(lambda t: t.mk.open_search()), "Ctrl+F")
+        v.addSeparator()
         self.menu_legend = v.addMenu("Położenie legendy (ta karta)")
         for label, pos in (("Lewy górny róg", (0, 0)), ("Prawy górny róg", (1, 0)),
                            ("Lewy dolny róg", (0, 1)), ("Prawy dolny róg", (1, 1))):
@@ -475,6 +479,8 @@ class MainWindow(QMainWindow):
         tab = self.tabs.widget(i)
         if tab is None:
             return
+        if not tab.mk.confirm_close():                           # unsaved markers: listed, the user decides
+            return
         if tab.state != "stopped":
             r = QMessageBox.question(self, "S7Trace", "Połączenie jest aktywne. Zamknąć kartę?")
             if r != QMessageBox.Yes:
@@ -602,6 +608,13 @@ class MainWindow(QMainWindow):
 
     # ---------------------------------------------------------- close
     def closeEvent(self, e):
+        for i in range(self.tabs.count()):                        # unsaved markers of any tab: remind before anything is closed
+            tab = self.tabs.widget(i)
+            if tab.mk.pending():
+                self.tabs.setCurrentIndex(i)
+                if not tab.mk.confirm_close():
+                    e.ignore()
+                    return
         self._heartbeat.stop()
         if self._reporter is not None:
             self._reporter.stop()

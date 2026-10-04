@@ -22,6 +22,7 @@ from . import files
 from . import sso
 from .agents import Agents, host_of
 from .hosted import HostManager
+from .markers_api import MarkerService, search_connection
 from .recordings import Library, RecError
 from .targets import TargetError, Targets
 
@@ -88,6 +89,7 @@ class App:
         h.files_root, h.data_dir = h.files_root or os.path.join(data_dir, "files"), h.data_dir or data_dir
         h.targets = h.targets or self.targets
         self.library = Library(h.files_root, h.data_dir, h.targets)
+        self.markers = MarkerService(os.path.join(data_dir, "web_markers.db"), h)      # bookmarks on charts (per author)
         self.agents = Agents()                                      # desktop programs that report to the server
         self.sso = False                                            # single sign-on with the Windows account (--sso)
         self.started = time.time()
@@ -157,7 +159,7 @@ class Handler(BaseHTTPRequestHandler):
     # ---- GET
     def do_GET(self):
         u = urlparse(self.path)
-        path, q = u.path, {k: v[0] for k, v in parse_qs(u.query).items()}
+        path, q = u.path, {k: v[0] for k, v in parse_qs(u.query, keep_blank_values=True).items()}
         try:
             if path in ("/", "/index.html"):
                 return self._static("index.html")
@@ -177,6 +179,11 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if path.startswith("/api/recordings"):
                 return self._recordings_get(path, q)
+            if path == "/api/markers":
+                s = self._session("viewer")
+                if s is not None:
+                    self._json(self.app.markers.listing(s["username"], s["role"], q))
+                return
             if path == "/api/targets":                                   # recording targets: names for users, details for admins
                 s = self._session("viewer")
                 if s is not None:
@@ -318,6 +325,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._detect(d)
             if path == "/api/recordings":
                 return self._recordings_post(d)
+            if path == "/api/markers":
+                return self._markers_post(d)
+            if path == "/api/search":
+                return self._search(d)
             self._error(404, "Nie ma takiej operacji.")
         except (AuthError, TargetError) as e:
             self._error(400, str(e))
@@ -441,6 +452,30 @@ class Handler(BaseHTTPRequestHandler):
             name, data = lib.csv_bytes(src, q.get("id", ""), user, role, num("from"), num("to"))
             return self._send(200, data, "text/csv; charset=utf-8", {"Content-Disposition": f'attachment; filename="{name}"'})
         self._error(404, "Nie ma takiej strony.")
+
+    def _markers_post(self, d: dict):
+        s = self._session("operator")
+        if s is None:
+            return
+        try:
+            self._json(self.app.markers.change(s["username"], s["role"], d, self.client_address[0]))
+        except KeyError:
+            self._error(404, "Nie ma takiego znacznika.")
+
+    def _search(self, d: dict):
+        """Value search in the memory of a connection ({conn}) or in a recording of a database ({source, id})."""
+        s = self._session("viewer")
+        if s is None:
+            return
+        user, role = s["username"], s["role"]
+        if d.get("conn"):
+            host = self.app.hosts.get(str(d["conn"]))
+            if host is None or not host.can_view(user, role):
+                return self._error(404, "Nie ma takiego połączenia.")
+            return self._json(search_connection(host, d))
+        lib = self.app.library
+        src = lib.resolve(str(d.get("source", "sqlite")), user, role)
+        self._json(lib.search(src, str(d.get("id", "")), user, role, d))
 
     def _recordings_post(self, d: dict):
         s = self._session("operator")

@@ -8,8 +8,8 @@ from typing import Callable
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import QObject, Qt, Signal as QtSignal
-from PySide6.QtGui import QColor, QPen
-from PySide6.QtWidgets import QLabel, QSplitter, QVBoxLayout, QWidget
+from PySide6.QtGui import QColor, QCursor, QPen
+from PySide6.QtWidgets import QApplication, QLabel, QSplitter, QToolTip, QVBoxLayout, QWidget
 
 from ..core import render, render_cfg
 from .fold_splitter import FoldSplitter
@@ -91,6 +91,15 @@ class DraggableLegend(pg.LegendItem):
             self.on_moved(min(max(self.pos().x() / w, 0.0), 1.0), min(max(self.pos().y() / h, 0.0), 1.0))
 
 
+class _MarkerRegion(pg.LinearRegionItem):
+    """Area of a range marker: dragging it moves the whole range, its edges change the ends; a click is reported (right = menu)."""
+    sigRegionClicked = QtSignal(object)
+
+    def mouseClickEvent(self, ev):
+        self.sigRegionClicked.emit(ev)
+        super().mouseClickEvent(ev)
+
+
 class PlotView(QWidget):
     windowChanged = QtSignal(float)    # user zoomed -> new visible width [s]
     userMoved = QtSignal()             # user panned/zoomed (tab pauses the live view)
@@ -98,6 +107,11 @@ class PlotView(QWidget):
     legendDoubleClicked = QtSignal()        # -> the 'Sygnały…' window
     legendContextMenu = QtSignal(object)    # right click on the legend (global QPoint) -> the tab shows the menu
     splitChanged = QtSignal(int)       # height of the overview strip changed (pixels)
+    markerRequested = QtSignal(float, object)   # right click on the empty chart: (time [s], global QPoint) -> 'Dodaj znacznik'
+    markerMenu = QtSignal(int, object)          # right click on a marker line: (marker id, global QPoint)
+    markerMoved = QtSignal(int, float, float)   # a marker was dragged: (marker id, new start [s], new end [s] (= start for a point))
+    markerPlaced = QtSignal(int, float)         # 'Zmień pozycję': the chart was clicked: (marker id, time [s])
+    markerOpened = QtSignal(int)                # left click on a marker line: (marker id) -> the tab shows its description
 
     def __init__(self, buffer: TraceBuffer, parent=None):
         super().__init__(parent)
@@ -122,6 +136,11 @@ class PlotView(QWidget):
         self.trigger_lines: list[pg.InfiniteLine] = []
         self.vmarks: list[pg.InfiniteLine] = []
         self.hmarks: list[pg.InfiniteLine] = []
+        self.mitems: dict[int, dict] = {}                 # bookmarks (core.markers) drawn in the visible range
+        self.mhi: set[int] = set()                        # markers drawn highlighted (the one being moved / a whole group)
+        self._tip_id: int | None = None                   # marker whose bubble is shown
+        self.place_marker: int | None = None              # waiting for a click that gives the new place of this marker
+        self._mset = False
         self.v_mode = False
         self.h_mode = False
         self.legend_pos = (0.0, 0.0)
@@ -190,6 +209,7 @@ class PlotView(QWidget):
                                    " padding: 4px; font-family: Consolas, monospace;")
         self.readout.hide()
         self.plot.scene().sigMouseClicked.connect(self._on_click)
+        self.plot.scene().sigMouseMoved.connect(self._on_hover)
 
     # ------------------------------------------------------------ config
     def set_signals(self, signals: list[Signal]) -> None:
@@ -345,6 +365,9 @@ class PlotView(QWidget):
                 ln = pg.InfiniteLine(pos=y, angle=0, movable=False, pen=pg.mkPen(128, 128, 128, 70, style=Qt.DotLine))
                 self.plot.addItem(ln, ignoreBounds=True)
                 self._lane_lines.append(ln)
+        if self.mitems:                                       # bookmarks of chosen plots follow the lanes
+            self._marker_extras()
+            self._marker_style()
 
     def lane_geometry(self) -> dict[int, tuple[float, float]]:
         return dict(self._lane_geo)
@@ -476,7 +499,24 @@ class PlotView(QWidget):
             ev.accept()
             self.legendContextMenu.emit(ev.screenPos().toPoint())
             return
-        if ev.button() != Qt.LeftButton or ev.double() or ev.isAccepted():
+        if self.place_marker is not None:
+            mid = self.place_marker
+            if ev.button() == Qt.LeftButton and self.vb.sceneBoundingRect().contains(ev.scenePos()):
+                x = float(self.vb.mapSceneToView(ev.scenePos()).x())
+                self.end_marker_placement()
+                ev.accept()
+                self.markerPlaced.emit(mid, x)
+            elif ev.button() == Qt.RightButton:
+                self.end_marker_placement()
+                ev.accept()
+            return
+        if ev.isAccepted():
+            return
+        if ev.button() == Qt.RightButton and self.vb.sceneBoundingRect().contains(ev.scenePos()):
+            ev.accept()
+            self.markerRequested.emit(float(self.vb.mapSceneToView(ev.scenePos()).x()), ev.screenPos().toPoint())
+            return
+        if ev.button() != Qt.LeftButton or ev.double():
             return
         if not (self.v_mode or self.h_mode):
             return
@@ -520,6 +560,206 @@ class PlotView(QWidget):
                 self.plot.removeItem(m)
             self.hmarks.clear()
         self.update_readout()
+
+    # ------------------------------------------------------------ bookmarks
+    LINE_STYLES = {"solid": Qt.SolidLine, "dash": Qt.DashLine, "dot": Qt.DotLine, "dashdot": Qt.DashDotLine}
+
+    def set_markers(self, items: list[dict]) -> None:
+        """items = dicts: id, kind ('point' / 'range'), x0, x1 (time [s]; x1 only for a range), color '#rrggbb', width [px],
+        style ('solid' / 'dash' / 'dot' / 'dashdot'), opacity [%] of the area of a range, title, tip (html), signals (names;
+        empty = all plots). Markers that are not listed any more are removed, the others
+        are updated in place (rebuilt when their look changes)."""
+        want = {it["id"]: it for it in items}
+        for mid in [m for m in self.mitems if m not in want]:
+            self._marker_remove(mid)
+        self._mset = True
+        try:
+            for it in items:
+                mid = it["id"]
+                cur = self.mitems.get(mid)
+                look = (it["kind"], it["color"], it["width"], it["style"], it["opacity"], it["title"], tuple(it["signals"]))
+                if cur is not None and cur["look"] != look:
+                    self._marker_remove(mid)
+                    cur = None
+                if cur is None:
+                    cur = self._marker_create(it, look)
+                    self.mitems[mid] = cur
+                else:
+                    main = cur["main"]
+                    moving = getattr(main, "moving", False) or any(getattr(l, "moving", False) for l in getattr(main, "lines", []))
+                    if not moving:
+                        if it["kind"] == "range":
+                            if tuple(main.getRegion()) != (it["x0"], it["x1"]):
+                                main.setRegion((it["x0"], it["x1"]))
+                        elif abs(main.value() - it["x0"]) > 1e-9:
+                            main.setValue(it["x0"])
+                cur["data"] = it
+                cur["main"].setToolTip(it["tip"])
+            self._marker_extras()
+            self._marker_style()
+        finally:
+            self._mset = False
+
+    def _marker_pen(self, it: dict, hi: bool = False):
+        w = it["width"]
+        restricted = bool(it["signals"]) and self.y_layout == "lanes"       # the full-height line is only a thin guide then
+        col = QColor("#ffffff" if hi else it["color"])
+        if restricted and not hi:
+            col.setAlpha(120)
+        style = Qt.SolidLine if hi else self.LINE_STYLES.get(it["style"], Qt.SolidLine)
+        return pg.mkPen(col, width=(w + 2) if hi else (1 if restricted else w), style=style)
+
+    def _marker_create(self, it: dict, look: tuple) -> dict:
+        mid, col = it["id"], it["color"]
+        text = (it["title"] or "").strip()
+        text = (text[:28] + "…") if len(text) > 29 else text
+        restricted = bool(it["signals"])
+        label_opts = {"color": col, "position": 0.985, "rotateAxis": (1, 0), "anchors": [(1, 1), (1, 1)]}
+        if it["kind"] == "range":
+            fill = self._range_fill(it)
+            main = _MarkerRegion(values=(it["x0"], it["x1"]), brush=pg.mkBrush(fill), pen=self._marker_pen(it),
+                                 hoverBrush=pg.mkBrush(fill))
+            main.setZValue(7)
+            main.sigRegionChangeFinished.connect(lambda r, i=mid: self._marker_dropped(i, r))
+            main.sigRegionClicked.connect(lambda ev, i=mid: self._marker_clicked(i, ev))
+            for ln in main.lines:
+                ln.sigClicked.connect(lambda l, ev, i=mid: self._marker_clicked(i, ev))
+            label = pg.InfLineLabel(main.lines[0], text, position=0.985, color=col, rotateAxis=(1, 0), anchors=[(1, 1), (1, 1)])
+            self.plot.addItem(main, ignoreBounds=True)
+        else:
+            main = pg.InfiniteLine(pos=it["x0"], angle=90, movable=True, pen=self._marker_pen(it),
+                                   hoverPen=pg.mkPen("#ffffff", width=4), label=text, labelOpts=label_opts)
+            main.setZValue(8)
+            main.sigPositionChangeFinished.connect(lambda l, i=mid: self._marker_dropped(i, l))
+            main.sigClicked.connect(lambda l, ev, i=mid: self._marker_clicked(i, ev))
+            label = main.label
+            self.plot.addItem(main, ignoreBounds=True)
+        return {"look": look, "main": main, "label": label, "extras": [], "data": it}
+
+    def _marker_remove(self, mid: int) -> None:
+        cur = self.mitems.pop(mid, None)
+        if cur is None:
+            return
+        for e in cur["extras"]:
+            self.plot.removeItem(e)
+        self.plot.removeItem(cur["main"])
+
+    def _marker_extras(self) -> None:
+        """Markers that belong to chosen plots only: a coloured area / bar in exactly those lanes (lane layout)."""
+        for cur in self.mitems.values():
+            for e in cur["extras"]:
+                self.plot.removeItem(e)
+            cur["extras"] = []
+            it = cur["data"]
+            if not it["signals"] or self.y_layout != "lanes":
+                continue
+            col = QColor(it["color"])
+            for k, (b, t) in self._lane_geo.items():
+                if k >= len(self.signals) or self.signals[k].name not in it["signals"]:
+                    continue
+                if it["kind"] == "range":
+                    r = pg.QtWidgets.QGraphicsRectItem(it["x0"], b, it["x1"] - it["x0"], t - b)
+                    fill = QColor(col)
+                    fill.setAlpha(self._alpha(it))
+                    r.setBrush(pg.mkBrush(fill))
+                    r.setPen(pg.mkPen(None))
+                    r.setZValue(6)
+                    r.setAcceptedMouseButtons(Qt.NoButton)
+                    self.plot.addItem(r, ignoreBounds=True)
+                    cur["extras"].append(r)
+                else:
+                    seg = pg.PlotCurveItem([it["x0"], it["x0"]], [b, t], pen=pg.mkPen(col, width=it["width"] + 2,
+                                                                                     style=self.LINE_STYLES.get(it["style"], Qt.SolidLine)))
+                    seg.setZValue(7)
+                    seg.setAcceptedMouseButtons(Qt.NoButton)
+                    self.plot.addItem(seg, ignoreBounds=True)
+                    cur["extras"].append(seg)
+
+    def _marker_style(self) -> None:
+        """The marker chosen for moving ('Zmień pozycję') is drawn white and thick; the others in their own colour."""
+        for mid, cur in self.mitems.items():
+            it, hi = cur["data"], mid in self.mhi
+            pen = self._marker_pen(it, hi)
+            main = cur["main"]
+            if it["kind"] == "range":
+                main.setBrush(pg.mkBrush(QColor(255, 255, 255, 90) if hi else self._range_fill(it)))
+                for ln in main.lines:
+                    ln.setPen(pen)
+            else:
+                main.setPen(pen)
+
+    @staticmethod
+    def _alpha(it: dict) -> int:
+        return int(round(max(0, min(100, it["opacity"])) * 2.55))
+
+    def _range_fill(self, it: dict) -> QColor:
+        """Colour of the area of a range marker (transparent when the area is drawn lane by lane instead)."""
+        fill = QColor(it["color"])
+        fill.setAlpha(0 if it["signals"] and self.y_layout == "lanes" else self._alpha(it))
+        return fill
+
+    def set_marker_highlight(self, ids) -> None:
+        """ids: a marker id, a set of ids or None (nothing highlighted)."""
+        self.mhi = set() if ids is None else ({ids} if isinstance(ids, int) else set(ids))
+        self._marker_style()
+
+    def _on_hover(self, pos) -> None:
+        """The cursor over a marker opens a bubble with its parameters and descriptions."""
+        if not self.mitems or QApplication.mouseButtons() != Qt.NoButton:
+            return
+        best, score = None, None
+        if self.vb.sceneBoundingRect().contains(pos):
+            x = float(self.vb.mapSceneToView(pos).x())
+            tol = self.vb.viewPixelSize()[0] * 6
+            for mid, cur in self.mitems.items():
+                it = cur["data"]
+                hit = (it["x0"] - tol <= x <= it["x1"] + tol) if it["kind"] == "range" else abs(x - it["x0"]) <= tol
+                if hit:
+                    sc = (it["kind"] == "point", it["priority"])          # a line wins over the area it lies in
+                    if score is None or sc > score:
+                        best, score = mid, sc
+        if best is None:
+            if self._tip_id is not None:
+                QToolTip.hideText()
+            self._tip_id = None
+        elif best != self._tip_id:
+            self._tip_id = best
+            QToolTip.showText(QCursor.pos(), self.mitems[best]["data"]["tip"], self.glw)
+
+    def start_marker_placement(self, mid: int) -> None:
+        """'Zmień pozycję': the marker is highlighted; the next left click on the chart puts it there (right click = cancel)."""
+        self.place_marker = mid
+        self.set_marker_highlight(mid)
+        self.glw.setCursor(Qt.CrossCursor)
+
+    def end_marker_placement(self) -> None:
+        self.place_marker = None
+        self.set_marker_highlight(None)
+        self.glw.unsetCursor()
+
+    def _marker_dropped(self, mid: int, item) -> None:
+        if self._mset:
+            return
+        cur = self.mitems.get(mid)
+        if cur is None:
+            return
+        if cur["data"]["kind"] == "range":
+            a, b = item.getRegion()
+            self.markerMoved.emit(mid, float(a), float(b))
+        else:
+            self.markerMoved.emit(mid, float(item.value()), float(item.value()))
+
+    def _marker_clicked(self, mid: int, ev) -> None:
+        if self.place_marker is not None:
+            return                                                   # the click is for the placement (scene handler)
+        if ev.button() == Qt.RightButton:
+            ev.accept()
+            self.markerMenu.emit(mid, ev.screenPos().toPoint())
+        elif ev.button() == Qt.LeftButton and not ev.double():
+            self.markerOpened.emit(mid)
+
+    def clear_markers(self) -> None:
+        self.set_markers([])
 
     def mark_trigger(self, t: float) -> None:
         for ln in self.trigger_lines:

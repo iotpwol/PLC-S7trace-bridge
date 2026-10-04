@@ -25,4 +25,17 @@ td button { padding:2px 8px; }
 .rec-on { background:#c0392b; color:#fff; border-color:#c0392b; } #c-title { min-width:220px; } #editor { overflow-x:auto; } #e-sig { min-width:900px; }
 #rv-canvas { cursor:crosshair; } #rv-edit { margin:8px 0; } #rv-edit input { min-width:200px; }
 #e-report { background:var(--panel); padding:8px 12px; white-space:pre-wrap; max-height:260px; overflow:auto; font:12px/1.4 Consolas,monospace; }
+#mk-dlg { max-width:760px; width:92vw; background:var(--panel); color:var(--text); border:2px solid var(--accent); border-radius:6px; }
+#mk-dlg::backdrop { background:rgba(0,0,0,.55); } #mk-dlg label { display:flex; flex-direction:column; gap:3px; margin-bottom:6px; } #mk-dlg textarea { font:inherit; color:inherit; background:var(--bg); border:1px solid #777; }
+#mk-dlg fieldset label { flex-direction:row; align-items:center; gap:6px; } #mk-sigs label { flex-direction:row; align-items:center; margin:0; }
+.ctxmenu { position:fixed; z-index:50; background:var(--panel); border:1px solid var(--accent); border-radius:4px; padding:4px; min-width:230px; box-shadow:0 4px 14px rgba(0,0,0,.5); }
+.ctxmenu button { display:block; width:100%; text-align:left; border:0; background:transparent; padding:5px 10px; } .ctxmenu button:hover { background:var(--accent); color:#fff; } .ctxmenu hr { border:0; border-top:1px solid rgba(128,128,128,.4); margin:3px 0; }
+#bubble { position:fixed; z-index:40; max-width:330px; background:var(--panel); border:1px solid var(--accent); border-radius:4px; padding:8px 10px; box-shadow:0 4px 14px rgba(0,0,0,.5); pointer-events:none; font-size:13px; }
+details { margin:8px 0; } details summary { cursor:pointer; color:var(--muted); } .sr-row { margin:4px 0; } .sr-row select, .sr-row input { padding:2px 4px; } .sr-res { margin-top:8px; }
 [hidden] { display:none !important; }
+
+button.warn { background:#b8860b; border-color:#e0a030; color:#fff; }
+#mk-pend { max-width:min(900px,96vw); }
+#mk-pend .mkp-new td:first-child { color:#3fc380; } #mk-pend .mkp-edited td:first-child { color:#e0a030; } #mk-pend .mkp-deleted td:first-child { color:#ff6b6b; }
+tr.mkp-new td:first-child { box-shadow:inset 3px 0 #3fc380; } tr.mkp-edited td:first-child { box-shadow:inset 3px 0 #e0a030; } tr.mkp-deleted { opacity:.65; }
+.mk-state { color:#e0a030; font-size:.85em; }

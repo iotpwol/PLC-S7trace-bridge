@@ -9,6 +9,16 @@ def _private_appdata(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _private_markers(monkeypatch, tmp_path):
+    """The desktop program keeps its markers in <Documents>/S7Trace/markers.db: tests get a private file."""
+    from s7trace.core import markers
+    monkeypatch.setattr(markers, "default_path", lambda: str(tmp_path / "markers_default.db"))
+    from s7trace.ui import markers_ui
+    # a right click on a chart opens the markers menu: a blocking QMenu.exec would hang a test (tests of menus patch it again)
+    monkeypatch.setattr(markers_ui.TabMarkers, "_run_menu", staticmethod(lambda menu, pos: None))
+
+
+@pytest.fixture(autouse=True)
 def _no_name_prompt(monkeypatch):
     """The default file names contain {confname}: a tab without a configuration name asks for it. In tests the
     question is answered 'cancel' (-> no_name); tests of the prompt itself patch getText again."""
