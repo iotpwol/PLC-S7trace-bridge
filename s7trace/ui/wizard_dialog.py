@@ -9,7 +9,7 @@ from PySide6.QtCore import QThread, Qt, Signal as QtSignal
 from PySide6.QtWidgets import (QApplication, QDialog, QHBoxLayout, QHeaderView, QLabel, QPlainTextEdit, QPushButton,
                                QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
 
-from .table_kit import standard as standard_table
+from .table_kit import SortItem, begin_fill, end_fill, src as table_src, row_of as table_row_of, standard as standard_table
 from ..core import detect
 from ..core.richtext import bold, bold_numbers
 from ..core.types import fmt_diff
@@ -65,7 +65,7 @@ class WizardDialog(QDialog):
 
         self.t_steps = QTableWidget(0, 4)
         self.t_steps.setHorizontalHeaderLabels(["Test", "Wynik", "Czas [ms]", "Szczegóły"])
-        standard_table(self.t_steps)
+        standard_table(self.t_steps, sort=True)
         self.t_steps.verticalHeader().setVisible(False)
         self.t_steps.setWordWrap(True)
         self.t_steps.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -78,7 +78,7 @@ class WizardDialog(QDialog):
         v = QVBoxLayout(w)
         self.t_info = QTableWidget(0, 2)
         self.t_info.setHorizontalHeaderLabels(["Parametr", "Wartość"])
-        standard_table(self.t_info)
+        standard_table(self.t_info, sort=True)
         self.t_info.verticalHeader().setVisible(False)
         self.t_info.setColumnWidth(0, 250)
         self.t_info.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -141,15 +141,18 @@ class WizardDialog(QDialog):
 
     def _add_step(self, st) -> None:
         r = self.t_steps.rowCount()
+        self.t_steps.setSortingEnabled(False)                       # the new row is written first, the user's sort is applied after it
         self.t_steps.insertRow(r)
         txt, col = STATUS_TXT[st.status]
         for c, val in enumerate((st.title, txt, f"{st.ms:.0f}" if st.ms else "", st.detail)):
-            it = QTableWidgetItem(val)
+            it = SortItem(val)
             if c == 1:
                 it.setForeground(Qt.GlobalColor.white)
                 it.setBackground(self._color(col))
             self.t_steps.setItem(r, c, it)
         self.t_steps.resizeRowToContents(r)
+        self.t_steps.setSortingEnabled(True)
+        self.t_steps.resizeRowsToContents()
 
     @staticmethod
     def _color(hex_):
@@ -184,14 +187,12 @@ class WizardDialog(QDialog):
             acc = {"ok": "działa", "denied": "ODMOWA (PUT/GET wyłączony?)", "range": "adres niedostępny (DB zoptymalizowane?)",
                    "other": "błąd", "unknown": "nieznany"}[res.info["s7_access"]]
             rows.append(("S7comm: odczyt pamięci bezwzględnej", acc))
+        begin_fill(self.t_info)
         self.t_info.setRowCount(len(rows))
         for r, (a, b) in enumerate(rows):
-            self.t_info.setItem(r, 0, QTableWidgetItem(a))
-            it = QTableWidgetItem(b)
-            f = it.font()
-            f.setBold(True)                                  # values bold, the parameter names normal
-            it.setFont(f)
-            self.t_info.setItem(r, 1, it)
+            self.t_info.setItem(r, 0, SortItem(a))
+            self.t_info.setItem(r, 1, SortItem(b))
+        end_fill(self.t_info)
         if res.plc_time:
             self.lbl_time.setText(
                 f"Czas sterownika{' w chwili połączenia' if stored else ''}: "

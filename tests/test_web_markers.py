@@ -368,7 +368,7 @@ def test_status_bar_settings_are_kept_per_account(srv):
     assert d["prefs"]["panel"] and d["prefs"]["marker_look"]                                                         # the other settings untouched
     base = os.path.join(os.path.dirname(__import__("s7trace.web.server", fromlist=["x"]).__file__), "static")
     js, html = (open(os.path.join(base, f), encoding="utf-8").read() for f in ("app.js", "index.html"))
-    assert 'id="c-state" class="statusbar"' in html and "statusLoad" in js and "Justowanie tekstu: do lewej" in js
+    assert 'id="c-state" class="statusbar"' in html and "statusLoad" in js and '"Justowanie tekstu", null, undefined' in js and '"do lewej"' in js
 
 
 def test_web_tables_alternate_and_have_resizable_columns():

@@ -153,7 +153,7 @@ Typy: BOOL, BYTE, SINT, USINT, WORD, INT, UINT, DWORD, DINT, UDINT, REAL, LREAL.
   i zalecenia, dane sterownika (model, MLFB, firmware, numer seryjny, stan, ochrona) oraz czas sterownika z różnicą do czasu komputera.
   Ustawienia → Metoda połączenia: wybór ręczny, porty, login/hasło, certyfikat klienta OPC UA. Przeglądarka zmiennych OPC UA: „Z OPC UA…”
   w oknie Sygnały. Ograniczenia i blokady: Ustawienia → Wymagania, ograniczenia i blokady… (oraz Pomoc F1).
-* Pomoc (F1): opis wszystkich paneli, menu, przycisków i okna sygnałów z rysunkami (`s7trace/help/`).
+* Pomoc (F1): pełny opis programu (32 rozdziały: menu i podmenu, panele, pola, przyciski, wykres, znaczniki, tabele, bazy, diagnostyka, metody połączenia, tryb Web…) ze **zdjęciami działającego programu** – każde menu, podmenu, pole i okno ma własne zdjęcie, a opis mówi, co to jest, do czego służy, jak się zachowuje i od czego zależy. Tekst: `s7trace/ui/help_content.py`; zdjęcia (`s7trace/help/img`) powstają automatycznie: `python tools/make_help_images.py` uruchamia program na symulatorze sterownika i fotografuje jego elementy – po zmianie wyglądu programu wystarczy uruchomić skrypt ponownie.
 * Widok → Interfejs…: kolory (okna, pola edycyjne, tabele, menu, wykres…) i czcionka, z podglądem na żywo.
   Profil kolorów: Ciemny / Jasny / Systemowy (podąża za trybem aplikacji w Windows, także na żywo) / Własny
   (ustawia się sam po ręcznej zmianie koloru; też w Widok → Profil kolorów).

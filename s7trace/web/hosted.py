@@ -74,7 +74,7 @@ class HostedConnection:
         info = (self.device or {}).get("info") or {}
         return {"id": self.id, "name": self.name, "ip": self.cfg.ip, "rack": self.cfg.rack, "slot": self.cfg.slot,
                 "cycle_ms": self.cfg.cycle_ms, "state": self.state, "message": self.message,
-                "method": CONN_LABEL.get(self.method, self.method or "automatycznie"),
+                "method": self.method_text(),
                 "signals": [s.name for s in self.signals] or [s.name for s in self.cfg.signals if s.enabled],
                 "owner": self.owner, "started_by": self.started_by, "started_us": self.started_us,
                 "samples": len(self.buffer),
@@ -96,7 +96,7 @@ class HostedConnection:
             plc = {"time": plc_t.strftime("%Y-%m-%d %H:%M:%S"), "utc": bool(dev.get("plc_time_utc")),
                    "diff_s": round((plc_t - ref).total_seconds(), 1), "diff_text": fmt_diff((plc_t - ref).total_seconds())}
         return {"id": self.id, "name": self.name, "ip": self.cfg.ip, "state": self.state, "message": self.message,
-                "method": CONN_LABEL.get(self.method, self.method or "automatycznie"), "cycle_ms": self.cfg.cycle_ms,
+                "method": self.method_text(), "cycle_ms": self.cfg.cycle_ms,
                 "started_us": self.started_us, "samples": len(self.buffer), "rating": rating, "notes": notes,
                 "link": _jsonable(snap) if snap else None, "device": device_lines(device_summary(self.device, self.cfg.ip)), "plc_time": plc}
 
@@ -114,6 +114,13 @@ class HostedConnection:
                 "written": getattr(rec, "written", None), "dropped": getattr(rec, "dropped", 0)}
 
     # ---- control
+    def method_text(self) -> str:
+        """The method shown to the user; in automatic mode, once started: 'Auto: <the method that was picked>'."""
+        if not self.method:
+            return CONN_LABEL.get(self.cfg.conn_type, "automatycznie")
+        label = CONN_LABEL.get(self.method, self.method)
+        return f"Auto: {label}" if self.cfg.conn_type == "auto" and self.state != "stopped" else label
+
     def _pick_method(self, run: list[Signal]) -> str:
         kind = self.cfg.conn_type
         return (family_of(run) or "s7") if kind == "auto" else kind

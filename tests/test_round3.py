@@ -230,3 +230,14 @@ def test_help_dialog_content_and_images(app):
     assert "Sygnały" in d.toc.currentItem().text()
     d.toc.setCurrentRow(0)
     assert "Szybki start" in d.view.toPlainText()
+
+
+def test_help_pictures_are_all_used_and_exist():
+    """Every picture of the help is a photograph made by tools/make_help_images.py: referenced ones exist, no orphans stay on disk."""
+    secs = sections()
+    used = set(re.findall(r'src="img/([^"]+)\.png"', "".join(h for _, h in secs)))
+    disk = {f[:-4] for f in os.listdir(os.path.join(HELP_DIR, "img")) if f.endswith(".png")}
+    assert used and not (used - disk), sorted(used - disk)
+    assert not (disk - used), sorted(disk - used)
+    assert not [n for n in disk if n.startswith("zal")]                       # the old pictures are gone
+    assert len(used) >= 90

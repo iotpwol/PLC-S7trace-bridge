@@ -7,7 +7,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (QAbstractItemView, QDialog, QHBoxLayout, QHeaderView, QLabel, QPushButton, QTableWidget,
                                QTableWidgetItem, QVBoxLayout)
 
-from .table_kit import standard as standard_table
+from .table_kit import SortItem, begin_fill, end_fill, src as table_src, row_of as table_row_of, standard as standard_table
 from ..core import sessions as ss
 from .dialog_kit import dialog_info
 
@@ -44,7 +44,7 @@ class SessionsDialog(QDialog):
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.verticalHeader().setVisible(False)
-        standard_table(self.table)
+        standard_table(self.table, sort=True)
         lay.addWidget(self.table, 1)
         note = QLabel("Lista obejmuje programy uruchomione na tym komputerze (przez wszystkich użytkowników). "
                       "Wpis znika, gdy program zostanie zamknięty lub przestanie odpowiadać (ok. 10 s).")
@@ -79,11 +79,9 @@ class SessionsDialog(QDialog):
                 rows.append([who, sid, started, t.get("title", ""), t.get("ip", ""), STATE_TEXT.get(state, state),
                              short_time(t.get("since")) if scanning else ""])
         self.lbl.setText(f"Otwartych sesji programu: <b>{len(sess)}</b>, aktywnych skanów sterowników: <b>{scans}</b>")
+        begin_fill(self.table)
         self.table.setRowCount(len(rows))
         for r, vals in enumerate(rows):
             for c, v in enumerate(vals):
-                it = QTableWidgetItem(v)
-                f = it.font()
-                f.setBold(True)                                 # values bold, like everywhere in the program
-                it.setFont(f)
-                self.table.setItem(r, c, it)
+                self.table.setItem(r, c, SortItem(v))
+        end_fill(self.table)

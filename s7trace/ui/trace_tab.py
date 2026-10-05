@@ -151,6 +151,7 @@ class TraceTab(QWidget):
         self._device_ip = ""
         self._rec_dot, self._rec_idle, self._rec_phase = "#ff2020", "#c0c0c0", True
         self._dev_busy = False                     # 'Pobierz dane sterownika' is running
+        self.run_method = ""                       # the method of the last Start (automatic mode: the one that was picked)
         self._build()
         self._load_cfg()
         self._stateRaw.connect(self._on_state)
@@ -557,9 +558,10 @@ class TraceTab(QWidget):
         m.addAction("Kolor tła paska…", lambda: pick("status_bg", "Pasek statusu: tło"))
         m.addAction("Kolor tekstu paska…", lambda: pick("status_text", "Pasek statusu: tekst"))
         m.addSeparator()
-        al = QActionGroup(m)
-        for key, label in (("left", "Justowanie tekstu: do lewej"), ("right", "Justowanie tekstu: do prawej")):
-            a = m.addAction(label)
+        just = m.addMenu("Justowanie tekstu")
+        al = QActionGroup(just)
+        for key, label in (("left", "do lewej"), ("right", "do prawej")):
+            a = just.addAction(label)
             a.setCheckable(True)
             a.setChecked(self.lbl_status.align() == key)
             al.addAction(a)
@@ -902,8 +904,12 @@ class TraceTab(QWidget):
         self.plot.apply_theme(bg, fg)
 
     def update_method_label(self) -> None:
+        """'Metoda': the chosen method; in automatic mode, once connected, 'Auto: <the method that was picked>'."""
         t = self.cfg.conn_type
-        self.lbl_method.setText(CONN_LABEL[t] if t in CONN_LABEL else t)
+        if t == "auto" and self.run_method and self.state != "stopped":
+            self.lbl_method.setText(f"Auto: {CONN_LABEL.get(self.run_method, self.run_method)}")
+        else:
+            self.lbl_method.setText(CONN_LABEL[t] if t in CONN_LABEL else t)
 
     def set_conn_type(self, kind: str) -> None:
         """Chosen manually or by the wizard ('Użyj zalecanej metody')."""
@@ -1141,6 +1147,8 @@ class TraceTab(QWidget):
         method = self._resolve_method(run)
         if method is None:
             return
+        self.run_method = method                         # what 'Automatycznie' resolved to (shown in the 'Metoda' row)
+        self.update_method_label()
         if not run:
             QMessageBox.information(self, "S7Trace", "Brak sygnałów do pobierania. Dodaj sygnały albo zaznacz "
                                     "„Pobierz” w oknie 'Sygnały...'.")
@@ -1459,6 +1467,7 @@ class TraceTab(QWidget):
             self.state = state
             self.status_msg = msg
         self._set_buttons()
+        self.update_method_label()
         if state != "error":
             self.stateChanged.emit(self.state)
 

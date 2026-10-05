@@ -86,3 +86,6 @@ table:not(.dg):not(.mk-t) tbody tr:nth-child(odd) { background: var(--tb-odd-bg,
 table:not(.dg):not(.mk-t) tbody tr:nth-child(even) { background: var(--tb-even-bg, rgba(128,128,128,.10)); color: var(--tb-even-text, inherit); }
 #ui-dlg { max-width: 520px; width: 92vw; background: var(--panel); color: var(--text); border: 2px solid var(--accent); border-radius: 6px; }
 #ui-dlg .urow { display: flex; align-items: center; gap: 10px; margin: 6px 0; } #ui-dlg .urow label { flex: 1; } #ui-dlg input[type=color] { width: 64px; height: 28px; padding: 0; }
+
+.ctx-menu .sub { cursor: default; }
+th.s-asc::after { content: " ▲"; font-size: .7em; } th.s-desc::after { content: " ▼"; font-size: .7em; }

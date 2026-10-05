@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QColo
                                QTableWidget,
                                QTableWidgetItem, QTabWidget, QTextBrowser, QVBoxLayout, QWidget)
 
-from .table_kit import standard as standard_table
+from .table_kit import SortItem, begin_fill, end_fill, src as table_src, row_of as table_row_of, standard as standard_table
 from ..core import markers as mk
 from ..core.marker_draft import MarkerDraft
 from ..core import search as sr
@@ -341,7 +341,8 @@ class PendingDialog(QDialog):
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionMode(QAbstractItemView.NoSelection)
         self.table.verticalHeader().setVisible(False)
-        standard_table(self.table)
+        standard_table(self.table, sort=True)
+        self.table.setSortingEnabled(False)
         for i, c in enumerate(changes):
             m = c.marker
             when = fmt_us(m.at_us) + (f" → {fmt_us(m.end_us)}" if m.kind in mk.SPAN_KINDS else "")
@@ -353,7 +354,7 @@ class PendingDialog(QDialog):
                 detail = "zostanie usunięty z pliku znaczników"
             cells = [STATE_PL[c.state], m.blurb(), when, detail]
             for j, text in enumerate(cells):
-                it = QTableWidgetItem(text)
+                it = SortItem(text)
                 it.setForeground(QBrush(QColor(STATE_COLOR[c.state])) if j == 0 else QBrush())
                 if c.state == "deleted":
                     f = it.font()
@@ -362,7 +363,7 @@ class PendingDialog(QDialog):
                 if j == 0:
                     it.setIcon(color_icon(m.color))
                 self.table.setItem(i, j, it)
-        self.table.resizeColumnsToContents()
+        self.table.setSortingEnabled(True)
         lay.addWidget(self.table, 1)
         b = QHBoxLayout()
         b.addStretch()
@@ -929,7 +930,7 @@ class MarkersDialog(QDialog):
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)      # several markers at once -> 'Grupuj zaznaczone'
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
-        standard_table(self.table)
+        standard_table(self.table, sort=True)
         self.table.itemSelectionChanged.connect(self._show_detail)
         self.table.itemDoubleClicked.connect(lambda *_: self.go())
         lay.addWidget(self.table, 3)
@@ -989,11 +990,11 @@ class MarkersDialog(QDialog):
 
     def _selected_ids(self) -> list[int]:
         rows = sorted({i.row() for i in self.table.selectedIndexes()})
-        return [self._rows[r].id for r in rows if 0 <= r < len(self._rows)]
+        return [self._rows[table_src(self.table, r)].id for r in rows if 0 <= r < len(self._rows)]
 
     def _current(self) -> mk.Marker | None:
         r = self.table.currentRow()
-        return self._rows[r] if 0 <= r < len(self._rows) else None
+        return self._rows[table_src(self.table, r)] if 0 <= r < len(self._rows) else None
 
     def refresh(self) -> None:
         st, dr = self.ctl.store, self.ctl.draft
@@ -1033,6 +1034,7 @@ class MarkersDialog(QDialog):
             key = self.ctl.key()
             rows = [m for m in rows if m.conn in ("", key)]
         self._rows = rows
+        begin_fill(self.table)
         self.table.setRowCount(len(rows))
         for i, m in enumerate(rows):
             state = dr.state(m.id)
@@ -1041,7 +1043,7 @@ class MarkersDialog(QDialog):
                      mk.PRIORITIES.get(m.priority, str(m.priority)), ", ".join(m.signals) or "wszystkie", m.group_name,
                      m.author, m.conn, fmt_us(m.modified_us, False), "zapisany" if not state else "* " + STATE_PL[state]]
             for j, text in enumerate(cells):
-                it = QTableWidgetItem(text)
+                it = SortItem(text, m.at_us if j == 0 else (m.modified_us if j == 8 else None))
                 if j == 1:
                     it.setIcon(color_icon(m.color))
                 if state:
@@ -1051,7 +1053,7 @@ class MarkersDialog(QDialog):
                         f.setStrikeOut(True)
                         it.setFont(f)
                 self.table.setItem(i, j, it)
-        self.table.resizeColumnToContents(0)
+        end_fill(self.table)
         n = dr.count()
         self.lbl.setText(f"Znaczników: <b>{len(rows)}</b> z {st.count()} w pliku {st.path}"
                          + (f" · <span style='color:#e0a030'><b>niezapisanych zmian: {n}</b></span>" if n else ""))
@@ -1065,7 +1067,9 @@ class MarkersDialog(QDialog):
     def select(self, mid: int) -> None:
         for i, m in enumerate(self._rows):
             if m.id == mid:
-                self.table.selectRow(i)
+                r = table_row_of(self.table, i)
+                if r >= 0:
+                    self.table.selectRow(r)
                 return
 
     def _show_detail(self) -> None:
@@ -1253,7 +1257,7 @@ class SearchDialog(QDialog):
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.verticalHeader().setVisible(False)
-        standard_table(self.table)
+        standard_table(self.table, sort=True)
         self.table.itemDoubleClicked.connect(lambda *_: self.go())
         lay.addWidget(self.table, 1)
         self.lbl = QLabel("")
@@ -1465,14 +1469,15 @@ class SearchDialog(QDialog):
         self.hits, self._rec = hits, rec
         names = [self.rows[0].sig.itemText(i) for i in range(self.rows[0].sig.count())]
         conds = self._conds()
+        begin_fill(self.table)
         self.table.setRowCount(len(hits))
         for i, h in enumerate(hits):
             vals = ", ".join(f"{names[c.signal] if c.signal < len(names) else c.signal}={x:g}" for c, x in zip(conds, h.values))
             dur = "zdarzenie" if h.t1 == h.t0 and any(sr.OPS[c.op][2] for c in conds) else _dur(h.duration / 1e6)
             rng = f"{h.vmin:g} … {h.vmax:g}" if h.vmin == h.vmin else "–"
             for j, text in enumerate((fmt_us(int(h.t0)), dur, vals, rng)):
-                self.table.setItem(i, j, QTableWidgetItem(text))
-        self.table.resizeColumnToContents(0)
+                self.table.setItem(i, j, SortItem(text, h.t0 if j == 0 else (h.duration if j == 1 else None)))
+        end_fill(self.table)
         more = f" (pokazano pierwsze {sr.MAX_HITS})" if len(hits) >= sr.MAX_HITS else ""
         self.lbl.setText(("Przerwano. " if cancelled else "") + f"Znaleziono: <b>{len(hits)}</b>{more}."
                          + ("" if hits else " Brak wyników – zmień warunki albo zakres czasu."))
@@ -1481,13 +1486,13 @@ class SearchDialog(QDialog):
         self._buttons()
 
     def _buttons(self) -> None:
-        on = self.table.currentRow() >= 0 and self.table.currentRow() < len(self.hits)
+        on = 0 <= self.table.currentRow() < len(self.hits)
         self.btn_go.setEnabled(on)
         self.btn_mark.setEnabled(on)
 
     def _hit(self) -> sr.Hit | None:
         r = self.table.currentRow()
-        return self.hits[r] if 0 <= r < len(self.hits) else None
+        return self.hits[table_src(self.table, r)] if 0 <= r < len(self.hits) else None
 
     # ---- results -> chart
     def go(self) -> None:

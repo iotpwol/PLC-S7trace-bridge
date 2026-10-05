@@ -1322,8 +1322,10 @@ def test_status_bar_menu_alignment_and_the_interface_file(app, tmp_path):
     from PySide6.QtWidgets import QApplication
     QApplication.sendEvent(lbl, QContextMenuEvent(QContextMenuEvent.Mouse, QPoint(5, 5), QPoint(5, 5)))
     names = [a.text() for a in tab._status_popup.actions()]
-    assert len(seen) == 1 and "Kolor tła paska…" in names and "Justowanie tekstu: do lewej" in names and "Maksymalna liczba wierszy w pasku" in names
-    left = next(a for a in tab._status_popup.actions() if a.text() == "Justowanie tekstu: do lewej")
+    assert len(seen) == 1 and "Kolor tła paska…" in names and "Justowanie tekstu" in names and "Maksymalna liczba wierszy w pasku" in names
+    just = next(a for a in tab._status_popup.actions() if a.text() == "Justowanie tekstu")                 # a submenu: do lewej / do prawej
+    assert [a.text() for a in just.menu().actions()] == ["do lewej", "do prawej"]
+    left = just.menu().actions()[0]
     left.trigger()                                                                                           # the menu item itself
     assert lbl.align() == "left" and w.ui["theme"]["status_align"] == "left"
     tab._status_popup.close()
@@ -1391,3 +1393,50 @@ def test_table_colours_are_interface_settings(app, tmp_path):
     old = th.normalize({"profile": "custom", "table_bg": "#ffffff", "table_text": "#111111", "text": "#222222", "window_bg": "#f0f0f0"})   # a file without the new keys
     assert old["row_odd_bg"] == "#ffffff" and old["row_odd_text"] == "#111111" and old["header_text"] == "#222222"
     th.apply_theme(app, th.DARK)
+
+
+def test_header_click_sorts_tables_and_the_signal_list(app):
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QTableWidget
+    from s7trace.core.types import Signal
+    from s7trace.ui import table_kit as tk
+    from s7trace.ui.signals_dialog import SignalsDialog
+    assert tk.natural_key("2 min 32 s") < tk.natural_key("15 min 53 s") and tk.natural_key("DB2") < tk.natural_key("DB10")
+    t = QTableWidget(0, 2)
+    tk.standard(t, sort=True)
+    tk.begin_fill(t)
+    t.setRowCount(3)
+    for r, v in enumerate(["DB10", "DB2", "DB1"]):
+        t.setItem(r, 0, tk.SortItem(v))
+        t.setItem(r, 1, tk.SortItem(str(r)))
+    tk.end_fill(t)
+    t.sortByColumn(0, Qt.AscendingOrder)
+    assert [t.item(r, 0).text() for r in range(3)] == ["DB1", "DB2", "DB10"]                  # natural order
+    assert [tk.src(t, r) for r in range(3)] == [2, 1, 0]                                      # which of the original rows each one is
+    sigs = [Signal(name=n, source="DB", dtype="INT", db=1, byte=b) for n, b in (("S3", 6), ("S1", 2), ("S2", 4))]
+    d = SignalsDialog(sigs, False, lambda: [])
+    d.sort_by(0 if False else 2)                                                              # 'Nazwa'
+    assert [s.name for s in d.signals()] == ["S1", "S2", "S3"]
+    d.sort_by(2)                                                                              # second click: descending
+    assert [s.name for s in d.signals()] == ["S3", "S2", "S1"]
+    d.close()
+    dl = SignalsDialog(sigs, True, lambda: [])                                                # while running the order is locked
+    dl.sort_by(2)
+    assert [s.name for s in dl.signals()] == ["S3", "S1", "S2"]
+    dl.close()
+
+
+def test_method_row_says_what_automatic_picked(app):
+    tab = TraceTab(TabConfig(), lambda: [])
+    assert tab.lbl_method.text() == "Automatycznie (rozpoznaj)"
+    tab.run_method, tab.state = "s7", "running"
+    tab.update_method_label()
+    assert tab.lbl_method.text() == "Auto: S7comm (snap7, PUT/GET)"
+    tab.state = "stopped"
+    tab.update_method_label()
+    assert tab.lbl_method.text() == "Automatycznie (rozpoznaj)"
+    tab.cfg.conn_type = "opcua"
+    tab.state = "running"
+    tab.update_method_label()
+    assert tab.lbl_method.text() == "OPC UA"                                                  # a manual choice is shown as it is
+    tab.state = "stopped"

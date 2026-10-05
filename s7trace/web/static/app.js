@@ -702,19 +702,31 @@ async function panelLoad() { try { PANEL = panelNormalize((await api("/api/prefs
 })();
 
 // right click on the name of an element hides it; right click on the title of a group lists its elements (check list) and folds it
-function ctxMenu(x, y, items) {                                       // items: [label, fn | null, checked | undefined] | "-" | [text] (a heading)
+function ctxMenu(x, y, items) {                                       // items: [label, fn | null, checked | undefined, children?] | "-" | [text] (a heading); children = a submenu
   document.querySelectorAll(".ctx-menu").forEach((m) => m.remove());
-  const m = document.createElement("div"); m.className = "ctx-menu";
-  items.forEach((it) => {
-    if (it === "-") { m.appendChild(document.createElement("hr")); return; }
-    const d = document.createElement("div"); const [label, fn, checked] = it;
-    d.textContent = (checked === undefined ? "" : checked ? "✓ " : " ") + label;
-    if (!fn) d.className = fn === undefined ? "head" : "off"; else d.addEventListener("click", () => { m.remove(); fn(); });
-    m.appendChild(d);
-  });
-  document.body.appendChild(m);
-  m.style.left = Math.min(x, innerWidth - m.offsetWidth - 4) + "px"; m.style.top = Math.min(y, innerHeight - m.offsetHeight - 4) + "px";
-  const close = (e) => { if (!m.contains(e.target)) { m.remove(); removeEventListener("pointerdown", close, true); } };
+  const open = [];                                                     // the menu and its open submenus
+  const build = (its, px, py, level) => {
+    open.splice(level).forEach((m) => m.remove());
+    const m = document.createElement("div"); m.className = "ctx-menu"; open[level] = m;
+    its.forEach((it) => {
+      if (it === "-") { m.appendChild(document.createElement("hr")); return; }
+      const d = document.createElement("div"); const [label, fn, checked, kids] = it;
+      d.textContent = (checked === undefined ? "" : checked ? "✓ " : " ") + label + (kids ? "   ▸" : "");
+      if (kids) {
+        d.className = "sub";
+        const show = () => { const r = d.getBoundingClientRect(); build(kids, r.right - 2, r.top - 4, level + 1); };
+        d.addEventListener("mouseenter", show); d.addEventListener("click", show);
+      } else {
+        if (!fn) d.className = fn === undefined ? "head" : "off"; else d.addEventListener("click", () => { open.forEach((q) => q.remove()); fn(); });
+        d.addEventListener("mouseenter", () => open.splice(level + 1).forEach((q) => q.remove()));
+      }
+      m.appendChild(d);
+    });
+    document.body.appendChild(m);
+    m.style.left = Math.max(2, Math.min(px, innerWidth - m.offsetWidth - 4)) + "px"; m.style.top = Math.max(2, Math.min(py, innerHeight - m.offsetHeight - 4)) + "px";
+  };
+  build(items, x, y, 0);
+  const close = (e) => { if (!open.some((m) => m.contains(e.target))) { open.forEach((m) => m.remove()); removeEventListener("pointerdown", close, true); } };
   addEventListener("pointerdown", close, true);
 }
 // status bar (chart page): right click = most lines, colours, justification; the same settings as the desktop status bar, kept per account
@@ -733,12 +745,12 @@ function statusPickColor(key, cur) {
 }
 $("c-state").addEventListener("contextmenu", (e) => {
   e.preventDefault();
-  ctxMenu(e.clientX, e.clientY, [["Pasek statusu"], ["Maksymalna liczba wierszy:"],
-    ...[1, 2, 3, 4, 5, 6, 8, 10].map((n) => [`   ${n}`, () => { STATUS.lines = n; statusPersist(); }, STATUS.lines === n]), "-",
+  ctxMenu(e.clientX, e.clientY, [
+    ["Maksymalna liczba wierszy w pasku", null, undefined, [1, 2, 3, 4, 5, 6, 8, 10].map((n) => [`${n}`, () => { STATUS.lines = n; statusPersist(); }, STATUS.lines === n])], "-",
     ["Kolor tła paska…", () => statusPickColor("bg", STATUS.bg)], ["Kolor tekstu paska…", () => statusPickColor("text", STATUS.text)],
     ["Kolory domyślne (jak strona)", STATUS.bg || STATUS.text ? () => { STATUS.bg = STATUS.text = ""; statusPersist(); } : null], "-",
-    ["Justowanie tekstu: do lewej", () => { STATUS.align = "left"; statusPersist(); }, STATUS.align === "left"],
-    ["Justowanie tekstu: do prawej", () => { STATUS.align = "right"; statusPersist(); }, STATUS.align === "right"]]);
+    ["Justowanie tekstu", null, undefined, [["do lewej", () => { STATUS.align = "left"; statusPersist(); }, STATUS.align === "left"],
+      ["do prawej", () => { STATUS.align = "right"; statusPersist(); }, STATUS.align === "right"]]]]);
 });
 function panelSetRow(group, key, show) {
   const h = (PANEL.hidden[group] || []).filter((k) => k !== key); if (!show) h.push(key);
@@ -892,3 +904,38 @@ function tableColorsDialog() {
 $("ui-btn").addEventListener("click", tableColorsDialog);
 $("ui-close").addEventListener("click", () => $("ui-dlg").close());
 $("ui-reset").addEventListener("click", () => { TBL = {}; tableColorsPersist(); tableColorsDialog(); });
+
+// a click on a header sorts the table (ascending, then descending; numbers and times in the text compare as numbers); a re-render keeps the sort
+function naturalKey(t) { return String(t).toLowerCase().split(/(\d+(?:[.,]\d+)?)/).map((p, i) => (i % 2 ? [0, parseFloat(p.replace(",", "."))] : [1, p])); }
+function naturalCmp(a, b) {
+  const ka = naturalKey(a), kb = naturalKey(b);
+  for (let i = 0; i < Math.min(ka.length, kb.length); i++) {
+    const [ta, va] = ka[i], [tb, vb] = kb[i];
+    if (ta !== tb) return ta - tb;
+    if (va !== vb) return va < vb ? -1 : 1;
+  }
+  return ka.length - kb.length;
+}
+function tableSortable(table) {
+  if (!table || table.dataset.srt) return; table.dataset.srt = "1";
+  const body = table.tBodies[0]; if (!body) return;
+  const ths = [...table.querySelectorAll("thead th")];
+  let col = -1, dir = 1, busy = false, mo = null;
+  const apply = () => {
+    if (col < 0 || busy) return; busy = true;
+    const rows = [...body.rows].filter((r) => r.cells.length > col);
+    rows.sort((a, b) => dir * naturalCmp(a.cells[col].textContent.trim(), b.cells[col].textContent.trim())).forEach((r) => body.appendChild(r));
+    if (mo) mo.takeRecords();                           // our own re-ordering must not trigger another sort
+    busy = false;
+  };
+  ths.forEach((th, i) => {
+    if (!th.textContent.trim()) return;
+    th.style.cursor = "pointer"; th.title = (th.title ? th.title + " – " : "") + "Kliknij: sortuj";
+    th.addEventListener("click", () => {
+      dir = col === i ? -dir : 1; col = i;
+      ths.forEach((t) => t.classList.remove("s-asc", "s-desc")); th.classList.add(dir > 0 ? "s-asc" : "s-desc"); apply();
+    });
+  });
+  mo = new MutationObserver(() => { if (!busy) apply(); }); mo.observe(body, { childList: true });
+}
+["t-conn", "t-agents", "t-sess", "t-recs", "t-mkl", "t-targets", "t-users", "t-tokens", "mkp-t"].forEach((id) => tableSortable(document.getElementById(id)));

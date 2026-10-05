@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComb
                                QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QSpinBox, QTableWidget,
                                QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
 
-from .table_kit import standard as standard_table
+from .table_kit import SortItem, begin_fill, end_fill, src as table_src, row_of as table_row_of, standard as standard_table
 from ..core import store as st
 from ..core.config import data_dir
 from ..core.csvio import write_csv
@@ -931,7 +931,7 @@ class SpoolDialog(QDialog):
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.verticalHeader().setVisible(False)
-        standard_table(self.table)
+        standard_table(self.table, sort=True)
         lay.addWidget(self.table, 1)
         self.lbl = QLabel()
         self.lbl.setWordWrap(True)
@@ -955,20 +955,24 @@ class SpoolDialog(QDialog):
     def refresh(self) -> None:
         self.items = st.scan_spools(self.base_dir)
         self.table.setRowCount(len(self.items))
+        begin_fill(self.table)
+        self.table.setRowCount(len(self.items))
         for r, it in enumerate(self.items):
             m = it["meta"]
             when = datetime.fromtimestamp(m.get("start_us", 0) / 1e6).strftime("%Y-%m-%d %H:%M:%S") if m.get("start_us") else "?"
             vals = [f"{when}  {m.get('title') or m.get('conf') or it['name']}", it["target"], f"{it['rows']:,}".replace(",", " "),
                     f"{it['size'] / 1e6:.1f} MB", "tak" if it["target"] == self.cfg.describe() else "nie"]
+            keys = (None, None, it["rows"], it["size"], None)
             for c, v in enumerate(vals):
-                self.table.setItem(r, c, QTableWidgetItem(v))
+                self.table.setItem(r, c, SortItem(v, keys[c]))
+        end_fill(self.table)
         if self.items:
             self.table.selectRow(0)
         self._buttons()
 
     def _cur(self) -> dict | None:
         r = self.table.currentRow()
-        return self.items[r] if 0 <= r < len(self.items) else None
+        return self.items[table_src(self.table, r)] if 0 <= r < len(self.items) else None
 
     def _buttons(self) -> None:
         it = self._cur()

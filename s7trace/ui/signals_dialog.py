@@ -5,14 +5,14 @@ import json
 from typing import Callable
 
 from PySide6.QtCore import QByteArray, QEvent, QObject, Qt, QTimer, Signal as QtSignal
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QCursor
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QColorDialog, QComboBox,
                                QDialog, QDoubleSpinBox, QFileDialog, QHBoxLayout, QHeaderView, QInputDialog,
                                QLabel, QLineEdit, QMenu, QMessageBox, QPushButton, QSpinBox, QTableWidget,
                                QTableWidgetItem, QToolTip, QVBoxLayout, QWidget)
 from PySide6.QtGui import QActionGroup
 
-from .table_kit import standard as standard_table
+from .table_kit import SortItem, begin_fill, end_fill, natural_key, src as table_src, row_of as table_row_of, standard as standard_table
 from ..core.naming import NAME_OWN, NAME_PREV, new_signal_name
 from ..core.symbols import Symbol
 from ..core.types import (ALL_SOURCES, DEFAULT_COLORS, FORMATS, NODE_SOURCES, SOURCES, TYPES, Signal, address_key,
@@ -30,6 +30,17 @@ COLS = [
 CI = {k: i for i, (k, _, _) in enumerate(COLS)}
 STRUCTURAL = ("fetch", "source", "dtype", "db", "byte", "bit", "node")   # locked while acquisition runs
 ADDRESS_CELLS = ("source", "dtype", "db", "byte", "bit", "node")
+
+# the editors in the cells look like the plain text of the other tables (same row colours, bold text); a frame only while one is focused
+FLAT_EDITORS = """
+QTableWidget QLineEdit, QTableWidget QComboBox, QTableWidget QAbstractSpinBox { border: 0px; background: transparent; }
+QTableWidget QLineEdit:focus, QTableWidget QComboBox:focus, QTableWidget QAbstractSpinBox:focus { border: 1px solid palette(highlight); background: palette(base); }
+QTableWidget QAbstractSpinBox:disabled, QTableWidget QLineEdit:disabled, QTableWidget QComboBox:disabled { background: transparent; }
+"""
+SORT_KEYS = {"fetch": lambda s: not s.enabled, "plot": lambda s: not s.plot, "name": lambda s: natural_key(s.name),
+             "fmt": lambda s: s.fmt, "source": lambda s: s.source, "dtype": lambda s: s.dtype, "db": lambda s: s.db, "byte": lambda s: s.byte,
+             "bit": lambda s: s.bit, "node": lambda s: natural_key(s.node), "offset": lambda s: s.offset_y, "gain": lambda s: s.gain,
+             "share": lambda s: s.share, "color": lambda s: s.color.lower(), "comment": lambda s: natural_key(s.comment)}
 
 RED = "background:#9a2a2a; color:#ffffff;"
 YELLOW = "background:#c9b030; color:#000000;"
@@ -53,7 +64,7 @@ class SymbolPicker(QDialog):
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        standard_table(self.table)
+        standard_table(self.table, sort=True)
         self.table.doubleClicked.connect(self.accept)
         lay.addWidget(self.table)
         row = QHBoxLayout()
@@ -72,16 +83,18 @@ class SymbolPicker(QDialog):
     def _fill(self):
         q = self.filter.text().strip().lower()
         self._shown = [s for s in self.symbols if not q or q in s.name.lower() or q in s.address.lower()][:3000]
+        begin_fill(self.table)
         self.table.setRowCount(len(self._shown))
         for r, s in enumerate(self._shown):
             for c, txt in enumerate((s.name, s.address, s.dtype)):
-                self.table.setItem(r, c, QTableWidgetItem(txt))
+                self.table.setItem(r, c, SortItem(txt))
+        end_fill(self.table)
         self.info.setText(f"{len(self._shown)} z {len(self.symbols)} symboli"
                           if self.symbols else "Brak symboli — zaimportuj je z menu Plik.")
 
     def selected(self) -> list[Symbol]:
         rows = sorted({i.row() for i in self.table.selectedIndexes()})
-        return [self._shown[r] for r in rows]
+        return [self._shown[table_src(self.table, r)] for r in rows]
 
 
 class RowGrip(QHeaderView):
@@ -196,6 +209,12 @@ class SignalsDialog(QDialog):
         self.grip.moved.connect(self.move_row)
         hh = self.table.horizontalHeader()
         standard_table(self.table, fit=False)                # editors in the cells: the widths come from COLS
+        hh.setSectionsClickable(True)
+        hh.setSortIndicatorShown(True)
+        hh.setSortIndicator(-1, Qt.AscendingOrder)
+        hh.sectionClicked.connect(self.sort_by)              # a click on a header sorts the list (= the order of the data columns)
+        self.table.setStyleSheet(FLAT_EDITORS)
+        self._sort_dir, self._sort_col = Qt.AscendingOrder, -1
         hh.setContextMenuPolicy(Qt.CustomContextMenu)
         hh.customContextMenuRequested.connect(self._header_menu)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -466,6 +485,27 @@ class SignalsDialog(QDialog):
         self._last_row = r
         self._cell(r, "name").setFocus()
         self._cell(r, "name").selectAll()
+
+    def sort_by(self, col: int) -> None:
+        """Header click: sorts the signals by that column (ascending, then descending). The order of the list is the order of the data
+        columns, so it is not possible while the acquisition runs."""
+        key = SORT_KEYS.get(COLS[col][0]) if 0 <= col < len(COLS) else None
+        hh = self.table.horizontalHeader()
+        if key is None:
+            return
+        if self.locked:
+            QToolTip.showText(QCursor.pos(), "Kolejność zmiennych zmienisz po zatrzymaniu połączenia (Stop).", self)
+            hh.setSortIndicator(-1, Qt.AscendingOrder)
+            return
+        order = Qt.DescendingOrder if self._sort_col == col and self._sort_dir == Qt.AscendingOrder else Qt.AscendingOrder
+        self._sort_dir, self._sort_col = order, col
+        sigs = sorted(self.signals(), key=key, reverse=order == Qt.DescendingOrder)
+        self.table.setRowCount(0)
+        for s in sigs:
+            self._append(s)
+        hh.setSortIndicator(col, order)
+        self._update_marks()
+        self._refresh_values()
 
     def move_row(self, src: int, dst: int) -> None:
         """Move row `src` so that it ends up at index `dst` (drag & drop on the row-number handle)."""

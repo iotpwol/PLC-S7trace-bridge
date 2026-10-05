@@ -5,7 +5,7 @@ import json
 import os
 
 from PySide6.QtCore import QEvent, QObject, QRect, Qt
-from PySide6.QtGui import QColor, QFont, QGuiApplication, QPalette
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QGuiApplication, QPalette
 from PySide6.QtWidgets import QApplication, QStyle, QStyledItemDelegate, QStyleOptionViewItem, QTableView
 
 from ..core import marker_look, panel_cfg
@@ -267,7 +267,9 @@ class IndentDelegate(QStyledItemDelegate):
     its background and selection stay full width). Cells with an icon / check box are drawn by the stock delegate."""
 
     def sizeHint(self, option, index):
-        s = super().sizeHint(option, index)
+        o = QStyleOptionViewItem(option)
+        o.font.setBold(True)                                      # the text of a cell is bold (like the values in every field)
+        s = super().sizeHint(o, index)
         s.setWidth(s.width() + CELL_INDENT)                       # room for the indent (column auto-fit)
         return s
 
@@ -285,7 +287,9 @@ class IndentDelegate(QStyledItemDelegate):
         group = QPalette.Active if opt.state & QStyle.State_Active else QPalette.Inactive
         role = QPalette.HighlightedText if opt.state & QStyle.State_Selected else QPalette.Text
         painter.save()
-        painter.setFont(opt.font)
+        bold = QFont(opt.font)
+        bold.setBold(True)                                       # the text of a cell is bold
+        painter.setFont(bold)
         pen = opt.palette.color(group if opt.state & QStyle.State_Enabled else QPalette.Disabled, role)
         if role == QPalette.Text and opt.state & QStyle.State_Enabled and index.data(Qt.ForegroundRole) is None:
             pen = QColor(ROW_TEXT["even" if opt.features & QStyleOptionViewItem.Alternate else "odd"])           # the row colours of the theme
@@ -294,7 +298,7 @@ class IndentDelegate(QStyledItemDelegate):
         if opt.features & QStyleOptionViewItem.WrapText:
             painter.drawText(r, flags | int(Qt.TextWordWrap), text)
         else:
-            painter.drawText(r, flags, opt.fontMetrics.elidedText(text, opt.textElideMode, r.width()))
+            painter.drawText(r, flags, QFontMetrics(bold).elidedText(text, opt.textElideMode, r.width()))
         painter.restore()
 
 
