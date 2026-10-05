@@ -215,8 +215,12 @@ Wstrzymuje to widok na żywo (zbieranie trwa dalej) – <b>Wznów</b> wraca do p
 <li><b>Legenda</b> (lewy górny róg) – pokazuje nazwy i kolory sygnałów widocznych na wykresie. Przeciągnij ją myszą, aby zmienić położenie,
 albo wybierz narożnik w Widok → Położenie legendy (ta karta). Pozycja jest zapamiętywana osobno dla każdej karty.
 Podwójne kliknięcie legendy otwiera okno „Sygnały…”. Po najechaniu kursorem na pozycję legendy pojawia się dymek z opisem sygnału (jak w oknie „Sygnały…”: adres, typ, skala, opis, aktualna wartość), a prawy przycisk → „Legenda pokazuje” przełącza napisy między nazwą sygnału a jego adresem / węzłem OPC (ustawienie karty).</li>
-<li><b>V znacznik / H znacznik</b>: kliknięcie na wykresie stawia pionowy / poziomy kursor (maks. 2, przesuwalne);
-w ramce wyświetlane są wartości sygnałów w miejscu kursora, Δt (z częstotliwością) i ΔY.</li>
+<li><b>Znacznik poziomu sygnału</b> (menu Znaczniki): po włączeniu kliknięcie na wykresie stawia poziomy kursor (maks. 2, przesuwalny);
+w ramce wyświetlana jest wartość sygnału w pasie pod linią i różnica ΔY. <b>Różnica sygnału</b> (prawy przycisk → „Dodaj znacznik różnicy poziomu…”)
+pokazuje różnicę wartości jednego sygnału między dwoma momentami.</li>
+<li><b>Oś czasu</b> (panel Zakres okna wykresu): sekundy od startu albo zegar <tt>HH:MM:SS'mmm</tt> – <b>czas aplikacji</b> (komputera) lub <b>czas PLC</b>
+(zegar sterownika = zegar komputera + różnica odczytana przy połączeniu); pokazywane są tylko te części czasu, które wynikają z powiększenia.
+<b>Offset osi [s]</b> koryguje pokazywany czas w lewo / w prawo (przy diagnostyce sygnałów) – nie zmienia danych ani znaczników.</li>
 <li>Pionowa czerwona linia <b>TRIG</b> oznacza chwilę wyzwolenia triggera.</li>
 </ul>
 """))
@@ -257,14 +261,16 @@ aby zmienić okno czasu.</li>
          "<tt>REC_{confname}_{ip}_{tab}_{date}_{time}.csv</tt> w folderze <tt>rec</tt>). Zapis trwa do wyłączenia przycisku lub Stop. "
          "Dodanie zmiennej w trakcie zapisu zaczyna nowy plik (z dodatkową kolumną). Podczas zapisu miga czerwona kropka, "
          "przy wyłączonym REC kropka ma kolor napisu."),
-        ("Punkty", "Pokazuje znaczniki pojedynczych próbek na krzywych."),
-        ("V znacznik / H znacznik", "Tryb stawiania kursorów pionowych / poziomych (patrz „Wykres główny”)."),
-        ("Dodaj znacznik", "Zakłada znacznik na najnowszej próbce (na żywo) albo w środku widocznego zakresu. Przyciski znaczników są w osobnym rzędzie „Znaczniki:” pod wykresem, wszystkie te polecenia są też w menu <b>Znaczniki</b> (Ctrl+Shift+M – dodaj, Ctrl+M – lista, Ctrl+Shift+S – zapisz, Ctrl+F – wyszukiwarka)."),
+        ("Widok → Punkty", "Pokazuje znaczniki pojedynczych próbek na krzywych (ustawienie karty)."),
+        ("Znaczniki → Znacznik poziomu sygnału", "Tryb stawiania poziomych kursorów wartości (patrz „Wykres główny”)."),
+        ("Dodaj znacznik", "Zakłada znacznik na najnowszej próbce (na żywo) albo w środku widocznego zakresu. Przyciski znaczników są w osobnym rzędzie pod wykresem, wszystkie te polecenia są też w menu <b>Znaczniki</b> (Ctrl+Shift+M – dodaj, Ctrl+M – lista, Ctrl+Shift+S – zapisz, Ctrl+F – wyszukiwarka)."),
         ("Lista znaczników…", "Lista znaczników z wyszukiwaniem (tytuł, opis, uwagi, autor, grupa, kolor, priorytet, czas). Znacznik zakładasz prawym "
-         "przyciskiem myszy na wykresie: <b>punkt</b> albo <b>zakres czasu</b> (półprzezroczysty obszar), dla wszystkich przebiegów albo tylko "
+         "przyciskiem myszy na wykresie: <b>punkt</b>, <b>zakres czasu</b> (półprzezroczysty obszar) albo <b>różnica sygnału</b> (dwa momenty jednego "
+         "przebiegu; na wykresie poziom na obu końcach i różnica wartości), dla wszystkich przebiegów albo tylko "
          "wybranych. Ma tytuł, opis, uwagi, kolor, priorytet, grubość i rodzaj linii, przezroczystość obszaru, autora oraz daty założenia i "
          "modyfikacji. Najechanie kursorem pokazuje dymek z opisem; prawy przycisk na znaczniku otwiera jego menu (edycja, zmiana pozycji, "
-         "ukrycie / pokazanie nazwy na wykresie, grupy znaczników, cofnięcie zmiany, usunięcie); znacznik można też przeciągnąć myszą. "
+         "ukrycie / pokazanie nazwy na wykresie, grupy znaczników, cofnięcie zmiany, usunięcie). Znacznik jest <b>zablokowany</b> – przeciągnięcie "
+         "przesuwa wykres; dopiero zaznaczenie „Zmień pozycję znacznika” w jego menu (można odznaczyć) pozwala go przeciągać myszą. "
          "Znaczniki leżą w osobnym pliku (<tt>Dokumenty\\S7Trace\\markers.db</tt>) i trzymają czas bezwzględny, więc pasują do wykresu na żywo, "
          "nagrania z bazy i pliku CSV."),
         ("Zapisz znaczniki", "Znaczniki założone, zmienione lub usunięte na wykresie są <b>robocze</b> (oznaczone gwiazdką), dopóki ich nie "
@@ -283,18 +289,17 @@ aby zmienić okno czasu.</li>
 <tr><td>Stop załączony</td><td>""" + _swatch("#3a3a3a", "#b01818", "Stop") + """</td><td>połączenie zatrzymane</td></tr>
 <tr><td>Pauza załączona</td><td>""" + _swatch("#f2d600", "#000000", "Wznów") + """</td><td>widok wstrzymany</td></tr>
 <tr><td>REC załączony</td><td>""" + _swatch("#ff8c1a", "#ffffff", "<span style='color:#ff2020'>●</span> REC") + """</td><td>trwa zapis; kropka miga (domyślnie 0,5 Hz)</td></tr>
-<tr><td>V / H znacznik, Punkty</td><td>""" + _swatch("#2a82da", "#000000", "V znacznik") + """</td><td>tryb włączony</td></tr>
 </table>
 """))
 
     s.append(("13. Sygnały / Eksport / Import", """
-<h2>Przyciski: Sygnały…, Eksport okna → CSV, Import CSV → wykres</h2>
+<h2>Przyciski: Sygnały…, Diagnostyka… (eksport i import CSV: menu Plik)</h2>
 """ + _img("zal14") + _table([
         ("Sygnały…", "Otwiera okno konfiguracji sygnałów (patrz rozdział „Okno Sygnały do śledzenia”). Działa także podczas pracy."),
         ("Diagnostyka…", "Otwiera okno szczegółowej diagnostyki połączenia (rozdział „Diagnostyka połączenia”). Skrót: Ctrl+D."),
-        ("Eksport okna → CSV", "Zapisuje <b>widoczny</b> fragment wykresu do pliku CSV (nazwa wg szablonu z panelu Trigger). "
+        ("Plik → Eksport okna → CSV…", "Zapisuje <b>widoczny</b> fragment wykresu do pliku CSV (nazwa wg szablonu z panelu Trigger). "
          "Plik zawiera definicje sygnałów w komentarzach <tt># signal:</tt>, więc można go później zaimportować."),
-        ("Import CSV → wykres", "Wczytuje plik CSV na wykres wraz z definicjami sygnałów. Dostępne tylko przy zatrzymanym połączeniu."),
+        ("Plik → Import CSV → wykres…", "Wczytuje plik CSV na wykres wraz z definicjami sygnałów. Dostępne tylko przy zatrzymanym połączeniu."),
     ])))
 
     s.append(("14. Pasek statusu", """

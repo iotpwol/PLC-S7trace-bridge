@@ -31,7 +31,8 @@ DAY_US = 86_400_000_000
 def _device(s: dict) -> dict:
     """The controller of a recording for the browser: one line for the list and every (label, value) row for the details."""
     dev = s.get("device") or {}
-    return {"title": st.device_title(dev), "serial": str((dev.get("info") or {}).get("serial", "")), "lines": st.device_lines(dev)}
+    return {"title": st.device_title(dev), "serial": str((dev.get("info") or {}).get("serial", "")), "lines": st.device_lines(dev),
+            "time_diff": dev.get("time_diff_local")}
 
 class RecError(ValueError):
     """A message that may be shown to the user as it is."""

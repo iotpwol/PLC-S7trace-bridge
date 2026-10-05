@@ -133,6 +133,16 @@ def signal_tip_static(s: "Signal") -> str:
 
 
 LEGEND_MODES = {"name": "Nazwa", "address": "Adres / węzeł OPC"}
+TIME_AXES = {"rel": "Względna [s] (od startu)", "app": "Czas aplikacji (zegar komputera)", "plc": "Czas PLC (zegar sterownika)"}
+TIME_OFFSET_MAX = 86400.0                      # [s] largest correction of the time axis
+
+
+def axis_shift(mode: str, start_epoch: float, plc_diff: float | None, offset: float) -> float:
+    """What the time axis adds to the chart time x (seconds from the start): the offset for the relative axis, otherwise the epoch
+    time of x = 0 on the chosen clock (the computer's, or the controller's = computer + the difference read at connection)."""
+    if mode == "rel":
+        return float(offset)
+    return float(start_epoch) + (float(plc_diff or 0.0) if mode == "plc" else 0.0) + float(offset)
 
 
 def legend_text(s: "Signal", mode: str) -> str:

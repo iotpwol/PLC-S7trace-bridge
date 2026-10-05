@@ -131,7 +131,7 @@ window.openEditor = async (id) => {
   $("e-name").value = d.name; $("e-ip").value = d.ip; $("e-rack").value = d.rack; $("e-slot").value = d.slot;
   $("e-cycle").value = d.cycle_ms; $("e-window").value = d.window_s;
   $("e-device").innerHTML = (d.device || []).map(([a, b]) => `<tr><th>${esc(a)}</th><td>${esc(b)}</td></tr>`).join("") || '<tr><td class="muted">Brak danych sterownika – pojawią się po pierwszym połączeniu.</td></tr>';
-  $("e-ylayout").value = d.y_layout || "lanes"; $("e-autoy").checked = d.auto_y !== false; $("e-ymin").value = d.y_min ?? 0; $("e-ymax").value = d.y_max ?? 10; $("e-points").checked = !!d.show_points; $("e-legend").value = d.legend_mode || "name";
+  $("e-ylayout").value = d.y_layout || "lanes"; $("e-autoy").checked = d.auto_y !== false; $("e-ymin").value = d.y_min ?? 0; $("e-ymax").value = d.y_max ?? 10; $("e-points").checked = !!d.show_points; $("e-legend").value = d.legend_mode || "name"; $("e-taxis").value = d.time_axis || "rel"; $("e-toff").value = d.time_offset || 0;
   fillSelect($("e-type"), d.options.conn_types, d.conn_type); fillSelect($("e-mode"), d.options.modes, d.mode || d.options.modes[0]);
   $("e-delete").hidden = !id;
   $("e-sig").tBodies[0].innerHTML = ""; d.signals.forEach(addSigRow);
@@ -196,7 +196,7 @@ function collectSignals() {
 $("e-form").addEventListener("submit", async (e) => {
   e.preventDefault(); $("e-error").textContent = "";
   const body = { name: $("e-name").value, window_s: +$("e-window").value, y_layout: $("e-ylayout").value, auto_y: $("e-autoy").checked,
-    y_min: +$("e-ymin").value, y_max: +$("e-ymax").value, show_points: $("e-points").checked, legend_mode: $("e-legend").value,
+    y_min: +$("e-ymin").value, y_max: +$("e-ymax").value, show_points: $("e-points").checked, legend_mode: $("e-legend").value, time_axis: $("e-taxis").value, time_offset: +$("e-toff").value || 0,
     trigger: { enabled: $("t-enabled").checked, signal: $("t-signal").value, mode: $("t-mode").value, a: +$("t-a").value, b: +$("t-b").value,
                hysteresis: +$("t-h").value, pretrigger: +$("t-pre").value, action: $("t-action").value, filename: $("t-file").value } };
   if (!editing.recording) body.rec = { target: $("r-target").value, mode: $("r-mode").value, filename: $("r-file").value };
@@ -299,7 +299,7 @@ function paint() {
 // one lane per signal, scaled to its own min..max of the shown range; steps (the value holds until the next change).
 // o.layout "offset": one common area, value x gain + offset on one Y axis (auto min..max of all signals or o.yMin..o.yMax); o.points: sample points.
 function drawChart(cv, ds, t0, t1, o) {
-  const g = cv.getContext("2d"), W = cv.width, H = cv.height, pad = { l: 60, r: 10, t: 8, b: 24 }, n = ds.names.length;
+  const g = cv.getContext("2d"), W = cv.width, H = cv.height, pad = { l: 60, r: 10, t: 8, b: o.clock ? 40 : 24 }, n = ds.names.length;
   g.fillStyle = "#000"; g.fillRect(0, 0, W, H); g.font = "12px sans-serif"; g.strokeStyle = "#333"; g.fillStyle = "#aaa";
   cv._geo = null; cv._ds = ds;
   if (!n || !ds.t.length) { g.fillText(o.empty || "Brak danych.", 70, 30); return; }
@@ -358,8 +358,9 @@ function drawChart(cv, ds, t0, t1, o) {
   if (o.mk) mkPaint(g, cv, o.mk, cv._geo, lanes);                                    // markers (bookmarks) over the curves
   g.strokeStyle = "#ff4d4d"; g.fillStyle = "#ff4d4d"; g.lineWidth = 1; g.setLineDash([5, 4]);
   for (const t of o.markers || []) { if (t < t0 || t > t1) continue; const x = X(t); g.beginPath(); g.moveTo(x, pad.t); g.lineTo(x, H - pad.b); g.stroke(); g.fillText("T", x + 3, H - pad.b - 4); }
-  g.setLineDash([]); g.fillStyle = "#aaa"; g.fillText(o.left || "", pad.l, H - 6);
-  if (o.right) { const w = g.measureText(o.right).width; g.fillText(o.right, W - pad.r - w, H - 6); }
+  g.setLineDash([]); g.fillStyle = "#aaa";
+  if (o.clock) cxAxis(g, cv._geo, o.clock);                                           // a clock axis (server / PLC time) replaces the "-200 s ... teraz" labels
+  else { g.fillText(o.left || "", pad.l, H - 6); if (o.right) { const w = g.measureText(o.right).width; g.fillText(o.right, W - pad.r - w, H - 6); } }
   if (cv._cx) cxPaint(g, cv);                                                        // cursors V1/V2, H1/H2 and their read-out
   if (o.legend) o.legend.innerHTML = ds.names.map((nm, k) => { const last = [...(ds.values[k] || [])].reverse().find((x) => x !== null && x !== undefined), tip = (ds.tips?.[k] || "Nazwa: " + nm) + "\nAktualna wartość: " +(last === undefined ? "—" : +(+last).toPrecision(8));
     return `<span title="${esc(tip)}"><i style="background:${colors[k] || COLORS[k % COLORS.length]}"></i>${esc(cxLegend(cv, ds, k))}</span>`; }).join("");

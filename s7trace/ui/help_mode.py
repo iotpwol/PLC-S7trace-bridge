@@ -40,6 +40,12 @@ def _rich(text: str) -> str:
     return "<div style='white-space:normal; max-width:420px'>" + "<br>".join(lines) + "</div>"
 
 
+def is_bubble(w: QWidget) -> bool:
+    """The tooltip window itself (the bubble can end up under the cursor): describing it would put the bubble text into a new bubble,
+    which doubled on every poll and hung the program."""
+    return bool(w.window().windowFlags() & Qt.ToolTip == Qt.ToolTip) or w.window().metaObject().className() == "QTipLabel"
+
+
 def caption_of(w: QWidget) -> str:
     if isinstance(w, QGroupBox):
         return w.title()
@@ -66,7 +72,7 @@ def _form_label(w: QWidget) -> str:
 
 def help_for(w: QWidget, gpos: QPoint) -> str:
     """The bubble text for the widget under the mouse ('' = nothing to show)."""
-    if w is None:
+    if w is None or is_bubble(w):
         return ""
     explicit = w.property("help")
     if explicit:
@@ -151,6 +157,8 @@ class HelpMode(QObject):
     def _poll(self) -> None:
         pos = QCursor.pos()
         w = QApplication.widgetAt(pos)
+        if w is not None and is_bubble(w):                       # the cursor is over the bubble: keep it as it is
+            return
         text = help_for(w, pos) if w is not None else ""
         key = (id(w), text, pos.x() // 24, pos.y() // 12)
         if key == self._last:

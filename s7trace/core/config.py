@@ -9,7 +9,7 @@ from .drivers import conn_defaults
 from .planner import MODE_BLOCKS
 from .store import StoreConfig
 from .trigger import DEFAULT_REC_NAME, OLD_SNAPSHOT_NAME, DEFAULT_SNAPSHOT_NAME, TriggerConfig
-from .types import Signal
+from .types import TIME_OFFSET_MAX, Signal
 
 
 def _known_documents() -> str:
@@ -66,6 +66,8 @@ class TabConfig:
     y_layout: str = "lanes"        # "lanes" = every signal in its own band (Share), "offset" = Offset Y + Gain
     legend_mode: str = "name"      # what the chart legend shows: "name" or "address" (the OPC node for OPC / Web sources)
     legend_pos: list = field(default_factory=lambda: [0.0, 0.0])    # per tab: (0,0) top-left ... (1,1) bottom-right
+    time_axis: str = "rel"         # labels of the time axis: "rel" (seconds from the start) / "app" (computer clock) / "plc" (controller clock)
+    time_offset: float = 0.0       # [s] correction added to the time shown on the axis (diagnostics: aligning two clocks)
     rec_folder: str = "rec"        # REC recordings
     rec_filename: str = DEFAULT_REC_NAME
     store: StoreConfig = field(default_factory=StoreConfig)    # REC target (CSV / SQLite / InfluxDB / TimescaleDB) + mode
@@ -87,7 +89,7 @@ class TabConfig:
             c.conn = {**conn_defaults(), **d["conn"]}
         for k in ("name", "conf_name", "conn_type", "ip", "rack", "slot", "cycle_ms", "mode", "window_s", "auto_y",
                   "y_min", "y_max", "show_points", "autonumber", "name_mode", "own_name", "offset_step",
-                  "y_layout", "legend_pos", "legend_mode", "rec_folder", "rec_filename"):
+                  "y_layout", "legend_pos", "legend_mode", "time_axis", "time_offset", "rec_folder", "rec_filename"):
             if k in d:
                 setattr(c, k, d[k])
         if d.get("signals"):
@@ -104,6 +106,12 @@ class TabConfig:
             c.y_layout = "lanes"
         if c.legend_mode not in ("name", "address"):
             c.legend_mode = "name"
+        if c.time_axis not in ("rel", "app", "plc"):
+            c.time_axis = "rel"
+        try:
+            c.time_offset = max(-TIME_OFFSET_MAX, min(TIME_OFFSET_MAX, float(c.time_offset)))
+        except (TypeError, ValueError):
+            c.time_offset = 0.0
         return c
 
 

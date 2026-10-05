@@ -435,14 +435,11 @@ def test_range_marker_drawn_as_translucent_area_and_dragged(tab, monkeypatch):
     assert tuple(round(x, 3) for x in tab.plot.mitems[m.id]["main"].getRegion()) == (110.0, 170.0)
     tip = tab.plot.mitems[m.id]["data"]["tip"]
     assert "Od:" in tip and "Do:" in tip and "Zakres czasu" in tip
-    # the V1 / V2 cursors offer a range marker in the chart menu
-    tab.plot.set_v_mode(True)
-    tab.plot._add_marker(tab.plot.vmarks, 20.0, 90)
-    tab.plot._add_marker(tab.plot.vmarks, 40.0, 90)
     labels = []
     monkeypatch.setattr(ctl, "_run_menu", lambda menu, pos: labels.extend(x.text() for x in menu.actions()))
     ctl.chart_menu(50.0, None)
-    assert any("V1" in t for t in labels) and any("zakresu czasu" in t for t in labels) and "Zapisz znaczniki (1)…" in labels
+    assert any("zakresu czasu" in t for t in labels) and "Zapisz znaczniki (1)…" in labels
+    assert "Dodaj znacznik różnicy poziomu…" in labels and not any("V1" in t for t in labels)    # the V cursors are gone
 
 
 def test_line_width_style_and_area_transparency(tab, monkeypatch):
@@ -772,3 +769,146 @@ def test_help_mode_describes_elements(app, monkeypatch):
     assert seen == [True, False]
     d.close()
     tab.shutdown()
+
+
+# ---------------------------------------------------------- 'Różnica sygnału' (a level difference of ONE signal)
+def test_delta_marker_needs_exactly_one_signal(tmp_path):
+    store_ = mk.MarkerStore(str(tmp_path / "d.db"))
+    base = 1_800_000_000_000_000
+    for bad in ([], ["A", "B"]):
+        with pytest.raises(mk.MarkerError):
+            store_.add(base, kind="delta", end_us=base + 10, signals=bad)
+    d = store_.add(base + 20, kind="delta", end_us=base + 5, signals=["A"])
+    assert d.kind == "delta" and (d.at_us, d.end_us) == (base + 5, base + 20) and d.last_us == base + 20     # ends put in order
+    with pytest.raises(mk.MarkerError):
+        store_.update(d.id, {"signals": ["A", "B"]})                    # also a later change keeps the rule
+    assert store_.update(d.id, {"signals": ["B"]}).signals == ["B"]
+    assert store_.search(t0_us=base + 18)                                   # found by its end like a range
+
+
+def test_delta_dialog_forces_one_selected_signal(tab, app):
+    ctl = tab.mk
+    m = mk.Marker(kind="point", at_us=ctl.to_wall(10.0))
+    d = mu.MarkerEditDialog(m, True, tab, ["Temp", "Run"], [])
+    d.cb_kind.setCurrentIndex(d.cb_kind.findData("delta"))
+    assert d.rb_sel.isChecked() and not d.rb_all.isEnabled() and not d.dt2.isHidden() and d.w_transp.isHidden()
+    d.lst.item(0).setCheckState(Qt.Checked)
+    d.lst.item(1).setCheckState(Qt.Checked)                                  # a second tick moves the choice, it does not add
+    assert [d.lst.item(i).checkState() == Qt.Checked for i in range(2)] == [False, True]
+    d.cb_kind.setCurrentIndex(d.cb_kind.findData("range"))
+    assert d.rb_all.isEnabled()
+
+
+def test_delta_marker_draws_difference_and_menu_offers_it(tab, monkeypatch):
+    ctl = tab.mk
+    plot = tab.plot
+    b, t = plot._lane_geo[0]                                                 # the lane of Temp
+    plot.ctx_y = (b + t) / 2
+    assert ctl.level_signal() == "Temp"
+    labels = {}
+    monkeypatch.setattr(ctl, "_run_menu", lambda menu, pos: labels.update({x.text(): x for x in menu.actions()}))
+    ctl.chart_menu(100.0, None)
+    assert labels["Dodaj znacznik różnicy poziomu…"].isEnabled()
+    _accept(monkeypatch, title="Wzrost")
+    m = ctl.add_at_us(ctl.to_wall(100.0), end_us=ctl.to_wall(160.0), signals=[ctl.level_signal()], kind="delta")
+    assert m.kind == "delta" and m.signals == ["Temp"]
+    plot.refresh(force=True)
+    want = 10 * (np.sin(160 / 40) - np.sin(100 / 40))
+    texts = [e.toPlainText() for e in plot._delta_items if hasattr(e, "toPlainText")]
+    assert len(texts) == 1 and texts[0].startswith(f"Δ = {want:+.5g}")
+    assert "Różnica sygnału" in plot.mitems[m.id]["data"]["tip"]
+    assert plot.mitems[m.id]["main"].brush.color().alpha() == 0              # no area, only the bars and the arrow
+    ctl.delete(m.id)
+    assert not plot._delta_items                                              # the overlay disappears with the marker
+    ctl.dlg and ctl.dlg.shutdown()
+
+
+def test_level_marker_and_points_are_menu_items(app):
+    from s7trace.ui.main_window import MainWindow
+    w = MainWindow()
+    try:
+        t = w.tabs.currentWidget() or w.new_tab()
+        assert not hasattr(t, "btn_v") and not hasattr(t, "btn_h") and not hasattr(t, "btn_pts")
+        w.act_hlevel.setChecked(True)
+        w.act_points.setChecked(True)
+        assert t.act_hlev.isChecked() and t.plot.h_mode and t.act_pts.isChecked() and t.plot.show_points
+        t2 = w.new_tab()                                                     # another tab has its own state: the menu follows it
+        assert not w.act_hlevel.isChecked() and not w.act_points.isChecked()
+        w.tabs.setCurrentIndex(0)
+        assert w.act_hlevel.isChecked() and w.act_points.isChecked()
+        assert w.act_hlevel.text().startswith("Znacznik poziomu sygnału") and "Punkty" in w.act_points.text()
+    finally:
+        w.close()
+
+
+# ---------------------------------------------------------- markers are locked until 'Zmień pozycję znacznika' is ticked
+def test_markers_are_locked_until_unlocked_in_the_menu(tab, monkeypatch):
+    ctl = tab.mk
+    _accept(monkeypatch, title="p")
+    p = ctl.add_at_us(ctl.to_wall(50.0))
+    _accept(monkeypatch, title="r", kind="range")
+    r = ctl.add_at_us(ctl.to_wall(100.0), end_us=ctl.to_wall(160.0))
+    plot = tab.plot
+    assert not plot.mitems[p.id]["main"].movable and not plot.mitems[r.id]["main"].movable   # a drag pans the chart, not the marker
+    acts = {}
+    monkeypatch.setattr(ctl, "_run_menu", lambda menu, pos: acts.update({x.text(): x for x in menu.actions()}))
+    ctl.marker_menu(r.id, None)
+    a = acts["Zmień pozycję znacznika"]
+    assert a.isCheckable() and not a.isChecked()
+    a.setChecked(True)                                                       # ticked: this marker can be dragged
+    assert plot.mitems[r.id]["main"].movable and not plot.mitems[p.id]["main"].movable
+    ctl.sync(True)                                                           # a redraw / rebuild keeps the unlock
+    assert plot.mitems[r.id]["main"].movable
+    acts.clear()
+    ctl.marker_menu(r.id, None)
+    assert acts["Zmień pozycję znacznika"].isChecked()
+    acts["Zmień pozycję znacznika"].setChecked(False)
+    assert not plot.mitems[r.id]["main"].movable
+    ctl.dlg and ctl.dlg.shutdown()
+
+
+# ---------------------------------------------------------- the time axis: seconds / computer clock / PLC clock, with an offset
+def test_time_axis_clock_modes_and_offset(tab):
+    ax = tab.plot.plot.getAxis("bottom")
+    ov = tab.plot.ov.getAxis("bottom")
+    t0 = START.timestamp()
+    assert ax.mode == "rel" and ax.shift == 0 and ax.tickStrings([10.0, 20.0], 1, 10) == ["10s", "20s"]
+    tab.cb_taxis.setCurrentIndex(tab.cb_taxis.findData("app"))
+    assert ax.mode == "app" and ov.mode == "app" and abs(ax.shift - t0) < 1e-6 and tab.cfg.time_axis == "app"
+    v = ax.tickValues(0, 10, 800)[0]
+    assert ax.tickStrings(v[1][:2], 1, v[0]) == ["10:00:00", "10:00:02"]                    # whole seconds on round clock values
+    assert ax.tickStrings([0.0], 1, 1.0) == ["10:00:00"] and ax.tickStrings([0.25], 1, 0.05) == ["10:00:00'250"]
+    assert ax.tickStrings([0.0], 1, 60.0) == ["10:00"]                                      # only as much as the zoom needs
+    tab.sp_toff.setValue(1.5)                                                               # the axis is corrected by +1.5 s
+    assert abs(ax.shift - (t0 + 1.5)) < 1e-6 and ax.tickStrings([0.0], 1, 0.5) == ["10:00:01'500"]
+    tab.device = {"method": "s7", "info": {"family": "S7-1500"}, "time_diff_local": 2.0}
+    tab.cb_taxis.setCurrentIndex(tab.cb_taxis.findData("plc"))                              # controller clock = computer + difference
+    assert abs(ax.shift - (t0 + 2.0 + 1.5)) < 1e-6 and ax.tickStrings([0.0], 1, 0.5) == ["10:00:03'500"]
+    tab.cb_taxis.setCurrentIndex(tab.cb_taxis.findData("rel"))
+    assert ax.mode == "rel" and ax.shift == 1.5 and ax.tickStrings([10.0], 1, 0.5) == ["11.5s"]
+    c = tab.to_config()
+    assert (c.time_axis, c.time_offset) == ("rel", 1.5)
+    from s7trace.core.config import TabConfig as TC
+    c2 = TC.from_dict({**c.to_dict(), "time_axis": "zzz", "time_offset": "x"})
+    assert (c2.time_axis, c2.time_offset) == ("rel", 0.0)
+    ticks = ax.tickValues(0, 30, 800)
+    assert ticks and all(abs((x + 1.5) / ticks[0][0] - round((x + 1.5) / ticks[0][0])) < 1e-9 for x in ticks[0][1])   # ticks on the shifted scale
+
+
+def test_help_bubble_under_the_cursor_is_not_described_again(tab, monkeypatch):
+    """The bubble of the help mode ended up under the cursor, was described as an element and the new bubble contained the old one: the
+    text doubled on every poll and the program hung."""
+    from PySide6.QtCore import QPoint
+    from s7trace.ui import help_mode as hmod
+    QToolTip.showText(QPoint(200, 200), "Opis testowy", tab)
+    QApplication.processEvents()
+    bubble = next((w for w in QApplication.topLevelWidgets() if w.metaObject().className() == "QTipLabel" and w.isVisible()), None)
+    assert bubble is not None and hmod.is_bubble(bubble) and hmod.help_for(bubble, QPoint(200, 200)) == ""
+    hm = hmod.instance()
+    shown = []
+    monkeypatch.setattr(hmod.QToolTip, "showText", lambda *a: shown.append(a))
+    monkeypatch.setattr(hmod.QApplication, "widgetAt", staticmethod(lambda pos: bubble))
+    for _ in range(5):
+        hm._poll()
+    assert not shown                                                         # nothing new is shown while the cursor is on the bubble
+    QToolTip.hideText()

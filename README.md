@@ -95,8 +95,8 @@ Typy: BOOL, BYTE, SINT, USINT, WORD, INT, UINT, DWORD, DINT, UDINT, REAL, LREAL.
   (build-portable.ps1 sprawdza, który działa w paczce).
 * REC (CSV): ciągły zapis; folder (domyślnie `rec`) i nazwa pliku (domyślnie
   `REC_{confname}_{ip}_{tab}_{date}_{time}.csv`) ustawia się w panelu po lewej pod blokiem Trigger.
-* Punkty: znaczniki próbek. V / H znacznik: kliknięcie na wykresie stawia kursor (max 2), odczyt wartości i Δ.
-* CSV: `Eksport okna → CSV`, `Import CSV → wykres` (CSV zapisuje definicje sygnałów w komentarzach `# signal:`).
+* Widok → Punkty: znaczniki próbek. Znaczniki → „Znacznik poziomu sygnału”: kliknięcie na wykresie stawia poziomy kursor (max 2), odczyt wartości i ΔY. Oś czasu (panel „Zakres okna wykresu”): sekundy od startu / czas aplikacji / czas PLC jako `HH:MM:SS'mmm` (zakres opisu zależy od powiększenia) + „Offset osi [s]” do korekty zegarów. Znaczniki są domyślnie zablokowane (przeciągnięcie przesuwa wykres) – przeciągać można je po zaznaczeniu „Zmień pozycję znacznika” w ich menu.
+* CSV: menu Plik → `Eksport okna → CSV`, `Import CSV → wykres` (CSV zapisuje definicje sygnałów w komentarzach `# signal:`). Wczytanie nagrania z bazy do karty ustawia też adres, rack/slot, metodę i dane sterownika zapisane w nagraniu.
 * Symbole (Plik → Importuj symbole): tablica tagów TIA (.xlsx/.csv), źródło DB z TIA (.db/.scl) i XML,
   Step 7 (.sdf/.asc/.seq). Potem „Sygnały… → Z symboli…”.
   Offsety w DB liczone według zasad wyrównania S7 dla bloków nieoptymalizowanych.

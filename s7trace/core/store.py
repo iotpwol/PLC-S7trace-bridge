@@ -289,6 +289,8 @@ def device_summary(device: dict | None, ip: str = "") -> dict:
     if not info:
         return {}
     out = {"ip": ip or d.get("ip", ""), "method": d.get("method", ""), "rack": d.get("rack", 0), "slot": d.get("slot", 2)}
+    if isinstance(d.get("time_diff_local"), (int, float)):
+        out["time_diff_local"] = float(d["time_diff_local"])      # PLC clock minus the computer's: the 'Czas PLC' axis of a loaded recording
     out["info"] = {str(k): (v if isinstance(v, (int, float, bool)) or v is None else str(v)) for k, v in info.items()}
     return out
 

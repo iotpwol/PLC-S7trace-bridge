@@ -64,9 +64,8 @@ def main():
         print("state", tab.state, "samples", len(tab.buffer), tab.lbl_status.text())
         w.grab().save(os.path.join(out, f"{scenario}.png"))
         if scenario == "run":
-            tab.btn_v.setChecked(True)
-            tab.plot._add_marker(tab.plot.vmarks, tab.plot.view_range()[1] - 8, 90)
-            tab.plot._add_marker(tab.plot.vmarks, tab.plot.view_range()[1] - 3, 90)
+            tab.act_hlev.setChecked(True)
+            tab.plot._add_marker(tab.plot.hmarks, 0.5, 0)
             tab.plot.update_readout()
             tab.stop()
             spin(1.5)

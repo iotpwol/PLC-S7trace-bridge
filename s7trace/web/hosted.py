@@ -333,9 +333,10 @@ class HostedConnection:
                 "gains": [float(s.gain) for s in self.signals], "dtypes": [s.dtype for s in self.signals],
                 "offsets": [float(s.offset_y) for s in self.signals],
                 "addresses": [s.address for s in self.signals], "tips": [signal_tip_static(s) for s in self.signals],
-                "layout": {"legend_mode": self.cfg.legend_mode, "y_layout": self.cfg.y_layout, "auto_y": self.cfg.auto_y, "y_min": self.cfg.y_min,
+                "layout": {"legend_mode": self.cfg.legend_mode, "time_axis": self.cfg.time_axis, "time_offset": self.cfg.time_offset, "y_layout": self.cfg.y_layout, "auto_y": self.cfg.auto_y, "y_min": self.cfg.y_min,
                            "y_max": self.cfg.y_max, "show_points": self.cfg.show_points},
                 "last": float(last), "state": self.state,
+                "plc_diff": (self.device or {}).get("time_diff_local"),            # PLC clock minus the server's [s] (axis "Czas PLC")
                 "start_us": int(self.start_wall.timestamp() * 1e6)}
 
 

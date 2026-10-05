@@ -77,7 +77,7 @@ def test_points_are_drawn_only_below_the_limit(app):
 
 def test_the_status_line_explains_why_points_vanished(app):
     tab = _tab()
-    tab.btn_pts.setChecked(True)
+    tab.act_pts.setChecked(True)
     tab.plot.refresh(force=True)
     tab._update_status()
     assert "Punkty ukryte" in tab.lbl_status.text()

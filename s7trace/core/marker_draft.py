@@ -82,7 +82,7 @@ class MarkerDraft:
         cur = self.get(mid)
         if cur is None:
             raise KeyError(mid)
-        merged = mk._fix_range(dict(f), cur) if {"kind", "at_us", "end_us"} & set(f) else dict(f)
+        merged = mk._fix_range(dict(f), cur) if {"kind", "at_us", "end_us", "signals"} & set(f) else dict(f)
         f = {**f, **{k: merged[k] for k in ("kind", "at_us", "end_us") if k in merged}}
         m = dataclasses.replace(cur, **f, modified_us=mk.now_us(), modified_by=by[:mk.LIMITS["author"]])
         if mid < 0:

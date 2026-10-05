@@ -1,6 +1,7 @@
 "use strict";
 // Chart tools shared by the live chart and the recording view (the counterparts of the desktop program):
-//  - cursors V1/V2 (time, Δt, frequency, values of the signals) and H1/H2 (value in the lane under the line, ΔY),
+//  - "Znacznik poziomu sygnału" = cursors H1/H2 (value in the lane under the line, ΔY),
+//  - the time axis of the chart: seconds from the start (as before) or a clock HH:MM:SS'mmm of the server / the PLC with a +- offset,
 //  - zoom with Ctrl + mouse wheel, pan by dragging, Shift + drag = zoom to the selected range,
 //  - overview strip of the whole data with the shown range (drag it, click to centre, drag an edge to resize),
 //  - "Punkty" (sample points) and the chart layout (lanes by Share / offset Y + gain) for this viewer.
@@ -10,7 +11,7 @@ const CX_MIN_WINDOW = 0.1;
 const CX_NUM = (v) => String(+(+v).toPrecision(5));
 
 function cxAttach(cv, cfg) {
-  const st = cv._cx = { vOn: false, hOn: false, v: [], h: [], layout: "", legend: "", points: null, cfg, drag: null, pan: null };
+  const st = cv._cx = { hOn: false, h: [], layout: "", legend: "", taxis: "", toff: null, points: null, cfg, drag: null, pan: null };
   const px = (ev) => { const r = cv.getBoundingClientRect(); return [(ev.clientX - r.left) * cv.width / r.width, (ev.clientY - r.top) * cv.height / r.height]; };
   const geo = () => cv._geo;
   const tAt = (x) => { const g = geo(); return g.t0 + Math.min(Math.max((x - g.pad.l) / (g.W - g.pad.l - g.pad.r), 0), 1) * (g.t1 - g.t0); };
@@ -23,7 +24,6 @@ function cxAttach(cv, cfg) {
   };
   const hit = (x, y) => {                                    // a cursor line under the mouse
     const g = geo(), tol = 6 * cv.width / cv.getBoundingClientRect().width;
-    for (let i = 0; i < st.v.length; i++) if (Math.abs(xOf(st.v[i]) - x) <= tol) return { kind: "v", i };
     for (let i = 0; i < st.h.length; i++) if (Math.abs(yOf(st.h[i]) - y) <= tol) return { kind: "h", i };
     return null;
   };
@@ -37,7 +37,7 @@ function cxAttach(cv, cfg) {
   window.addEventListener("mousemove", (e) => {
     if (st.drag) {
       const [x, y] = px(e), g = geo(); if (!g) return;
-      if (st.drag.kind === "v") st.v[st.drag.i] = tAt(x); else st.h[st.drag.i] = Math.min(Math.max((y - g.pad.t) / (g.H - g.pad.t - g.pad.b), 0), 1);
+      st.h[st.drag.i] = Math.min(Math.max((y - g.pad.t) / (g.H - g.pad.t - g.pad.b), 0), 1);
       cfg.redraw(); return;
     }
     const p = st.pan; if (!p || !geo()) return;
@@ -59,15 +59,14 @@ function cxAttach(cv, cfg) {
     }
     if (p.moved || cfg.busy() || e.target !== cv) return;
     const g = geo();                                         // a click: a new cursor in the active mode
-    if (st.vOn) { st.v.push(tAt(x)); if (st.v.length > 2) st.v.shift(); }
     if (st.hOn) { st.h.push(Math.min(Math.max((y - g.pad.t) / (g.H - g.pad.t - g.pad.b), 0), 1)); if (st.h.length > 2) st.h.shift(); }
-    if (st.vOn || st.hOn) cfg.redraw();
+    if (st.hOn) cfg.redraw();
   });
   cv.addEventListener("mousemove", (e) => {
     if (st.pan?.moved || st.drag || !geo()) return;
     const [x, y] = px(e), h = hit(x, y);
-    if (h) cv.style.cursor = h.kind === "v" ? "col-resize" : "row-resize";
-    else if (!cv.style.cursor || cv.style.cursor === "col-resize" || cv.style.cursor === "row-resize") cv.style.cursor = st.vOn || st.hOn ? "crosshair" : "";
+    if (h) cv.style.cursor = "row-resize";
+    else if (!cv.style.cursor || cv.style.cursor === "col-resize" || cv.style.cursor === "row-resize") cv.style.cursor = st.hOn ? "crosshair" : "";
   });
   cv.addEventListener("wheel", (e) => {
     if (!geo() || !(e.ctrlKey || e.metaKey)) return; e.preventDefault();      // Ctrl + wheel: plain wheel keeps scrolling the page
@@ -78,30 +77,39 @@ function cxAttach(cv, cfg) {
   return st;
 }
 
+// ---- time axis: the clock of the server ("app") or of the PLC ("plc") + the offset; null = seconds from the start (labels drawn by app.js)
+const CX_NICE = [0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200, 86400];
+function cxClock(cv, ds) {
+  const st = cv._cx || {}, d = (ds && ds.layout) || {}, mode = st.taxis || d.time_axis || "rel";
+  if (mode === "rel" || !ds || !ds.start_us) return null;
+  const off = st.toff !== null && st.toff !== undefined ? st.toff : (+d.time_offset || 0), diff = ds.plc_diff ?? ds.device?.time_diff;
+  return { mode, shift: ds.start_us / 1e6 + (mode === "plc" ? +diff || 0 : 0) + off, noPlc: mode === "plc" && (diff === null || diff === undefined) };
+}
+function cxAxis(g, geo, clock) {   // ticks on whole clock seconds / minutes; only as many parts of the time as the zoom needs
+  const { t0, t1, pad, W, H } = geo, span = t1 - t0, wpx = W - pad.l - pad.r; if (!(span > 0)) return;
+  const sp = CX_NICE.find((n) => span / n <= Math.max(wpx / 120, 1)) || 86400, tz = new Date((clock.shift + t0) * 1000).getTimezoneOffset() * 60;
+  const first = Math.ceil((t0 + clock.shift - tz) / sp), last = Math.min(Math.floor((t1 + clock.shift - tz) / sp), first + 400), p = (n, l = 2) => String(n).padStart(l, "0");
+  g.save(); g.font = "11px sans-serif"; g.fillStyle = "#aaa"; g.strokeStyle = "#777"; g.textAlign = "center"; g.lineWidth = 1;
+  for (let k = first; k <= last; k++) {
+    const x = pad.l + (k * sp - clock.shift + tz - t0) / span * wpx, d = new Date(Math.round(k * sp * 1000));        // (the local clock read with the UTC getters)
+    const hm = `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`;
+    g.beginPath(); g.moveTo(x, H - pad.b); g.lineTo(x, H - pad.b + 4); g.stroke();
+    g.fillText(sp >= 60 ? hm : sp >= 1 ? `${hm}:${p(d.getUTCSeconds())}` : `${hm}:${p(d.getUTCSeconds())}'${p(d.getUTCMilliseconds(), 3)}`, x, H - pad.b + 16);
+  }
+  if (clock.noPlc) { g.fillStyle = "#e0a030"; g.fillText("brak czasu PLC – pokazano czas serwera", pad.l + wpx / 2, H - 4); }
+  g.restore();
+}
+
 // ---- cursors on the chart
 function cxPaint(g, cv) {
-  const st = cv._cx, geo = cv._geo, ds = cv._ds; if (!st || !geo || (!st.v.length && !st.h.length)) return;
-  const { t0, t1, pad, W, H } = geo, X = (t) => pad.l + (t - t0) / ((t1 - t0) || 1) * (W - pad.l - pad.r), lines = [];
+  const st = cv._cx, geo = cv._geo, ds = cv._ds; if (!st || !geo || !st.h.length) return;
+  const { t0, t1, pad, W, H } = geo, lines = [];
   g.save(); g.lineWidth = 1; g.setLineDash([6, 4]); g.font = "12px sans-serif";
-  st.v.forEach((t, i) => {
-    if (t < t0 || t > t1) return;
-    g.strokeStyle = g.fillStyle = "#ffffff"; g.beginPath(); g.moveTo(X(t), pad.t); g.lineTo(X(t), H - pad.b); g.stroke(); g.fillText("V" + (i + 1), X(t) + 3, pad.t + 12);
-  });
   st.h.forEach((f, i) => {
     const y = pad.t + f * (H - pad.t - pad.b);
     g.strokeStyle = g.fillStyle = "#ffd24a"; g.beginPath(); g.moveTo(pad.l, y); g.lineTo(W - pad.r, y); g.stroke(); g.fillText("H" + (i + 1), pad.l + 3, y - 3);
   });
   g.restore();
-  st.v.forEach((t, i) => {
-    let vals = "";
-    if (ds && ds.t.length) {
-      let lo = 0, hi = ds.t.length - 1; if (t < ds.t[0]) hi = -1;
-      while (lo < hi) { const m = (lo + hi + 1) >> 1; if (ds.t[m] <= t) lo = m; else hi = m - 1; }
-      if (hi >= 0) vals = "  " + ds.names.map((nm, k) => { const v = (ds.values[k] || [])[lo]; return nm + "=" + (v === null || v === undefined ? "–" : CX_NUM(v)); }).join("  ");
-    }
-    lines.push(`V${i + 1}: t=${t.toFixed(3)} s${vals}`);
-  });
-  if (st.v.length === 2) { const dt = st.v[1] - st.v[0]; lines.push(`Δt = ${dt.toFixed(3)} s` + (dt ? `  (${(1 / Math.abs(dt)).toFixed(3)} Hz)` : "")); }
   const hv = st.h.map((f) => {
     const y = pad.t + f * (H - pad.t - pad.b);
     for (const l of geo.lanes || []) if (y >= l.top && y <= l.bot && l.bot > l.top) return { name: geo.offsetMode ? "y" : l.name, v: l.lo + (l.bot - 3 - y) / (l.bot - l.top - 6) * l.span };
@@ -120,7 +128,7 @@ function cxPaint(g, cv) {
 function cxOpts(cv, ds) {
   const st = cv._cx || {}, d = (ds && ds.layout) || {};
   if (st.syncPoints && (st.points === null || st.points === undefined)) st.syncPoints(d.show_points);
-  return { layout: st.layout || d.y_layout || "lanes", autoY: d.auto_y !== false, yMin: d.y_min ?? 0, yMax: d.y_max ?? 10,
+  return { layout: st.layout || d.y_layout || "lanes", autoY: d.auto_y !== false, yMin: d.y_min ?? 0, yMax: d.y_max ?? 10, clock: cxClock(cv, ds),
            points: st.points === null || st.points === undefined ? !!d.show_points : st.points };
 }
 // legend text: the signal name or its address / OPC node (viewer's choice, else the connection's)
@@ -130,15 +138,17 @@ function cxLegend(cv, ds, k) {
 }
 function cxToolbar(box, cv) {
   const st = cv._cx;
-  box.innerHTML = `<button type="button" data-x="v" title="Kliknij na wykresie, aby postawić kursor czasu (maks. 2; można je przeciągać)">Kursory V</button>
-    <button type="button" data-x="h" title="Kliknij na wykresie, aby postawić kursor wartości (maks. 2; można je przeciągać)">Kursory H</button>
+  box.innerHTML = `<button type="button" data-x="h" title="Kliknij na wykresie, aby postawić poziomy znacznik poziomu sygnału (maks. 2; można je przeciągać) – pokazuje wartość i różnicę wartości">Znacznik poziomu sygnału</button>
     <label title="Pokazuje punkty próbek na krzywych"><input type="checkbox" data-x="pts"> Punkty</label>
     <label>Układ <select data-x="lay"><option value="">wg połączenia</option><option value="lanes">Pasma wg Share</option><option value="offset">Offset Y + wzmocnienie</option></select></label>
     <label>Legenda <select data-x="leg"><option value="">wg połączenia</option><option value="name">Nazwa</option><option value="address">Adres / węzeł OPC</option></select></label>
+    <label title="Opisy osi czasu: sekundy od startu albo zegar HH:MM:SS'mmm – serwera (aplikacji) lub sterownika PLC">Oś czasu <select data-x="tax"><option value="">wg połączenia</option><option value="rel">Względna</option><option value="app">Czas aplikacji</option><option value="plc">Czas PLC</option></select></label>
+    <label title="Korekta czasu na osi zegarowej [s] (puste = wg połączenia)">Offset [s] <input type="number" step="0.001" min="-86400" max="86400" data-x="toff" style="width:7em" placeholder="wg połączenia"></label>
     <span class="muted">Ctrl + kółko – przybliżanie, przeciąganie – przesuwanie, Shift + przeciąganie – zakres.</span>`;
-  const q = (k) => box.querySelector(`[data-x=${k}]`), sync = () => { q("v").classList.toggle("on", st.vOn); q("h").classList.toggle("on", st.hOn); };
-  q("v").onclick = () => { st.vOn = !st.vOn; if (!st.vOn) st.v = []; sync(); cv.style.cursor = st.vOn || st.hOn ? "crosshair" : ""; st.cfg.redraw(); };
-  q("h").onclick = () => { st.hOn = !st.hOn; if (!st.hOn) st.h = []; sync(); cv.style.cursor = st.vOn || st.hOn ? "crosshair" : ""; st.cfg.redraw(); };
+  const q = (k) => box.querySelector(`[data-x=${k}]`), sync = () => { q("h").classList.toggle("on", st.hOn); };
+  q("h").onclick = () => { st.hOn = !st.hOn; if (!st.hOn) st.h = []; sync(); cv.style.cursor = st.hOn ? "crosshair" : ""; st.cfg.redraw(); };
+  q("tax").onchange = () => { st.taxis = q("tax").value; st.cfg.redraw(); };
+  q("toff").oninput = () => { st.toff = q("toff").value === "" || !Number.isFinite(+q("toff").value) ? null : Math.max(-86400, Math.min(86400, +q("toff").value)); st.cfg.redraw(); };
   q("pts").onchange = () => { st.points = q("pts").checked; st.cfg.redraw(); };
   q("lay").onchange = () => { st.layout = q("lay").value; st.cfg.redraw(); };
   q("leg").onchange = () => { st.legend = q("leg").value; st.cfg.redraw(); };

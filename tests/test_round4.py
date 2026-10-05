@@ -761,3 +761,27 @@ def test_device_data_arrives_from_simulator_after_start(app):
     finally:
         tab.shutdown()
         sim.stop()
+
+
+def test_loading_a_recording_fills_connection_and_device_boxes(app, tmp_path):
+    """A recording read back from a database (SQLite) into a NEW tab shows the PLC it was made on."""
+    from datetime import datetime
+    from s7trace.core import store
+    cfg = store.StoreConfig(kind="sqlite", sqlite_path=str(tmp_path / "r.db"))
+    sigs = [Signal(name="A", dtype="REAL", db=1, byte=0)]
+    dev = store.device_summary({**DEV, "rack": 0, "slot": 1}, "10.9.8.7")
+    rec = store.DbRecorder(cfg, sigs, datetime(2026, 10, 5, 10, 0, 0), {"tab": "Piec", "ip": "10.9.8.7", "device": dev})
+    for i in range(20):
+        rec.write(i * 0.1, [float(i)])
+    rec.close()
+    b = store.open_backend(cfg)
+    meta, t_us, v = b.read(b.sessions()[0]["id"])
+    b.close()
+    tab = TraceTab(TabConfig(ip="192.168.0.1"), lambda: [])                       # a fresh tab: default address, empty device box
+    assert "Brak połączenia ze sterownikiem" in tab.lbl_dev.text()
+    tab.load_recording(meta, t_us, v, cfg)
+    assert tab.ed_ip.text() == "10.9.8.7" and tab.sp_rack.value() == 0 and tab.sp_slot.value() == 1
+    t = tab.lbl_dev.text()
+    assert "CPU 1515-2 PN" in t and "V2.9.4" in t and "PIEC_1" in t and tab.device is not None
+    assert "S7comm" in tab.lbl_method.text()                                      # the S7 signals tell the connection method
+    tab.shutdown()

@@ -358,18 +358,23 @@ def test_http_help_version_and_legend_data(srv, sim):
     assert anon.get("/api/version")[1]["version"] == version.VERSION and anon.get("/api/version")[1]["author"] == "PWOL79 & CLAUDE"
     h = anon.get("/api/help")[1]["help"]
     assert "cykl [ms]" in h and "Do czego służy" in h["start"] and "pobierz" in h
-    st, d = ola.post("/api/connections", {"name": "L", "ip": f"127.0.0.1:{PORT}", "slot": 2, "cycle_ms": 25, "window_s": 2, "legend_mode": "address",
+    st, d = ola.post("/api/connections", {"name": "L", "ip": f"127.0.0.1:{PORT}", "slot": 2, "cycle_ms": 25, "window_s": 2, "legend_mode": "address", "time_axis": "plc", "time_offset": 1.5,
                                           "signals": [{"name": "b0", "dtype": "BOOL", "db": 1, "byte": 100, "bit": 0, "comment": "pierwszy"}]})
     assert st == 200
     cid = d["id"]
     try:
         assert ola.get(f"/api/connections/{cid}/config")[1]["legend_mode"] == "address"
+        cfg = ola.get(f"/api/connections/{cid}/config")[1]
+        assert cfg["time_axis"] == "plc" and cfg["time_offset"] == 1.5                       # the time axis of the connection (editor)
+        assert ola.post("/api/connections", {"name": "X", "ip": "127.0.0.1", "time_axis": "zegar"})[0] == 400
+        assert ola.post("/api/connections", {"name": "X", "ip": "127.0.0.1", "time_offset": 99999})[0] == 400
         assert ola.get(f"/api/connections/{cid}/config")[1]["device"] == []
         assert ola.post(f"/api/connections/{cid}/start")[0] == 200
         assert _wait(lambda: ola.get(f"/api/connections/{cid}")[1]["state"] == "running")
         time.sleep(0.5)
         s = ola.get(f"/api/connections/{cid}/series?seconds=5")[1]
         assert s["addresses"] == ["DB1.DBX100.0"] and s["layout"]["legend_mode"] == "address"
+        assert s["layout"]["time_axis"] == "plc" and s["layout"]["time_offset"] == 1.5 and "plc_diff" in s and s["start_us"] > 0
         assert "Adres: DB1.DBX100.0" in s["tips"][0] and "Opis: pierwszy" in s["tips"][0] and "Aktualna wartość" not in s["tips"][0]
         assert any(a == "Model CPU" for a, _ in ola.get(f"/api/connections/{cid}/config")[1]["device"])
     finally:

@@ -376,7 +376,7 @@ przekazania danych do Excela lub innych narzędzi.
 | Zaległe bufory zapisu, diagnostyka połączenia, informacje o sterowniku, aktywne sesje | menu **Diagnostyka** (kolejność menu: Plik, Widok, Diagnostyka, Znaczniki, Ustawienia, Pomoc) |
 | Eksport do CSV | „Zapisz jako CSV…” w przeglądzie nagrań |
 | Pomoc | F1 → „Przyciski sterujące” → REC |
-| Znaczniki, zapis znaczników, wyszukiwarka | menu **Znaczniki** (Dodaj znacznik teraz, Lista znaczników…, Zapisz znaczniki…, Wyszukiwarka danych…) oraz rząd przycisków „Znaczniki:” pod wykresem („Dodaj znacznik”, „Lista znaczników…”, „Zapisz znaczniki”, „Szukaj w danych…”); prawy przycisk na wykresie i na znaczniku (patrz rozdz. 13) |
+| Znaczniki, zapis znaczników, wyszukiwarka | menu **Znaczniki** (Dodaj znacznik teraz, Znacznik poziomu sygnału, Lista znaczników…, Zapisz znaczniki…, Wyszukiwarka danych…) oraz rząd przycisków pod wykresem („Dodaj znacznik”, „Lista znaczników…”, „Zapisz znaczniki”, „Szukaj w danych…”); prawy przycisk na wykresie i na znaczniku (patrz rozdz. 13) |
 | Folder plików CSV (snapshot, REC), baza znaczników | `Dokumenty\S7Trace` bieżącego użytkownika (patrz 13.9) |
 
 ---
@@ -475,6 +475,7 @@ Run = 1”), a wynik można od razu zamienić w znacznik.
 |---|---|---|
 | **Punkt** | pionowa linia w jednym momencie (kolor, grubość i styl wg ustawień) | zdarzenie: alarm, ręczny start, zmiana nastaw |
 | **Zakres czasu** | dwie linie brzegowe i **półprzezroczysty obszar** koloru znacznika między nimi (lekko przykrywa wykres) | przedział: trwanie awarii, cykl produkcyjny, okres testu |
+| **Różnica sygnału** | dwie linie brzegowe w pasie **jednego** przebiegu, poziom sygnału na obu końcach (kropkowana linia odniesienia), strzałka między poziomami i opis „Δ = +x (a → b)” | zmiana wartości w czasie: wzrost temperatury, spadek ciśnienia |
 
 Znacznik może dotyczyć **wszystkich przebiegów** (linia / obszar na całej wysokości wykresu) albo **tylko wybranych** (rysuje się wtedy tylko w pasach tych
 sygnałów). Przypisanie do przebiegów można zmienić w edycji znacznika.
@@ -506,10 +507,10 @@ zaimportowanego pliku CSV (program zapamiętuje w CSV czas rozpoczęcia).
 
 ### 13.4. Obsługa na wykresie (program okienkowy)
 
-- **Gdzie to jest:** menu **Znaczniki** w pasku menu (skróty: Ctrl+Shift+M dodaj znacznik teraz, Ctrl+M lista, Ctrl+Shift+S zapisz, Ctrl+F wyszukiwarka) i osobny rząd przycisków **„Znaczniki:”** pod wykresem (pod rzędem Start / Stop / REC). Znacznik w dowolnym miejscu zakładasz **prawym przyciskiem myszy na wykresie**.
+- **Gdzie to jest:** menu **Znaczniki** w pasku menu (skróty: Ctrl+Shift+M dodaj znacznik teraz, Ctrl+M lista, Ctrl+Shift+S zapisz, Ctrl+F wyszukiwarka) i osobny rząd przycisków pod wykresem (pod rzędem Start / Stop / REC). Znacznik w dowolnym miejscu zakładasz **prawym przyciskiem myszy na wykresie**.
 
-- **Prawy przycisk na wykresie**: „Dodaj znacznik (punkt) tutaj…”, „Dodaj znacznik zakresu czasu tutaj…”, „Znacznik zakresu z kursorów V1–V2…” (gdy są ustawione oba
-  kursory pionowe), „Zapisz znaczniki”, „Lista znaczników…”, „Szukaj w danych…”, przełącznik „Pokaż też znaczniki z innych połączeń”.
+- **Prawy przycisk na wykresie**: „Dodaj znacznik (punkt) tutaj…”, „Dodaj znacznik zakresu czasu tutaj…”, „Dodaj znacznik różnicy poziomu…” (dla przebiegu, w którego pasie
+  kliknięto – okno otwiera się z wybranym tym jednym przebiegiem), „Zapisz znaczniki”, „Lista znaczników…”, „Szukaj w danych…”, przełącznik „Pokaż też znaczniki z innych połączeń”.
 - **Najechanie kursorem na znacznik** otwiera **dymek** z tytułem, czasem (dla zakresu: „Od:” i „Do:” jedno pod drugim, czcionką o stałej szerokości, więc cyfra pod cyfrą), priorytetem, linią, przebiegami, grupą, opisem, uwagami oraz kolejno: Autor, Założono, Zmodyfikował, Zmieniono. Pola zmienione od ostatniego zapisu (niezapisana edycja) są w dymku **podświetlone na żółto**.
 - **Podświetlenie po najechaniu**: linia (punktu i oba brzegi zakresu – ten sam standard) robi się grubsza i **zachowuje kolor znacznika**.
 - **Prawy przycisk na znaczniku** otwiera menu: edycja; **zmiana pozycji** (znacznik się podświetla, klik na wykresie ustawia go w nowym miejscu, prawy przycisk anuluje;
@@ -525,6 +526,8 @@ zaimportowanego pliku CSV (program zapamiętuje w CSV czas rozpoczęcia).
 **Grubości linii (menu Znaczniki → „Wygląd znaczników (grubość linii)…”)** – ustawiane globalnie, zapisywane **razem z konfiguracją interfejsu**: wchodzą do pliku „Zapisz konfigurację interfejsu” (Ustawienia → Interfejs; w pliku jako cztery parametry `marker_width_*`, po jednym w linii) i wracają przy jego wczytaniu; plik starszej wersji bez tych parametrów zostawia bieżące ustawienia:
 linia znacznika „Dotyczy: wszystkie przebiegi” (domyślnie 2 px), linia w pasach przebiegów **wybranych** (3 px), cienka półprzezroczysta prowadnica przez pasy **pozostałych** przebiegów (1 px)
 i linia **podświetlona** po najechaniu (4 px). Zakres czasu dla wybranych przebiegów ma w ich pasach także oba brzegi (grubość „wybranych przebiegów”).
+**Różnica sygnału** dotyczy dokładnie jednego przebiegu (w oknie znacznika wybór „Dotyczy” przełącza się na „Wybrane przebiegi” i pozwala zaznaczyć jeden); wartości bierze z danych wykresu w obu momentach (ostatnia próbka do tej chwili).
+**Blokada:** znaczniki są domyślnie zablokowane – przeciągnięcie myszą po znaczniku przesuwa wykres, nie znacznik. Zaznaczenie „Zmień pozycję znacznika” w menu prawego przycisku znacznika odblokowuje go (pole można odznaczyć, żeby znów zablokować).
 
 Ten sam wygląd i zachowanie (dymek, podświetlenie, dwuklik, grubości linii, etykiety osi w pasach, czas trwania nagrania) ma tryb Web (`WEB.md`, rozdz. 15 i 19); różnica: ustawienia grubości linii w Web są pamiętane w przeglądarce.
 

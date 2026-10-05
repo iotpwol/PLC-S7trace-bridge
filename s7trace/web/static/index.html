@@ -79,6 +79,8 @@
           <label>Y min <input id="e-ymin" type="number" step="any"></label><label>Y maks <input id="e-ymax" type="number" step="any"></label>
           <label><input id="e-points" type="checkbox"> Punkty próbek na wykresie</label>
           <label>Legenda pokazuje <select id="e-legend"><option value="name">Nazwę sygnału</option><option value="address">Adres / węzeł OPC</option></select></label>
+          <label>Oś czasu <select id="e-taxis"><option value="rel">Względna (od startu)</option><option value="app">Czas aplikacji (zegar serwera)</option><option value="plc">Czas PLC (zegar sterownika)</option></select></label>
+          <label>Offset osi [s] <input id="e-toff" type="number" step="0.001" min="-86400" max="86400"></label>
         </div>
       </div></div></div>
       <h3>Sygnały</h3>
@@ -228,7 +230,7 @@
     <h3 id="mk-title-h">Znacznik</h3>
     <div class="grid2">
       <label>Tytuł <input id="mk-title" maxlength="200"></label>
-      <label>Rodzaj <select id="mk-kind"><option value="point">Punkt</option><option value="range">Zakres czasu</option></select></label>
+      <label>Rodzaj <select id="mk-kind"><option value="point">Punkt</option><option value="range">Zakres czasu</option><option value="delta">Różnica sygnału</option></select></label>
       <label>Czas (od) <input id="mk-from" type="datetime-local" step="0.001" required></label>
       <label id="mk-to-l">Do <input id="mk-to" type="datetime-local" step="0.001"></label>
       <label>Kolor <input id="mk-color" type="color" value="#ff9f1c"></label>

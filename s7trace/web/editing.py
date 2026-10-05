@@ -7,7 +7,7 @@ import re
 from ..core import planner, store as store_mod, trigger as trig
 from ..core.config import TabConfig, conn_defaults
 from ..core.drivers import CONN_TYPES, SOURCE_OF
-from ..core.types import ALL_SOURCES, DEFAULT_COLORS, FORMATS, TYPES, Signal
+from ..core.types import ALL_SOURCES, DEFAULT_COLORS, FORMATS, TIME_OFFSET_MAX, TYPES, Signal
 from . import files
 
 MAX_SIGNALS = 200
@@ -54,7 +54,7 @@ def view(cfg: TabConfig, web: dict | None = None, targets: list[str] | None = No
     t = cfg.trigger
     return {"name": cfg.name, "ip": cfg.ip, "rack": cfg.rack, "slot": cfg.slot, "cycle_ms": cfg.cycle_ms,
             "conn_type": cfg.conn_type, "conn": conn, "mode": cfg.mode, "window_s": cfg.window_s,
-            "legend_mode": cfg.legend_mode, "y_layout": cfg.y_layout, "auto_y": cfg.auto_y, "y_min": cfg.y_min, "y_max": cfg.y_max, "show_points": cfg.show_points,
+            "legend_mode": cfg.legend_mode, "time_axis": cfg.time_axis, "time_offset": cfg.time_offset, "y_layout": cfg.y_layout, "auto_y": cfg.auto_y, "y_min": cfg.y_min, "y_max": cfg.y_max, "show_points": cfg.show_points,
             "signals": [s.to_dict() for s in cfg.signals],
             "trigger": {"enabled": t.enabled, "signal": t.signal, "mode": t.mode, "a": t.a, "b": t.b, "hysteresis": t.hysteresis,
                         "pretrigger": t.pretrigger, "action": t.action, "filename": t.filename},
@@ -134,6 +134,12 @@ def apply(cfg: TabConfig, patch: dict, running: bool, web: dict | None = None, r
         if patch["legend_mode"] not in ("name", "address"):
             raise EditError("Legenda: „name” albo „address”.")
         new["legend_mode"] = patch["legend_mode"]
+    if "time_axis" in patch:
+        if patch["time_axis"] not in ("rel", "app", "plc"):
+            raise EditError("Oś czasu: „rel”, „app” albo „plc”.")
+        new["time_axis"] = patch["time_axis"]
+    if "time_offset" in patch:
+        new["time_offset"] = _num(patch, "time_offset", -TIME_OFFSET_MAX, TIME_OFFSET_MAX, "Offset osi czasu [s]", float)
     for k in ("auto_y", "show_points"):
         if k in patch:
             new[k] = bool(patch[k])

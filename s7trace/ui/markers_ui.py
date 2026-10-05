@@ -61,8 +61,8 @@ def marker_tip(m: mk.Marker, state: str = "", changed=frozenset(), look: dict | 
     if state:
         rows.append(f"<span style='color:#e0a030'>* niezapisany ({'nowy' if state == 'new' else 'zmieniony'}) – "
                     "użyj „Zapisz znaczniki”</span>")
-    if m.kind == "range":
-        rows.append(hl(f"Zakres czasu ({_dur((m.end_us - m.at_us) / 1e6)}):", "kind", "at_us", "end_us") +
+    if m.kind in mk.SPAN_KINDS:
+        rows.append(hl(f"{mk.KINDS[m.kind]} ({_dur((m.end_us - m.at_us) / 1e6)}):", "kind", "at_us", "end_us") +
                     f"<table cellspacing='0' cellpadding='0'><tr><td>Od:&nbsp;</td><td style='{mono}'>"
                     f"{hl(fmt_us(m.at_us), 'at_us', 'kind')}</td></tr><tr><td>Do:&nbsp;</td><td style='{mono}'>"
                     f"{hl(fmt_us(m.end_us), 'end_us', 'kind')}</td></tr></table>")
@@ -210,6 +210,7 @@ class MarkerEditDialog(QDialog):
             self.lst.addItem(it)
         self.lst.setEnabled(bool(marker.signals))
         self.rb_sel.toggled.connect(self.lst.setEnabled)
+        self.lst.itemChanged.connect(self._single_signal)
         form.addRow("Tytuł:", self.ed_title)
         form.addRow("Opis:", self.ed_desc)
         form.addRow("Uwagi:", self.ed_notes)
@@ -268,11 +269,29 @@ class MarkerEditDialog(QDialog):
         lay.addLayout(btns)
 
     def _kind_changed(self) -> None:
-        r = self.cb_kind.currentData() == "range"
+        kind = self.cb_kind.currentData()
+        r = kind in mk.SPAN_KINDS
         self.dt2.setVisible(r)
         self.lbl_dt2.setVisible(r)
-        self.w_transp.setVisible(r)                                # only an area has transparency
-        self.lbl_transp_name.setVisible(r)
+        self.w_transp.setVisible(kind == "range")                  # only an area has transparency
+        self.lbl_transp_name.setVisible(kind == "range")
+        delta = kind == "delta"                                    # the difference of ONE signal: its plot has to be chosen
+        self.rb_all.setEnabled(not delta)
+        if delta:
+            self.rb_sel.setChecked(True)
+            self._single_signal()
+
+    def _single_signal(self, item=None) -> None:
+        """'Różnica sygnału' takes exactly one plot: ticking another one unticks the rest."""
+        if self.cb_kind.currentData() != "delta":
+            return
+        checked = [self.lst.item(i) for i in range(self.lst.count()) if self.lst.item(i).checkState() == Qt.Checked]
+        keep = item if item is not None and item.checkState() == Qt.Checked else (checked[0] if checked else None)
+        self.lst.blockSignals(True)
+        for it in checked:
+            if it is not keep:
+                it.setCheckState(Qt.Unchecked)
+        self.lst.blockSignals(False)
 
     @staticmethod
     def _us(edit: QDateTimeEdit, old: int) -> int:
@@ -286,7 +305,7 @@ class MarkerEditDialog(QDialog):
             if self.rb_sel.isChecked() else []
         return {"title": self.ed_title.text().strip(), "description": self.ed_desc.toPlainText(),
                 "notes": self.ed_notes.toPlainText(), "color": self.cb_color.color(), "priority": self.cb_prio.currentData(),
-                "kind": kind, "at_us": at, "end_us": self._us(self.dt2, self.marker.end_us or at) if kind == "range" else 0,
+                "kind": kind, "at_us": at, "end_us": self._us(self.dt2, self.marker.end_us or at) if kind in mk.SPAN_KINDS else 0,
                 "signals": sig, "group_name": self.cb_group.currentText().strip(), "line_width": self.sp_width.value(),
                 "line_style": self.cb_style.currentData(), "opacity": 100 - self.sl_transp.value(),
                 "show_label": int(self.chk_label.isChecked())}
@@ -324,9 +343,9 @@ class PendingDialog(QDialog):
         self.table.horizontalHeader().setStretchLastSection(True)
         for i, c in enumerate(changes):
             m = c.marker
-            when = fmt_us(m.at_us) + (f" → {fmt_us(m.end_us)}" if m.kind == "range" else "")
+            when = fmt_us(m.at_us) + (f" → {fmt_us(m.end_us)}" if m.kind in mk.SPAN_KINDS else "")
             if c.state == "new":
-                detail = ("zakres czasu" if m.kind == "range" else "punkt") + (f"; grupa „{m.group_name}”" if m.group_name else "")
+                detail = mk.KINDS[m.kind].lower() + (f"; grupa „{m.group_name}”" if m.group_name else "")
             elif c.state == "edited":
                 detail = "zmieniono: " + ", ".join(c.fields)
             else:
@@ -457,7 +476,7 @@ class TabMarkers:
             state = dr.state(m.id)
             label = (m.title if m.show_label else "")
             items.append({"id": m.id, "kind": m.kind, "x0": self.to_rel(m.at_us),
-                          "x1": self.to_rel(m.end_us) if m.kind == "range" else self.to_rel(m.at_us),
+                          "x1": self.to_rel(m.end_us) if m.kind in mk.SPAN_KINDS else self.to_rel(m.at_us),
                           "color": m.color, "width": m.line_width, "style": m.line_style, "opacity": m.opacity,
                           "priority": m.priority, "title": ("* " + label) if (label and state) else label,
                           "tip": marker_tip(m, state, dr.changed_fields(m.id), self.tab.plot.mlook), "signals": list(m.signals)})
@@ -490,12 +509,12 @@ class TabMarkers:
             self.tab.status_msg = message
 
     def add_at_us(self, at_us: int, title: str = "", description: str = "", end_us: int | None = None,
-                  signals: list[str] | None = None, group: str = "") -> mk.Marker | None:
-        """Opens the window of a new marker (a range when end_us is given); a confirmed marker joins the draft."""
+                  signals: list[str] | None = None, group: str = "", kind: str | None = None) -> mk.Marker | None:
+        """Opens the window of a new marker (a range when end_us is given, or `kind`); a confirmed marker joins the draft."""
         dr = self.draft
         if dr is None:
             return None
-        m = mk.Marker(kind="range" if end_us else "point", at_us=int(at_us), end_us=int(end_us or 0), title=title,
+        m = mk.Marker(kind=kind or ("range" if end_us else "point"), at_us=int(at_us), end_us=int(end_us or 0), title=title,
                       description=description, signals=list(signals or []), group_name=group, author=self._who(),
                       computer=platform.node(), conn=self.key(), rec_id=self.rec_id())
         d = MarkerEditDialog(m, True, self.tab, self.signal_names(), self.group_names())
@@ -570,7 +589,7 @@ class TabMarkers:
         if m is None:
             return
         f = {"at_us": self.to_wall(x0)}
-        if m.kind == "range":
+        if m.kind in mk.SPAN_KINDS:
             f["end_us"] = self.to_wall(x1)
         self._update(mid, f)
 
@@ -582,10 +601,21 @@ class TabMarkers:
             return
         at = self.to_wall(x)
         f = {"at_us": at}
-        if m.kind == "range":
+        if m.kind in mk.SPAN_KINDS:
             half = (m.end_us - m.at_us) // 2
             f = {"at_us": at - half, "end_us": at + (m.end_us - m.at_us - half)}
         self._update(mid, f, f"Przesunięto znacznik „{m.blurb()}” (niezapisany).")
+
+    def set_movable(self, mid: int, on: bool) -> None:
+        """'Zmień pozycję znacznika' (a tick in the marker menu): only an unlocked marker can be dragged with the mouse; a drag that
+        starts on a locked one pans the chart. The tick is cleared the same way."""
+        self.tab.plot.set_marker_movable(mid, on)
+        dr = self.draft
+        m = dr.get(mid) if dr else None
+        self.tab.status_msg = (f"Znacznik „{m.blurb() if m else ''}” odblokowany – przeciągnij go myszą (zakres: krawędzie lub całość). "
+                               "Odznacz „Zmień pozycję znacznika” w jego menu, aby go zablokować." if on else
+                               "Znacznik zablokowany – przeciąganie przesuwa wykres.")
+        self.tab._update_status()
 
     def start_move(self, mid: int) -> None:
         self.tab.plot.start_marker_placement(mid)
@@ -712,7 +742,7 @@ class TabMarkers:
         dr = self.draft
         m = dr.get(mid) if dr else None
         if m:
-            when = fmt_us(m.at_us) + (f" → {fmt_us(m.end_us)}" if m.kind == "range" else "")
+            when = fmt_us(m.at_us) + (f" → {fmt_us(m.end_us)}" if m.kind in mk.SPAN_KINDS else "")
             self.tab.status_msg = f"Znacznik „{m.blurb()}” – {when}" + (f": {m.description}" if m.description else "")
             self.tab._update_status()
 
@@ -746,9 +776,10 @@ class TabMarkers:
         m.addAction("Dodaj znacznik (punkt) tutaj…", lambda: self.add_at_us(self.to_wall(t)))
         w = max(self.tab.plot.window * 0.1, 0.5)
         m.addAction("Dodaj znacznik zakresu czasu tutaj…", lambda: self.add_at_us(self.to_wall(t), end_us=self.to_wall(t + w)))
-        vm = sorted(x.value() for x in self.tab.plot.vmarks)
-        if len(vm) == 2 and vm[1] > vm[0]:
-            m.addAction("Znacznik zakresu z kursorów V1–V2…", lambda: self.add_at_us(self.to_wall(vm[0]), end_us=self.to_wall(vm[1])))
+        sig = self.level_signal()
+        a = m.addAction("Dodaj znacznik różnicy poziomu…", lambda: self.add_at_us(self.to_wall(t), end_us=self.to_wall(t + w),
+                                                                                 signals=[sig], kind="delta"))
+        a.setEnabled(bool(sig))
         if self.hi_group:
             m.addAction(f"Wyłącz podświetlenie grupy „{self.hi_group}”", lambda: self.highlight_group(""))
         m.addSeparator()
@@ -764,6 +795,15 @@ class TabMarkers:
         a.toggled.connect(self._set_show_all)
         self._run_menu(m, pos)
 
+    def level_signal(self) -> str:
+        """The plot a level / difference marker set at the last right click is for: the lane under the click (lane layout),
+        otherwise the first plotted signal; '' when nothing is plotted."""
+        plot = self.tab.plot
+        hit = plot._lane_value(plot.ctx_y) if plot.y_layout == "lanes" else None
+        if hit:
+            return hit[0]
+        return next((s.name for s in plot.signals if s.plot), "")
+
     def _set_show_all(self, on: bool) -> None:
         self.show_all = on
         self.sync(True)
@@ -775,7 +815,10 @@ class TabMarkers:
         if mk_ is None:
             return
         m.addAction("Edytuj znacznik…", lambda: self.edit(mid))
-        m.addAction("Zmień pozycję znacznika", lambda: self.start_move(mid))
+        a = m.addAction("Zmień pozycję znacznika")
+        a.setCheckable(True)
+        a.setChecked(mid in self.tab.plot.mmovable)
+        a.toggled.connect(lambda on: self.set_movable(mid, on))
         m.addAction("Ukryj nazwę znacznika na wykresie" if mk_.show_label else "Pokaż nazwę znacznika na wykresie",
                     lambda: self.toggle_label(mid))
         g = m.addMenu("Grupa znaczników")
@@ -994,7 +1037,7 @@ class MarkersDialog(QDialog):
         for i, m in enumerate(rows):
             state = dr.state(m.id)
             cells = [fmt_us(m.at_us), m.title or "(bez tytułu)",
-                     mk.KINDS[m.kind] + (f" ({_dur((m.end_us - m.at_us) / 1e6)})" if m.kind == "range" else ""),
+                     mk.KINDS[m.kind] + (f" ({_dur((m.end_us - m.at_us) / 1e6)})" if m.kind in mk.SPAN_KINDS else ""),
                      mk.PRIORITIES.get(m.priority, str(m.priority)), ", ".join(m.signals) or "wszystkie", m.group_name,
                      m.author, m.conn, fmt_us(m.modified_us, False), "zapisany" if not state else "* " + STATE_PL[state]]
             for j, text in enumerate(cells):

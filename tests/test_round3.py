@@ -112,7 +112,7 @@ def test_control_buttons_state_colours_and_rec_blink(app):
     tab.state = "running"
     tab._set_buttons()
     assert prop(tab.btn_start) and not prop(tab.btn_stop)
-    for b in (tab.btn_pause, tab.btn_rec, tab.btn_v, tab.btn_h, tab.btn_pts):
+    for b in (tab.btn_pause, tab.btn_rec):
         b.setChecked(True)
         assert prop(b)
         b.setChecked(False)

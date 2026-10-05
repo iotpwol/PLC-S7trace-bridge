@@ -21,7 +21,8 @@ PALETTE = {                                   # name -> colour: what the colour 
     "Pomarańczowy": "#ff9f1c", "Czerwony": "#ff4d4d", "Zielony": "#3fc380", "Niebieski": "#4aa3ff",
     "Fioletowy": "#b07cff", "Żółty": "#ffd24a", "Turkusowy": "#2ec4b6", "Biały": "#ffffff",
 }
-KINDS = {"point": "Punkt", "range": "Zakres czasu"}
+KINDS = {"point": "Punkt", "range": "Zakres czasu", "delta": "Różnica sygnału"}
+SPAN_KINDS = ("range", "delta")                # kinds that cover a time span (at_us .. end_us)
 LINE_STYLES = {"solid": "ciągła", "dash": "kreskowana", "dot": "kropkowana", "dashdot": "kreska-kropka"}
 DEFAULT_OPACITY = 24                           # [%] of the area of a range marker
 MAX_WIDTH = 8
@@ -52,7 +53,8 @@ def valid_color(c) -> bool:
 @dataclass
 class Marker:
     id: int = 0
-    kind: str = "point"            # "point" (one moment) / "range" (from at_us to end_us: a translucent area on the chart)
+    kind: str = "point"            # "point" (one moment) / "range" (from at_us to end_us: a translucent area on the chart) /
+                                   # "delta" (two moments of ONE signal: shows the difference of its values)
     at_us: int = 0                 # the point in time the marker sits at (start of a range)
     end_us: int = 0                # end of a range (0 for a point)
     signals: list = field(default_factory=list)   # names of the signals (plots) it refers to; empty = all of them
@@ -92,7 +94,7 @@ class Marker:
     @property
     def last_us(self) -> int:
         """The latest moment the marker covers."""
-        return self.end_us if self.kind == "range" and self.end_us > self.at_us else self.at_us
+        return self.end_us if self.kind in SPAN_KINDS and self.end_us > self.at_us else self.at_us
 
     def applies_to(self, name: str) -> bool:
         return not self.signals or name in self.signals
@@ -170,7 +172,7 @@ def clean_fields(d: dict, partial: bool) -> dict:
         out["end_us"] = e
     if "kind" in d:
         if d["kind"] not in KINDS:
-            raise MarkerError("Typ znacznika: punkt albo zakres czasu.")
+            raise MarkerError("Typ znacznika: punkt, zakres czasu albo różnica sygnału.")
         out["kind"] = d["kind"]
     if "signals" in d:
         sg = d["signals"]
@@ -195,9 +197,14 @@ def _fix_range(f: dict, cur: "Marker | None" = None) -> dict:
         end = 0
     else:
         if not end or end == at:
-            raise MarkerError("Zakres czasu wymaga dwóch różnych momentów (od / do).")
+            raise MarkerError("Zakres czasu wymaga dwóch różnych momentów (od / do)." if kind == "range"
+                              else "Różnica sygnału wymaga dwóch różnych momentów (od / do).")
         if end < at:
             at, end = end, at
+        if kind == "delta":
+            sig = f.get("signals", cur.signals if cur else [])
+            if len(sig) != 1:
+                raise MarkerError("Różnica sygnału dotyczy dokładnie jednego przebiegu – wskaż go na liście „Wybrane przebiegi”.")
     f.update(kind=kind, at_us=at, end_us=end)
     return f
 
@@ -296,7 +303,7 @@ class MarkerStore:
         row = db.execute(f"SELECT {','.join(COLS)} FROM markers WHERE id=?", (int(marker_id),)).fetchone()
         if row is None:
             return False
-        if {"kind", "at_us", "end_us"} & set(f):
+        if {"kind", "at_us", "end_us", "signals"} & set(f):
             f = _fix_range(f, Marker.from_row(row))
         f = dict(f)
         if "signals" in f:
@@ -367,7 +374,7 @@ class MarkerStore:
         order: 'at' (by time), 'modified' (newest change first), 'priority' (highest first)."""
         where, args = [], []
         if t0_us is not None:                      # a range marker counts when any part of it lies in [t0, t1]
-            where.append("(CASE WHEN kind='range' AND end_us>at_us THEN end_us ELSE at_us END)>=?")
+            where.append("(CASE WHEN kind IN ('range','delta') AND end_us>at_us THEN end_us ELSE at_us END)>=?")
             args.append(int(t0_us))
         if t1_us is not None:
             where.append("at_us<=?")

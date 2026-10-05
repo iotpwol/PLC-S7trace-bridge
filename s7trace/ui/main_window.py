@@ -199,6 +199,8 @@ class MainWindow(QMainWindow):
         self._act(v, "Dopasuj widok do całości", lambda: self._cur(self._fit), "Ctrl+0")
         self.act_legend = self._act(v, "Legenda", self._set_legend, checked=self.ui.get("legend", True))
         self.act_grid = self._act(v, "Siatka", self._set_grid, checked=self.ui.get("grid", True))
+        self.act_points = self._act(v, "Punkty (znaczniki próbek na krzywych, ta karta)",
+                                    lambda on: self._cur(lambda t: t.act_pts.setChecked(on)), checked=False)
         v.addSeparator()
         self.menu_legend = v.addMenu("Położenie legendy (ta karta)")
         for label, pos in (("Lewy górny róg", (0, 0)), ("Prawy górny róg", (1, 0)),
@@ -217,6 +219,8 @@ class MainWindow(QMainWindow):
 
         mk = mb.addMenu("&Znaczniki")
         self._act(mk, "Dodaj znacznik teraz", lambda: self._cur(lambda t: t.mk.add_now()), "Ctrl+Shift+M")
+        self.act_hlevel = self._act(mk, "Znacznik poziomu sygnału (kliknij na wykresie; maks. 2 poziome kursory)",
+                                    lambda on: self._cur(lambda t: t.act_hlev.setChecked(on)), checked=False)
         self._act(mk, "Lista znaczników…", lambda: self._cur(lambda t: t.mk.open_list()), "Ctrl+M")
         self._act(mk, "Zapisz znaczniki…", lambda: self._cur(lambda t: t.mk.save()), "Ctrl+Shift+S")
         mk.addSeparator()
@@ -224,8 +228,9 @@ class MainWindow(QMainWindow):
         mk.addSeparator()
         self._act(mk, "Wygląd znaczników (grubość linii)…", self.edit_marker_look)
         mk.addSeparator()
-        hint = mk.addAction("Znacznik w wybranym miejscu: prawy przycisk myszy na wykresie")
+        hint = mk.addAction("Znacznik w wybranym miejscu (także różnicy poziomu): prawy przycisk myszy na wykresie")
         hint.setEnabled(False)
+        self.tabs.tabBar().currentChanged.connect(lambda _i: self._sync_tab_actions())
 
         st = mb.addMenu("&Ustawienia")
         self._act(st, "Metoda połączenia i dane logowania…", lambda: self._cur(self.edit_connection))
@@ -252,6 +257,15 @@ class MainWindow(QMainWindow):
         self._act(h, "Adresowanie, rack/slot, S7-1200/1500",
                   lambda: QMessageBox.information(self, "Pomoc", RACK_SLOT_HELP))
         self._act(h, "O programie", lambda: QMessageBox.about(self, "O programie", "\n".join(about_lines())))
+
+    def _sync_tab_actions(self) -> None:
+        """The checkable menu items (Punkty, Znacznik poziomu sygnału) show the state of the current tab."""
+        t = self.tabs.currentWidget()
+        for act, src in ((self.act_points, "act_pts"), (self.act_hlevel, "act_hlev")):
+            act.blockSignals(True)
+            act.setChecked(bool(t is not None and getattr(t, src).isChecked()))
+            act.setEnabled(t is not None)
+            act.blockSignals(False)
 
     def _act(self, menu, text, fn, shortcut=None, checked=None):
         a = QAction(text, self)
@@ -457,6 +471,8 @@ class MainWindow(QMainWindow):
         i = self.tabs.addTab(tab, tab.title())
         tab.stateChanged.connect(lambda s, t=tab: self._tab_state(t, s))
         tab.titleChanged.connect(lambda title, t=tab: self._tab_state(t, t.state))
+        tab.act_pts.toggled.connect(lambda _on: self._sync_tab_actions())
+        tab.act_hlev.toggled.connect(lambda _on: self._sync_tab_actions())
         tab.layoutChanged.connect(lambda t=tab: self._apply_layouts(t))
         tab.legendHideRequested.connect(lambda: self.act_legend.setChecked(False))
         tab.plot.set_legend_visible(self.ui.get("legend", True))

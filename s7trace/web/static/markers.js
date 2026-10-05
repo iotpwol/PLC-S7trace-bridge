@@ -17,6 +17,7 @@ async function mkLoadPrefs() { try { MKLOOK = mkLookFrom((await api("/api/prefs"
 const mkWidthOf = (m, c) => { const own = m.line_width | 0; return c === "hover" ? Math.max(MKLOOK.width_hover, own + 1) : c === "other" ? MKLOOK.width_other : own || MKLOOK[c === "all" ? "width_all" : "width_sel"]; };
 const mkStamp = (us) => { if (!us) return "–"; const d = new Date(us / 1000), p = (n, l = 2) => String(n).padStart(l, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`; };
+const mkSpan = (m) => m.kind === "range" || m.kind === "delta";           // kinds that cover a time span (range / signal difference)
 const mkInput = (us) => mkStamp(us).replace(" ", "T");              // value of <input type=datetime-local step=0.001>
 const mkFromInput = (v, old) => { const ms = new Date(v).getTime(); return old && Math.floor(old / 1000) === ms ? old : ms * 1000; };
 const mkDur = (s) => s < 1 ? Math.round(s * 1000) + " ms" : s < 120 ? s.toFixed(2) + " s" : s < 7200 ? Math.floor(s / 60) + " min " + Math.round(s % 60) + " s" : Math.floor(s / 3600) + " h " + Math.floor(s % 3600 / 60) + " min";
@@ -26,7 +27,7 @@ function mkTip(m) {   // the bubble: times in a monospaced table (digit under di
   const hl = (t, ...f) => f.some((x) => ch.has(x)) ? `<span class="mk-chg">${t}</span>` : t;
   const rows = [hl(`<b>${esc(m.title || "(bez tytułu)")}</b>`, "title") + " " + hl(`<span style="color:${esc(m.color)}">■</span>`, "color")];
   if (st) rows.push(`<span style="color:#e0a030">✱ niezapisany (${st === "new" ? "nowy" : "zmieniony"}) – użyj „Zapisz znaczniki”</span>`);
-  if (m.kind === "range") rows.push(hl(`Zakres czasu (${mkDur((m.end_us - m.at_us) / 1e6)}):`, "kind", "at_us", "end_us") +
+  if (mkSpan(m)) rows.push(hl(`${m.kind === "delta" ? "Różnica sygnału" : "Zakres czasu"} (${mkDur((m.end_us - m.at_us) / 1e6)}):`, "kind", "at_us", "end_us") +
     `<table class="mk-t"><tr><td>Od:</td><td class="mono">${hl(mkStamp(m.at_us), "at_us", "kind")}</td></tr><tr><td>Do:</td><td class="mono">${hl(mkStamp(m.end_us), "end_us", "kind")}</td></tr></table>`);
   else rows.push(hl(`Czas: <span class="mono">${mkStamp(m.at_us)}</span>`, "at_us", "kind"));
   rows.push(hl(`Priorytet: ${MK_PRIO_PL[m.priority] || m.priority}`, "priority"));
@@ -61,7 +62,7 @@ function mkdAdd(m) {
 }
 function mkdUpdate(m, f) {   // m = the marker as shown now (new or saved), f = the changed fields
   const eff = { ...m, ...f, modified_us: Date.now() * 1000, modified_by: me.user };
-  if (eff.kind !== "range") eff.end_us = 0; else if (eff.end_us < eff.at_us) [eff.at_us, eff.end_us] = [eff.end_us, eff.at_us];
+  if (!mkSpan(eff)) eff.end_us = 0; else if (eff.end_us < eff.at_us) [eff.at_us, eff.end_us] = [eff.end_us, eff.at_us];
   if (m.id < 0) MKD.added.set(m.id, eff);
   else {
     const base = MKD.orig.get(m.id) || m;
@@ -83,7 +84,7 @@ function mkdOverlay(list, pred) {   // the saved markers + the draft: deleted on
 }
 function mkdChanges() {   // what "Zapisz znaczniki" is going to do
   const t = (m) => m.at_us, out = [];
-  for (const m of [...MKD.added.values()].sort((a, b) => t(a) - t(b))) out.push({ state: "new", m, text: (m.kind === "range" ? "zakres czasu" : "punkt") + (m.group_name ? `; grupa „${m.group_name}”` : "") });
+  for (const m of [...MKD.added.values()].sort((a, b) => t(a) - t(b))) out.push({ state: "new", m, text: (m.kind === "range" ? "zakres czasu" : m.kind === "delta" ? "różnica sygnału" : "punkt") + (m.group_name ? `; grupa „${m.group_name}”` : "") });
   for (const m of [...MKD.edited.values()].sort((a, b) => t(a) - t(b))) out.push({ state: "edited", m, text: "zmieniono: " + [...new Set(mkdChanged(MKD.orig.get(m.id), m).map((f) => MKD_LABEL[f]))].join(", ") });
   for (const m of [...MKD.deleted.values()].sort((a, b) => t(a) - t(b))) out.push({ state: "deleted", m, text: "zostanie usunięty z serwera" });
   return out;
@@ -110,7 +111,7 @@ function mkPendingDialog(mode) {   // mode "save": Zapisz / Anuluj; "close": Zap
     $("mkp-intro").innerHTML = (mode === "save" ? "Do zapisania: " : "Są niezapisane znaczniki. Zapisać je, zanim opuścisz wykres? Razem: ") +
       `<b>${n("new")}</b> nowych, <b>${n("edited")}</b> zmienionych, <b>${n("deleted")}</b> do usunięcia.`;
     $("mkp-t").tBodies[0].innerHTML = ch.map((c) => `<tr class="mkp-${c.state}"><td>${MKD_PL[c.state]}</td><td><span style="color:${esc(c.m.color)}">■</span> ${c.state === "deleted" ? "<s>" : ""}${esc(c.m.title || "(bez tytułu)")}${c.state === "deleted" ? "</s>" : ""}</td>
-      <td>${mkStamp(c.m.at_us)}${c.m.kind === "range" ? " → " + mkStamp(c.m.end_us) : ""}</td><td>${esc(c.text)}</td></tr>`).join("");
+      <td>${mkStamp(c.m.at_us)}${mkSpan(c.m) ? " → " + mkStamp(c.m.end_us) : ""}</td><td>${esc(c.text)}</td></tr>`).join("");
     $("mkp-error").textContent = ""; $("mkp-discard").hidden = mode !== "close"; $("mkp-cancel").textContent = mode === "save" ? "Anuluj" : "Wróć do wykresu";
     const done = (v) => { dlg.close(); resolve(v); };
     $("mkp-save").onclick = async () => { $("mkp-error").textContent = ""; try { await mkdCommit(); done("save"); } catch (err) { $("mkp-error").textContent = "Nie zapisano (nic nie zostało zmienione): " + err.message; } };
@@ -171,7 +172,13 @@ function mkOpenDialog(m, o) {   // m = marker (id 0 = new), o = {names: [signal 
     const names = [...new Set([...(o.names || []), ...m.signals])];
     $("mk-sigs").innerHTML = names.map((n) => `<label><input type="checkbox" value="${esc(n)}" ${m.signals.includes(n) ? "checked" : ""}> ${esc(n)}</label>`).join("") || '<span class="muted">(brak listy przebiegów)</span>';
     $("mk-all").checked = !m.signals.length; $("mk-sel").checked = !!m.signals.length;
-    const kindUi = () => { const r = $("mk-kind").value === "range"; $("mk-to-l").hidden = !r; $("mk-transp-l").hidden = !r; };
+    const sigsUi = () => {   // "Różnica sygnału" is for exactly ONE plot: the list is switched on and takes one tick
+      const dl = $("mk-kind").value === "delta";
+      if (dl) { $("mk-sel").checked = true; [...$("mk-sigs").querySelectorAll("input:checked")].slice(1).forEach((x) => { x.checked = false; }); }
+      $("mk-all").disabled = ro || dl;
+    };
+    const kindUi = () => { const k = $("mk-kind").value; $("mk-to-l").hidden = k === "point"; $("mk-transp-l").hidden = k !== "range"; sigsUi(); };
+    $("mk-sigs").onchange = (e) => { if ($("mk-kind").value === "delta" && e.target.checked) $("mk-sigs").querySelectorAll("input:checked").forEach((x) => { if (x !== e.target) x.checked = false; }); };
     kindUi(); $("mk-kind").onchange = kindUi;
     $("mk-transp").oninput = () => { $("mk-transp-v").textContent = $("mk-transp").value + " %"; };
     $("mk-info").innerHTML = m.id < 0 ? "Znacznik jest jeszcze niezapisany – zapisze go „Zapisz znaczniki”. Autor i daty ustawią się przy zapisie."
@@ -179,16 +186,18 @@ function mkOpenDialog(m, o) {   // m = marker (id 0 = new), o = {names: [signal 
       : "Autor i daty założenia / modyfikacji zapiszą się automatycznie.";
     $("mk-title-h").textContent = ro ? "Znacznik (tylko odczyt)" : m.id ? "Edycja znacznika" : "Nowy znacznik";
     f.querySelectorAll("input,textarea,select").forEach((el) => { el.disabled = ro; });
+    sigsUi();
     $("mk-save").hidden = ro; $("mk-delete").hidden = ro || !m.id; $("mk-error").textContent = "";
     const finish = (v) => { dlg.close(); resolve(v); };
     f.onsubmit = async (e) => {
       e.preventDefault();
-      const r = $("mk-kind").value === "range", body = { title: $("mk-title").value.trim(), description: $("mk-desc").value, notes: $("mk-notes").value,
+      const r = $("mk-kind").value !== "point", body = { title: $("mk-title").value.trim(), description: $("mk-desc").value, notes: $("mk-notes").value,
         kind: $("mk-kind").value, at_us: mkFromInput($("mk-from").value, m.at_us), end_us: r ? mkFromInput($("mk-to").value, m.end_us) : 0,
         color: $("mk-color").value, priority: +$("mk-prio").value, line_width: +$("mk-width").value, line_style: $("mk-style").value,
-        opacity: r ? 100 - +$("mk-transp").value : m.opacity, group_name: $("mk-group").value.trim(), show_label: $("mk-label").checked ? 1 : 0,
+        opacity: $("mk-kind").value === "range" ? 100 - +$("mk-transp").value : m.opacity, group_name: $("mk-group").value.trim(), show_label: $("mk-label").checked ? 1 : 0,
         signals: $("mk-sel").checked ? [...$("mk-sigs").querySelectorAll("input:checked")].map((x) => x.value) : [] };
       if (!Number.isFinite(body.at_us) || (r && !Number.isFinite(body.end_us))) { $("mk-error").textContent = "Podaj poprawny czas."; return; }
+      if (body.kind === "delta" && body.signals.length !== 1) { $("mk-error").textContent = "Różnica sygnału dotyczy dokładnie jednego przebiegu – zaznacz go na liście „Wybrane przebiegi”."; return; }
       finish(m.id ? mkdUpdate(m, body) : mkdAdd({ ...m, ...body }));
     };
     $("mk-cancel").onclick = () => finish(null);
@@ -211,7 +220,7 @@ const MK = { live: null, rec: null };
 function mkDrawable(ctx) {   // marks with their times as seconds on the chart's own axis
   const s0 = ctx.startUs();
   return ctx.marks.map((m) => {
-    let x0 = (m.at_us - s0) / 1e6, x1 = m.kind === "range" ? (m.end_us - s0) / 1e6 : x0;
+    let x0 = (m.at_us - s0) / 1e6, x1 = mkSpan(m) ? (m.end_us - s0) / 1e6 : x0;
     if (ctx.drag && ctx.drag.m.id === m.id) { x0 = ctx.drag.x0; x1 = ctx.drag.x1; }
     return { m, x0, x1 };
   });
@@ -229,7 +238,7 @@ function mkPaint(g, cv, ctx, geo, lanes) {   // lanes: [{top, bot}] one per sign
       g.fillStyle = rgba(c, hiG ? 0.4 : m.opacity / 100);
       if (idxs) idxs.forEach((k) => g.fillRect(a, lanes[k].top, b - a, lanes[k].bot - lanes[k].top)); else g.fillRect(a, pad.t, b - a, H - pad.t - pad.b);
     }
-    for (const [x, part] of m.kind === "range" ? [[a, "x0"], [b, "x1"]] : [[a, "x0"]]) {
+    for (const [x, part] of mkSpan(m) ? [[a, "x0"], [b, "x1"]] : [[a, "x0"]]) {
       const hov = hiG || hv === part;                                               // the line under the mouse: thicker, the marker's own colour
       g.setLineDash(hov ? [] : MK_STYLES[m.line_style] || []);
       g.strokeStyle = hov ? c : idxs ? rgba(c, 0.5) : c; g.lineWidth = hov ? mkWidthOf(m, "hover") : mkWidthOf(m, idxs ? "other" : "all");
@@ -238,8 +247,26 @@ function mkPaint(g, cv, ctx, geo, lanes) {   // lanes: [{top, bot}] one per sign
         idxs.forEach((k) => { g.beginPath(); g.moveTo(x, lanes[k].top); g.lineTo(x, lanes[k].bot); g.stroke(); }); }
     }
     g.setLineDash([]); g.fillStyle = c;
+    if (m.kind === "delta" && idxs && idxs.length === 1) mkPaintDelta(g, ctx, geo, lanes[idxs[0]], idxs[0], it, c, m);
     if (m.show_label !== 0 && m.title) g.fillText((mkdState(m.id) ? "✱ " : "") + m.title.slice(0, 28), a + 4, pad.t + 12 + (idx % 3) * 12);
   });
+  g.restore();
+}
+function mkPaintDelta(g, ctx, geo, L, k, it, c, m) {   // 'Różnica sygnału': the level at both ends, an arrow between them and the difference of the values
+  const ds = ctx.ds(), gn = (ds.gains || [])[k] || 1, of = geo.offsetMode ? (ds.offsets || [])[k] || 0 : 0, { pad, W } = geo, X = (t) => pad.l + (t - geo.t0) / ((geo.t1 - geo.t0) || 1) * (W - pad.l - pad.r);
+  const at = (t) => {
+    const ts = ds.t; if (!ts.length || t < ts[0]) return null;
+    let lo = 0, hi = ts.length - 1; while (lo < hi) { const q = (lo + hi + 1) >> 1; if (ts[q] <= t) lo = q; else hi = q - 1; }
+    const v = (ds.values[k] || [])[lo]; return v === null || v === undefined ? null : v;
+  };
+  const v0 = at(it.x0), v1 = at(it.x1); if (v0 === null || v1 === null || !L || !L.span) return;
+  const a = X(it.x0), b = X(it.x1), Y = (v) => L.bot - (v * gn + of - L.lo) / L.span * (L.bot - L.top - 6) - 3, y0 = Y(v0), y1 = Y(v1), d = v1 - v0, num = (v) => +v.toPrecision(5);
+  g.save(); g.strokeStyle = g.fillStyle = c;
+  g.setLineDash([2, 3]); g.lineWidth = 1; g.beginPath(); g.moveTo(a, y0); g.lineTo(b, y0); g.stroke();
+  g.setLineDash([]); g.lineWidth = Math.max(2, mkWidthOf(m, "sel")); g.beginPath(); g.moveTo(b, y0); g.lineTo(b, y1); g.stroke();
+  g.fillRect(a - 3, y0 - 3, 6, 6); g.fillRect(b - 3, y1 - 3, 6, 6);
+  const txt = `Δ = ${d > 0 ? "+" : ""}${num(d)}  (${num(v0)} → ${num(v1)})`, right = b > W - pad.r - 230;
+  g.font = "12px sans-serif"; g.textAlign = right ? "right" : "left"; g.fillText(txt, b + (right ? -8 : 8), (y0 + y1) / 2 + 4);
   g.restore();
 }
 function mkHit(ctx, ev) {   // the marker (and its part) under the mouse
@@ -259,11 +286,11 @@ const mkTimeAt = (ctx, px) => { const g = ctx.cv._geo; return g.t0 + (px - g.pad
 const mkPx = (ctx, ev) => { const r = ctx.cv.getBoundingClientRect(); return (ev.clientX - r.left) * ctx.cv.width / r.width; };
 
 function mkAttach(ctx) {
-  const cv = ctx.cv;
+  const cv = ctx.cv; ctx.unlocked = new Set();                                    // markers unlocked for dragging (menu: Zmień pozycję znacznika)
   cv.addEventListener("mousedown", (e) => {
     if (e.button !== 0 || !ctx.marks.length) return;
     if (ctx.place) return;
-    const h = mkHit(ctx, e); if (!h || !ctx.canEdit(h.it.m)) return;
+    const h = mkHit(ctx, e); if (!h || !ctx.canEdit(h.it.m) || !ctx.unlocked.has(h.it.m.id)) return;   // a locked marker: the drag pans the chart
     e.stopImmediatePropagation(); e.preventDefault();
     ctx.drag = { m: h.it.m, part: h.part, px0: h.px, x0: h.it.x0, x1: h.it.x1, o0: h.it.x0, o1: h.it.x1, moved: false };
   }, true);
@@ -281,13 +308,13 @@ function mkAttach(ctx) {
     const d = ctx.drag; if (!d) return; ctx.drag = null;
     if (!d.moved) { ctx.redraw(); return; }
     const s0 = ctx.startUs(), body = { at_us: Math.round(s0 + Math.min(d.x0, d.x1) * 1e6) };
-    if (d.m.kind === "range") body.end_us = Math.round(s0 + Math.max(d.x0, d.x1) * 1e6);
+    if (mkSpan(d.m)) body.end_us = Math.round(s0 + Math.max(d.x0, d.x1) * 1e6);
     mkdUpdate(d.m, body);
   });
   cv.addEventListener("mousemove", (e) => {
     if (ctx.drag) { mkBubble(""); return; }
     const h = ctx.marks.length ? mkHit(ctx, e) : null;
-    cv.style.cursor = ctx.place ? "crosshair" : h && ctx.canEdit(h.it.m) ? (h.part === "body" ? "move" : "col-resize") : "";
+    cv.style.cursor = ctx.place ? "crosshair" : h && ctx.canEdit(h.it.m) && ctx.unlocked.has(h.it.m.id) ? (h.part === "body" ? "move" : "col-resize") : "";
     mkBubble(h ? mkTip(h.it.m) : "", e.clientX, e.clientY);
     const nh = h && h.part !== "body" ? { id: h.it.m.id, part: h.part } : null;           // a hovered line is drawn thicker
     if ((nh && nh.id) !== (ctx.hover && ctx.hover.id) || (nh && nh.part) !== (ctx.hover && ctx.hover.part)) { ctx.hover = nh; ctx.redraw(); }
@@ -301,8 +328,8 @@ function mkAttach(ctx) {
     if (!ctx.place || !cv._geo) return;
     const m = ctx.marks.find((x) => x.id === ctx.place); ctx.place = null; cv.style.cursor = "";
     if (!m) return;
-    const s0 = ctx.startUs(), t = mkTimeAt(ctx, mkPx(ctx, e)), at = Math.round(s0 + t * 1e6), half = m.kind === "range" ? Math.round((m.end_us - m.at_us) / 2) : 0;
-    const body = { at_us: at - half }; if (m.kind === "range") body.end_us = at + (m.end_us - m.at_us - half);
+    const s0 = ctx.startUs(), t = mkTimeAt(ctx, mkPx(ctx, e)), at = Math.round(s0 + t * 1e6), half = mkSpan(m) ? Math.round((m.end_us - m.at_us) / 2) : 0;
+    const body = { at_us: at - half }; if (mkSpan(m)) body.end_us = at + (m.end_us - m.at_us - half);
     mkdUpdate(m, body);
   });
   cv.addEventListener("contextmenu", (e) => {
@@ -312,11 +339,12 @@ function mkAttach(ctx) {
     if (h) return mkMarkerMenu(ctx, h.it.m, e.clientX, e.clientY);
     if (!ctx.canAdd() || !cv._geo) return;
     const s0 = ctx.startUs(), t = mkTimeAt(ctx, mkPx(ctx, e)), at = Math.round(s0 + t * 1e6), w = Math.max((cv._geo.t1 - cv._geo.t0) * 0.1, 0.5);
-    const vm = [...(cv._cx?.v || [])].sort((a, b) => a - b);
+    const r0 = cv.getBoundingClientRect(), py = (e.clientY - r0.top) * cv.height / r0.height, names = ctx.ds().names, g0 = cv._geo;      // the plot under the click
+    const sig = names[g0.offsetMode ? 0 : Math.max(0, g0.lanes.findIndex((l) => py >= l.top && py <= l.bot))];
     mkMenu(e.clientX, e.clientY, [
       { label: "Dodaj znacznik (punkt) tutaj…", fn: () => mkAdd(ctx, mkBlank(at)) },
       { label: "Dodaj znacznik zakresu czasu tutaj…", fn: () => mkAdd(ctx, mkBlank(at, { kind: "range", end_us: Math.round(at + w * 1e6) })) },
-      ...(vm.length === 2 && vm[1] > vm[0] ? [{ label: "Znacznik zakresu z kursorów V1–V2…", fn: () => mkAdd(ctx, mkBlank(Math.round(s0 + vm[0] * 1e6), { kind: "range", end_us: Math.round(s0 + vm[1] * 1e6) })) }] : []),
+      ...(sig ? [{ label: "Dodaj znacznik różnicy poziomu…", fn: () => mkAdd(ctx, mkBlank(at, { kind: "delta", end_us: Math.round(at + w * 1e6), signals: [sig] })) }] : []),
       ...(ctx.hi.size ? ["-", { label: "Wyłącz podświetlenie grupy", fn: () => { ctx.hi = new Set(); ctx.hiGroup = ""; ctx.redraw(); } }] : []),
       "-", { label: mkdCount() ? `Zapisz znaczniki (${mkdCount()})…` : "Zapisz znaczniki (brak zmian)", fn: () => mkSave() },
       { label: "Lista znaczników…", fn: () => mkOpenList(ctx) },
@@ -331,7 +359,7 @@ async function mkAdd(ctx, m) {   // the marker joins the draft (see above); noth
 function mkMarkerMenu(ctx, m, x, y) {
   const ed = ctx.canEdit(m), items = [];
   items.push({ label: ed ? "Edytuj znacznik…" : "Szczegóły znacznika…", fn: async () => { await mkOpenDialog(m, { names: ctx.ds().names, groups: await mkGroups(), readonly: !ed }); } });
-  if (ed) items.push({ label: "Zmień pozycję znacznika", fn: () => { ctx.place = m.id; ctx.cv.style.cursor = "crosshair"; ctx.redraw(); } });
+  if (ed) items.push({ label: (ctx.unlocked.has(m.id) ? "✓ " : "") + "Zmień pozycję znacznika", fn: () => { (ctx.unlocked.has(m.id) ? ctx.unlocked.delete(m.id) : ctx.unlocked.add(m.id)); ctx.redraw(); } });
   if (ed) items.push({ label: m.show_label === 0 ? "Pokaż nazwę znacznika na wykresie" : "Ukryj nazwę znacznika na wykresie", fn: () => mkdUpdate(m, { show_label: m.show_label === 0 ? 1 : 0 }) });
   if (ed) items.push({ label: m.group_name ? "Przenieś do innej grupy…" : "Dodaj do grupy…", fn: () => mkGroupDialog(ctx, [m]) });
   if (m.group_name) {
@@ -365,7 +393,7 @@ async function mkStep(ctx, m, dir) {
 }
 // A marker from the list / a group: opens the chart that holds it.
 async function gotoMarker(m) {
-  const last = m.kind === "range" ? m.end_us : m.at_us, pad = Math.max((last - m.at_us) * 0.3, 20e6);
+  const last = mkSpan(m) ? m.end_us : m.at_us, pad = Math.max((last - m.at_us) * 0.3, 20e6);
   if (m.rec_id) {
     const [src, id] = m.rec_id.split("|");
     go("recs"); await initRecs();
@@ -392,7 +420,7 @@ function mkMatches(m, f) {   // the filters of the list view applied to a draft 
   if (f.priority !== "" && m.priority !== +f.priority) return false;
   if (f.group !== "*" && (m.group_name || "").toLowerCase() !== f.group.toLowerCase()) return false;
   if (f.author && (m.author || "").toLowerCase() !== f.author.toLowerCase()) return false;
-  if (f.from && f.to && ((m.kind === "range" ? m.end_us : m.at_us) < f.from || m.at_us > f.to)) return false;
+  if (f.from && f.to && ((mkSpan(m) ? m.end_us : m.at_us) < f.from || m.at_us > f.to)) return false;
   return true;
 }
 async function refreshMarkers() {
@@ -421,7 +449,7 @@ async function refreshMarkers() {
   $("mkl-author").hidden = me.role !== "admin" && d.authors.length < 2;
   $("t-mkl").tBodies[0].innerHTML = mkList.map((m) => { const st = mkdState(m.id); return `<tr data-id="${m.id}" class="${st ? "mkp-" + st : ""}"><td><input type="checkbox" ${mkSel.has(m.id) ? "checked" : ""} ${m.can_edit && st !== "deleted" ? "" : "disabled"}></td>
     <td>${mkStamp(m.at_us)}</td><td><span style="color:${esc(m.color)}">■</span> <b>${st === "deleted" ? "<s>" : ""}${esc(m.title || "(bez tytułu)")}${st === "deleted" ? "</s>" : ""}</b>${st ? ` <span class="mk-state">✱ ${MKD_PL[st]}</span>` : ""}${m.description ? `<div class="muted">${esc(m.description)}</div>` : ""}</td>
-    <td>${m.kind === "range" ? "Zakres (" + mkDur((m.end_us - m.at_us) / 1e6) + ")" : "Punkt"}</td><td>${MK_PRIO_PL[m.priority] || m.priority}</td><td>${esc(m.signals.join(", ") || "wszystkie")}</td>
+    <td>${m.kind === "range" ? "Zakres (" + mkDur((m.end_us - m.at_us) / 1e6) + ")" : m.kind === "delta" ? "Różnica sygnału (" + mkDur((m.end_us - m.at_us) / 1e6) + ")" : "Punkt"}</td><td>${MK_PRIO_PL[m.priority] || m.priority}</td><td>${esc(m.signals.join(", ") || "wszystkie")}</td>
     <td>${esc(m.group_name)}</td><td>${esc(m.author)}</td><td>${esc(m.conn_name || (m.rec_id ? "nagranie" : ""))}</td><td class="muted">${mkStamp(m.modified_us).slice(0, 19)}</td>
     <td>${m.id > 0 || !m.rec_id ? '<button data-act="go">Pokaż</button> ' : ""}<button data-act="edit">${m.can_edit && st !== "deleted" ? "Edytuj" : "Szczegóły"}</button> ${st ? '<button data-act="undo">Cofnij zmianę</button> ' : ""}${m.can_edit && st !== "deleted" ? '<button data-act="del">Usuń</button>' : ""}</td></tr>`; }).join("")
     || '<tr><td colspan="11" class="muted">Brak znaczników. Dodasz je prawym przyciskiem myszy na wykresie (Podgląd na żywo albo Nagrania).</td></tr>';

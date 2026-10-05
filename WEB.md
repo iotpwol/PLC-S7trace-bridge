@@ -162,8 +162,8 @@ Po usunięciu konta jego połączenia zostają w pliku i widzi je administrator.
 - Serwer wysyła do 4000 punktów na zapytanie (przerzedzanie równomierne); brakujące odczyty (przerwa w łączności) to przerwa w linii.
 - Przy rozłączeniu proces odczytu sam ponawia połączenie (stan „ponawianie”); wykres pokazuje przerwę.
 - **Narzędzia wykresu** (pasek nad wykresem; te same na „Podgląd na żywo” i w „Nagrania”, odpowiednik programu okienkowego):
-  - **Kursory V** – klik na wykresie stawia kursor czasu (najwyżej 2, można je przeciągać); odczyt w ramce: czas każdego kursora i wartości sygnałów, Δt i częstotliwość;
-  - **Kursory H** – kursory wartości (najwyżej 2): w układzie pasm wartość w pasie pod linią (albo „poza pasmem sygnału”), ΔY; w układzie offset – wartość na osi Y;
+  - **Oś czasu / Offset [s]** – opisy osi: „wg połączenia”, „Względna” (jak dotąd: −N s … teraz), „Czas aplikacji” (zegar serwera) albo „Czas PLC” (zegar sterownika = serwer + różnica z chwili połączenia); zegar ma postać `HH:MM:SS'mmm` z tylu częściami, ile wynika z powiększenia; offset (± s) koryguje pokazywany czas (dotyczy osi zegarowych). Domyślną oś i offset połączenia ustawia edytor („Zakres okna wykresu”);
+  - **Znacznik poziomu sygnału** – poziome kursory wartości (najwyżej 2): w układzie pasm wartość w pasie pod linią (albo „poza pasmem sygnału”), ΔY; w układzie offset – wartość na osi Y;
   - **przybliżanie i przesuwanie:** Ctrl + kółko myszy przybliża / oddala wokół kursora, przeciągnięcie przesuwa, Shift + przeciągnięcie = przybliżenie do zaznaczonego zakresu
     (najmniejsze okno 0,1 s). Na żywo widok zostaje w miejscu (dane dalej napływają), przycisk „Wróć do danych na żywo” przywraca okno kroczące; w nagraniach serwer
     czyta wtedy wybrany zakres dokładniej, „Cały przebieg” wraca do całości;
@@ -341,8 +341,8 @@ dla zamkniętych połączeń; nagłówki `Cache-Control: no-store`, `X-Content-T
 
 Tryb Web **nie zastępuje** programu okienkowego, tylko go uzupełnia. Czego w przeglądarce nie ma (lub działa inaczej):
 
-- Wykres: pasy na sygnał (wysokość wg „Share”, jak w programie) albo układ offset, etykiety osi w kolorze pasa, kursory V / H, przybliżanie i przesuwanie, pasek przeglądowy,
-  „Punkty” (p. 6). **Różnice:** przybliżanie kółkiem wymaga Ctrl (zwykłe kółko przewija stronę); zakres przesuwania na żywo ogranicza to, co strona zebrała od otwarcia
+- Wykres: pasy na sygnał (wysokość wg „Share”, jak w programie) albo układ offset, etykiety osi w kolorze pasa, znacznik poziomu sygnału (H), oś czasu zegarowa z offsetem, przybliżanie i przesuwanie, pasek przeglądowy,
+  „Punkty” (p. 6). **Różnice:** w osi „Względna” przeglądarka nie rysuje wartości (tylko „−N s … teraz”) i ignoruje offset; zegar używa strefy czasowej przeglądarki; przybliżanie kółkiem wymaga Ctrl (zwykłe kółko przewija stronę); zakres przesuwania na żywo ogranicza to, co strona zebrała od otwarcia
   wykresu; wyboru układu / punktów w pasku wykresu nie pamięta serwer (wartości domyślne są w konfiguracji połączenia); brak przeciągania legendy, motywów i profili kolorów interfejsu
   (wygląd linii znaczników jest pamiętany na koncie – `prefs\`, p. 19.2).
 - Diagnostyka w przeglądarce (p. 6) pokazuje to samo co okno programu okienkowego, ale **bez wykresów opóźnień, bez zapisu raportu i bez ciągłego pingu** (jeden ping na żądanie, z serwera);
@@ -472,7 +472,7 @@ wykresu na żywo i do nagrania w bazie; znacznik założony na nagraniu zapamię
 - **Prawy przycisk na znaczniku** – menu: edycja (albo „Szczegóły”, gdy nie wolno edytować), zmiana pozycji (znacznik się podświetla, klik w nowe miejsce),
   ukrycie / pokazanie nazwy na wykresie, grupy (dodaj / przenieś / usuń z grupy, podświetl grupę, następny i poprzedni znacznik grupy, zmiana nazwy grupy),
   cofnięcie niezapisanej zmiany, usunięcie.
-- Menu prawego przycisku zawiera też: **„Znacznik zakresu z kursorów V1–V2…”** (gdy stoją oba kursory V), „Lista znaczników…” (lista z zakresem bieżącego połączenia), „Szukaj w danych…” oraz – na wykresie na żywo – przełącznik **„Pokaż też znaczniki z innych połączeń”**.
+- Menu prawego przycisku zawiera też: **„Dodaj znacznik różnicy poziomu…”** (znacznik „Różnica sygnału” dla pasa pod kliknięciem: poziom na obu końcach, strzałka i Δ wartości), „Lista znaczników…” (lista z zakresem bieżącego połączenia), „Szukaj w danych…” oraz – na wykresie na żywo – przełącznik **„Pokaż też znaczniki z innych połączeń”**. Znacznik jest domyślnie **zablokowany** (przeciągnięcie przesuwa wykres); „Zmień pozycję znacznika” w jego menu (✓ = odblokowany, ponowny wybór blokuje) pozwala go przeciągać.
 - **Skróty klawiszowe** (gdy jest otwarty wykres lub lista): Ctrl+M – lista znaczników, Ctrl+Shift+M – dodaj znacznik teraz (na żywo), Ctrl+Shift+S – zapisz znaczniki, Ctrl+F – wyszukiwarka danych (zastępuje wyszukiwanie przeglądarki tylko na tych stronach).
 - **Dwuklik na znaczniku** – okno edycji (albo szczegółów, gdy nie wolno edytować).
 - **Przeciąganie myszą** – punkt przesuwa się w całości, zakres można chwycić za brzeg albo za wnętrze.

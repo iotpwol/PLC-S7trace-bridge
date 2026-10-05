@@ -11,7 +11,7 @@ from collections import deque
 from datetime import datetime, timedelta
 
 from PySide6.QtCore import QEvent, QTimer, Qt, Signal as QtSignal
-from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
                                QGroupBox, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMenu, QMessageBox,
                                QPushButton, QScrollArea, QSizePolicy, QSpinBox, QSplitter, QVBoxLayout, QWidget)
@@ -28,7 +28,7 @@ from ..core.csvio import CsvRecorder, csv_start_wall, read_csv, write_csv
 from ..core.planner import MODES
 from ..core.symbols import Symbol
 from ..core.netaddr import ACCEPTABLE, ipv4_state
-from ..core.types import LEGEND_MODES, Signal, signal_tip
+from ..core.types import LEGEND_MODES, TIME_AXES, TIME_OFFSET_MAX, Signal, axis_shift, signal_tip
 from ..core.drivers import CONN_LABEL, SOURCE_OF, family_of
 from .diag_dialog import DiagDialog
 from .duration_combo import DurationCombo
@@ -249,10 +249,27 @@ class TraceTab(QWidget):
             "Pasma wg Share: każdy sygnał ma własne pasmo na osi pionowej (wysokość ~ kolumna „Share” w oknie Sygnały), "
             "skalowane do MIN…MAX widocznego fragmentu; oś pokazuje wartości MIN / pośrednie / MAX.\n"
             "Offset + Gain: jedna wspólna skala, sygnały przesunięte o „Offset Y” i pomnożone przez „Gain”.")
+        self.cb_taxis = QComboBox()
+        for k, label in TIME_AXES.items():
+            self.cb_taxis.addItem(label, k)
+        self.cb_taxis.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.cb_taxis.setMinimumContentsLength(8)
+        self.cb_taxis.setMinimumWidth(70)
+        self._taxis_tip = (
+            "Opisy osi czasu: sekundy od startu albo zegar HH:MM:SS'mmm – komputera (aplikacji) lub sterownika PLC (zegar PLC = zegar "
+            "komputera + różnica odczytana przy połączeniu). Zakres opisu zależy od powiększenia.")
+        self.cb_taxis.setToolTip(self._taxis_tip)
+        self.sp_toff = _spin(-TIME_OFFSET_MAX, TIME_OFFSET_MAX, 0.0, dec=3)
+        self.sp_toff.setSingleStep(0.1)
+        self.sp_toff.setSuffix(" s")
+        self.sp_toff.setToolTip("Korekta czasu pokazywanego na osi (wartość dodatnia = późniejszy czas): do zgrania zegarów przy diagnostyce. "
+                                "Nie zmienia danych ani znaczników.")
         self.chk_auto = QCheckBox("Auto Y")
         self.sp_ymin = _spin(-1e9, 1e9, 0, dec=3)
         self.sp_ymax = _spin(-1e9, 1e9, 10, dec=3)
         f.addRow("Okno czasu [s]:", self.sp_window)
+        f.addRow("Oś czasu:", self.cb_taxis)
+        f.addRow("Offset osi [s]:", self.sp_toff)
         f.addRow("Układ osi Y:", self.cb_ylayout)
         f.addRow(self.chk_auto)
         f.addRow("Y min:", self.sp_ymin)
@@ -340,12 +357,10 @@ class TraceTab(QWidget):
         self.btn_rec = QPushButton("REC")
         self.btn_rec.setCheckable(True)
         self.btn_rec.toggled.connect(lambda _on: self._blink_tick(reset=True))
-        self.btn_pts = QPushButton("Punkty")
-        self.btn_pts.setCheckable(True)
-        self.btn_v = QPushButton("V znacznik")
-        self.btn_v.setCheckable(True)
-        self.btn_h = QPushButton("H znacznik")
-        self.btn_h.setCheckable(True)
+        self.act_pts = QAction("Punkty", self)                  # menu Widok -> Punkty (the state lives here, per tab)
+        self.act_pts.setCheckable(True)
+        self.act_hlev = QAction("Znacznik poziomu sygnału", self)     # menu Znaczniki (was the 'H znacznik' button)
+        self.act_hlev.setCheckable(True)
         self.btn_mrk = QPushButton("Lista znaczników…")
         self.btn_mrk.setToolTip("Lista znaczników (zakładek) na wykresie: wyszukiwanie, edycja, przejście do punktu.\n"
                                 "Znacznik dodasz też prawym przyciskiem myszy na wykresie.")
@@ -358,22 +373,16 @@ class TraceTab(QWidget):
         self.btn_sig = QPushButton("Sygnały...")
         self.btn_diag = QPushButton("Diagnostyka…")
         self.btn_diag.setToolTip("Szczegółowa diagnostyka połączenia: opóźnienia, utracone cykle, ping, przepustowość")
-        self.btn_exp = QPushButton("Eksport okna → CSV")
-        self.btn_imp = QPushButton("Import CSV → wykres")
-        for b in (self.btn_start, self.btn_stop, self.btn_pause, self.btn_rec, self.btn_pts,
-                  self.btn_v, self.btn_h):
+        for b in (self.btn_start, self.btn_stop, self.btn_pause, self.btn_rec):
             bar.addWidget(b)
         bar.addStretch()
-        for b in (self.btn_sig, self.btn_diag, self.btn_exp, self.btn_imp):
+        for b in (self.btn_sig, self.btn_diag):
             bar.addWidget(b)
         right.addLayout(bar)
         mbar = QHBoxLayout()                          # markers + search: their own row, so they are easy to find
         self.btn_madd = QPushButton("Dodaj znacznik")
         self.btn_madd.setToolTip("Dodaje znacznik na najnowszej próbce (na żywo) albo w środku widocznego zakresu.\n"
                                  "Znacznik w dowolnym miejscu: prawy przycisk myszy na wykresie.")
-        mlbl = QLabel("Znaczniki:")
-        mlbl.setStyleSheet("font-weight:bold")
-        mbar.addWidget(mlbl)
         for b in (self.btn_madd, self.btn_mrk, self.btn_msave, self.btn_find):
             mbar.addWidget(b)
         mbar.addStretch()
@@ -396,13 +405,15 @@ class TraceTab(QWidget):
         self.plot.legendContextMenu.connect(self._legend_menu)
         self.plot.legend_tip = self._legend_signal_tip
         self.cb_ylayout.currentIndexChanged.connect(self._on_ylayout)
+        self.cb_taxis.currentIndexChanged.connect(self._time_axis_changed)
+        self.sp_toff.valueChanged.connect(self._time_axis_changed)
 
         for b, role in ((self.btn_start, "start"), (self.btn_stop, "stop"), (self.btn_pause, "pause"),
-                        (self.btn_rec, "rec"), (self.btn_pts, "mark"), (self.btn_v, "mark"), (self.btn_h, "mark")):
+                        (self.btn_rec, "rec")):
             b.setProperty("ctl", True)
             b.setProperty("role", role)
             b.setProperty("on", False)
-        for b in (self.btn_pause, self.btn_rec, self.btn_pts, self.btn_v, self.btn_h):
+        for b in (self.btn_pause, self.btn_rec):
             b.toggled.connect(lambda on, w=b: self._set_on(w, on))
 
         # ---- wiring
@@ -410,9 +421,8 @@ class TraceTab(QWidget):
         self.btn_stop.clicked.connect(self.stop)
         self.btn_pause.toggled.connect(self._on_pause)
         self.btn_rec.toggled.connect(self._on_rec)
-        self.btn_pts.toggled.connect(self.plot.set_points)
-        self.btn_v.toggled.connect(self.plot.set_v_mode)
-        self.btn_h.toggled.connect(self.plot.set_h_mode)
+        self.act_pts.toggled.connect(self.plot.set_points)
+        self.act_hlev.toggled.connect(self.plot.set_h_mode)
         self.mk = TabMarkers(self)                    # bookmarks on the chart (right click) + the search window
         self.btn_mrk.clicked.connect(lambda: self.mk.open_list())
         self.btn_find.clicked.connect(lambda: self.mk.open_search())
@@ -420,8 +430,6 @@ class TraceTab(QWidget):
         self.btn_msave.clicked.connect(lambda: self.mk.save())
         self.btn_sig.clicked.connect(self.edit_signals)
         self.btn_diag.clicked.connect(self.open_diag)
-        self.btn_exp.clicked.connect(self.export_window)
-        self.btn_imp.clicked.connect(self.import_csv)
         self.sp_window.valueChanged.connect(self.plot.set_window)
         self.chk_auto.toggled.connect(self._on_auto_y)
         self.sp_ymin.valueChanged.connect(self._on_y_manual)
@@ -643,7 +651,7 @@ class TraceTab(QWidget):
         self.chk_auto.setChecked(c.auto_y)
         self.sp_ymin.setValue(c.y_min)
         self.sp_ymax.setValue(c.y_max)
-        self.btn_pts.setChecked(c.show_points)
+        self.act_pts.setChecked(c.show_points)
         t = c.trigger
         self.chk_trig.setChecked(t.enabled)
         self.cb_tmode.setCurrentText(t.mode)
@@ -670,7 +678,10 @@ class TraceTab(QWidget):
         self._rkind_changed()
         self.plot.set_legend_pos(float(c.legend_pos[0]), float(c.legend_pos[1]))
         self.plot.set_legend_mode(c.legend_mode)
+        self.cb_taxis.setCurrentIndex(max(self.cb_taxis.findData(c.time_axis), 0))
+        self.sp_toff.setValue(c.time_offset)
         self._loading = False
+        self.apply_time_axis()
         self._trigger_changed()
 
     def _collect(self) -> TabConfig:
@@ -682,7 +693,8 @@ class TraceTab(QWidget):
         c.window_s = self.sp_window.value()
         c.auto_y = self.chk_auto.isChecked()
         c.y_min, c.y_max = self.sp_ymin.value(), self.sp_ymax.value()
-        c.show_points = self.btn_pts.isChecked()
+        c.show_points = self.act_pts.isChecked()
+        c.time_axis, c.time_offset = self.cb_taxis.currentData(), self.sp_toff.value()
         c.y_layout = self.cb_ylayout.currentData()
         c.rec_folder, c.rec_filename = self.ed_rfolder.text().strip(), self.ed_rname.text().strip()
         c.store.kind, c.store.mode = self.cb_rkind.currentData(), self.cb_rmode.currentData()
@@ -731,6 +743,20 @@ class TraceTab(QWidget):
         self.sp_ymin.setEnabled(manual_ok and not on)
         self.sp_ymax.setEnabled(manual_ok and not on)
         self.plot.set_auto_y(on)
+
+    def _time_axis_changed(self, *_) -> None:
+        if self._loading:
+            return
+        self.cfg.time_axis, self.cfg.time_offset = self.cb_taxis.currentData(), self.sp_toff.value()
+        self.apply_time_axis()
+
+    def apply_time_axis(self) -> None:
+        """Labels of the time axes: relative seconds or the computer / PLC clock, plus the offset (core.types.axis_shift)."""
+        mode = self.cb_taxis.currentData() or "rel"
+        diff = (self.device or {}).get("time_diff_local") if mode == "plc" else None
+        self.plot.set_time_axis(mode, axis_shift(mode, self.start_wall.timestamp(), diff, self.sp_toff.value()))
+        self.cb_taxis.setToolTip(self._taxis_tip + (chr(10) + "Brak danych czasu PLC (połącz się ze sterownikiem) – pokazywany jest czas komputera."
+                                                    if mode == "plc" and diff is None else ""))
 
     def _on_ylayout(self, *_):
         if self._loading:
@@ -922,6 +948,7 @@ class TraceTab(QWidget):
         """Data of the PLC read right after a (re)connection: replaces the previous data of this address."""
         self.device, self._device_ip = d, self.ed_ip.text()
         self._show_device()
+        self.apply_time_axis()                                     # the PLC clock follows the newest difference
         if isinstance(self.recorder, DbRecorder):                  # the recording carries the data of the PLC it was made on
             self.recorder.update_device(device_summary(d, self._device_ip))
 
@@ -929,6 +956,7 @@ class TraceTab(QWidget):
         if self.device is not None and self.ed_ip.text() != self._device_ip:      # another device: the data is stale
             self.device = None
             self._show_device()
+            self.apply_time_axis()
 
     def _show_device(self) -> None:
         d = self.device
@@ -1013,6 +1041,7 @@ class TraceTab(QWidget):
         if state == "running":
             if self.state in ("connecting", "stopped"):
                 self.start_wall = datetime.now()
+                self.apply_time_axis()
             self.status_msg = msg
             self.state = "running"
             ip_history.add(self.ed_ip.text())                  # an address that really connected: remembered per user
@@ -1051,7 +1080,6 @@ class TraceTab(QWidget):
         self._set_on(self.btn_start, not stopped)       # "on" = connection is active
         self._set_on(self.btn_stop, stopped)            # "on" = connection is stopped
         self.btn_pause.setEnabled(not stopped)
-        self.btn_imp.setEnabled(stopped)
         for w in self._conn_widgets:
             w.setEnabled(stopped)
 
@@ -1137,7 +1165,7 @@ class TraceTab(QWidget):
 
     def _update_status(self):
         hint = (" | <b>Punkty ukryte: za dużo próbek w oknie – przybliż wykres albo zwiększ limit "
-                "(Ustawienia → Renderowanie wykresu)</b>") if self.btn_pts.isChecked() and self.plot.points_hidden else ""
+                "(Ustawienia → Renderowanie wykresu)</b>") if self.act_pts.isChecked() and self.plot.points_hidden else ""
         if self.acq and self.state in ("running", "reconnecting"):
             st = self.acq.stats
             st.gui_lag_ms = self.plot.gui_lag_ms
@@ -1222,6 +1250,7 @@ class TraceTab(QWidget):
 
     def import_csv(self):
         if self.state != "stopped":
+            QMessageBox.information(self, "S7Trace", "Import CSV jest dostępny tylko przy zatrzymanym połączeniu.")
             return
         path, _ = QFileDialog.getOpenFileName(self, "Import CSV → wykres", self._abs_folder(), "CSV (*.csv *.txt)")
         if not path:
@@ -1236,6 +1265,7 @@ class TraceTab(QWidget):
 
     def _show_loaded(self, sigs, t, v, message: str, info: dict | None = None) -> None:
         self.loaded = info                                   # what the tab shows (tooltip of the tab); None = a live tab
+        self.apply_time_axis()
         self.cfg.signals = sigs
         self._run_signals = [Signal.from_dict(s.to_dict()) for s in sigs]
         self.buffer.load(t, v)
@@ -1305,8 +1335,27 @@ class TraceTab(QWidget):
         name = (meta.get("title") or meta.get("conf") or meta.get("tab") or meta.get("id") or "").strip()
         self._show_loaded(sigs, t, v, f"Wczytano {len(t)} próbek z bazy ({meta.get('tab') or meta['id']}){note}",
                           {"meta": meta, "used": used, "samples": len(t)})
+        self._adopt_recording_device(meta, sigs)
         if name:
             self.rename(name)
+
+    def _adopt_recording_device(self, meta: dict, sigs: list) -> None:
+        """A recording carries the PLC it was made on (address, rack / slot, identity data): the boxes 'Połączenie' and 'Sterownik'
+        show them, so the data can be tied to the right controller. A recording made before this was stored leaves them unchanged."""
+        dev = meta.get("device") if isinstance(meta.get("device"), dict) else {}
+        ip = str(dev.get("ip") or meta.get("ip") or "").strip()
+        if ip:
+            self.ed_ip.setText(ip)                                   # (a changed address clears the device data, set below)
+        if dev:
+            self.sp_rack.setValue(int(dev.get("rack") or 0))
+            self.sp_slot.setValue(int(dev.get("slot") if dev.get("slot") is not None else 2))
+        fam = family_of(sigs)
+        if fam and (dev or ip):
+            self.set_conn_type(fam)
+        if dev.get("info"):
+            self.device, self._device_ip = dict(dev), self.ed_ip.text()
+            self._show_device()
+            self.apply_time_axis()
 
     def open_recording_at(self, rec_id: str, a_us: int, b_us: int, width_s: float, sess: dict | None = None) -> None:
         """Opens the part of a recording of this tab's database target around [a, b] (a marker, a search result) and shows it

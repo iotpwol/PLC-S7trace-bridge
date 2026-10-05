@@ -12,6 +12,7 @@ from PySide6.QtGui import QColor, QCursor, QFontMetricsF, QPen
 from PySide6.QtWidgets import QApplication, QLabel, QSplitter, QToolTip, QVBoxLayout, QWidget
 
 from ..core import marker_look, render, render_cfg
+from ..core.markers import SPAN_KINDS
 from ..core.types import legend_text
 from .fold_splitter import FoldSplitter
 from ..core.buffer import TraceBuffer
@@ -24,8 +25,53 @@ MIN_WINDOW = 0.1          # [s] the narrowest time window (mouse wheel stops her
 LANE_PAD = 0.08           # empty margin inside a lane, as a fraction of the lane height
 
 
+NICE_SPACING = [0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800,
+                3600, 7200, 10800, 21600, 43200, 86400]          # [s] steps of the clock-like time axis
+
+
 class TimeAxis(pg.AxisItem):
+    """Bottom axis. mode 'rel': seconds from the start (the label is x + shift); 'app' / 'plc': a clock HH:MM:SS'mmm where `shift`
+    is the epoch time of x = 0 on that clock; the ticks then fall on whole clock seconds / minutes and only as many parts
+    of the time are written as the zoom needs (see core.types.axis_shift)."""
+
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.mode = "rel"
+        self.shift = 0.0
+
+    def set_clock(self, mode: str, shift: float) -> None:
+        if (mode, shift) != (self.mode, self.shift):
+            self.mode, self.shift = mode, shift
+            self.picture = None
+            self.update()
+
+    def tickValues(self, minVal, maxVal, size):
+        if self.mode == "rel" and not self.shift:
+            return super().tickValues(minVal, maxVal, size)
+        span = maxVal - minVal
+        if size <= 0 or span <= 0:
+            return []
+        sp = next((n for n in NICE_SPACING if span / n <= max(size / 120.0, 1.0)), NICE_SPACING[-1])
+        tz = time.localtime(self.shift + minVal).tm_gmtoff if self.mode != "rel" else 0       # whole local hours / minutes
+        first = math.ceil((minVal + self.shift + tz) / sp)
+        last = math.floor((maxVal + self.shift + tz) / sp)
+        return [(sp, [k * sp - self.shift - tz for k in range(first, min(last, first + 400) + 1)])]
+
     def tickStrings(self, values, scale, spacing):
+        if self.mode != "rel":
+            out = []
+            for v in values:
+                ms = int(round((v + self.shift) * 1000))
+                lt = time.localtime(ms // 1000)
+                if spacing and spacing >= 60:
+                    out.append(f"{lt.tm_hour:02d}:{lt.tm_min:02d}")
+                elif spacing and spacing >= 1:
+                    out.append(f"{lt.tm_hour:02d}:{lt.tm_min:02d}:{lt.tm_sec:02d}")
+                else:
+                    out.append(f"{lt.tm_hour:02d}:{lt.tm_min:02d}:{lt.tm_sec:02d}'{ms % 1000:03d}")
+            return out
+        if self.shift:
+            values = [v + self.shift for v in values]
         dec = 0
         if spacing and spacing < 1:
             dec = min(6, int(math.ceil(-math.log10(spacing))))      # sub-second ticks need decimals
@@ -148,16 +194,17 @@ class PlotView(QWidget):
         self._busy = False
         self.gui_lag_ms = 0.0
         self.trigger_lines: list[pg.InfiniteLine] = []
-        self.vmarks: list[pg.InfiniteLine] = []
         self.hmarks: list[pg.InfiniteLine] = []
+        self._delta_items: list = []                       # overlay of 'Różnica sygnału' markers (levels + the difference)
         self.mitems: dict[int, dict] = {}                 # bookmarks (core.markers) drawn in the visible range
         self.mlook = dict(marker_look.DEFAULTS)           # line widths of the markers (Znaczniki -> Wygląd znaczników)
         self.mhi: set[int] = set()                        # markers drawn highlighted (the one being moved / a whole group)
         self._tip_id: int | None = None                   # marker whose bubble is shown
         self.place_marker: int | None = None              # waiting for a click that gives the new place of this marker
         self._mset = False
-        self.v_mode = False
         self.h_mode = False
+        self.ctx_y = 0.0
+        self.mmovable: set[int] = set()                   # markers unlocked for dragging (right click -> Zmień pozycję znacznika)
         self.legend_pos = (0.0, 0.0)
         self.legend_mode = "name"                      # "name" / "address": what the legend shows
         self.legend_tip = None                         # callable(signal index) -> bubble text of the signal under the cursor
@@ -555,20 +602,18 @@ class PlotView(QWidget):
             return
         if ev.button() == Qt.RightButton and self.vb.sceneBoundingRect().contains(ev.scenePos()):
             ev.accept()
+            self.ctx_y = float(self.vb.mapSceneToView(ev.scenePos()).y())          # height of the click: which plot a level marker is for
             self.markerRequested.emit(float(self.vb.mapSceneToView(ev.scenePos()).x()), ev.screenPos().toPoint())
             return
         if ev.button() != Qt.LeftButton or ev.double():
             return
-        if not (self.v_mode or self.h_mode):
+        if not self.h_mode:
             return
         pos = ev.scenePos()
         if not self.vb.sceneBoundingRect().contains(pos):
             return
         pt = self.vb.mapSceneToView(pos)
-        if self.v_mode:
-            self._add_marker(self.vmarks, pt.x(), 90)
-        if self.h_mode:
-            self._add_marker(self.hmarks, pt.y(), 0)
+        self._add_marker(self.hmarks, pt.y(), 0)
         ev.accept()
         self.update_readout()
 
@@ -586,14 +631,6 @@ class PlotView(QWidget):
         self.plot.addItem(line, ignoreBounds=True)
         lst.append(line)
 
-    def set_v_mode(self, on: bool) -> None:
-        self.v_mode = on
-        if not on:
-            for m in self.vmarks:
-                self.plot.removeItem(m)
-            self.vmarks.clear()
-        self.update_readout()
-
     def set_h_mode(self, on: bool) -> None:
         self.h_mode = on
         if not on:
@@ -604,6 +641,18 @@ class PlotView(QWidget):
 
     # ------------------------------------------------------------ bookmarks
     LINE_STYLES = {"solid": Qt.SolidLine, "dash": Qt.DashLine, "dot": Qt.DotLine, "dashdot": Qt.DashDotLine}
+
+    def set_time_axis(self, mode: str, shift: float) -> None:
+        """Labels of the time axes (chart and overview): see TimeAxis / core.types.axis_shift."""
+        for ax in (self.plot.getAxis("bottom"), self.ov.getAxis("bottom")):
+            ax.set_clock(mode, shift)
+
+    def set_marker_movable(self, mid: int, on: bool) -> None:
+        """A marker can be dragged only while it is unlocked, so a drag that starts on a marker pans the chart instead."""
+        (self.mmovable.add if on else self.mmovable.discard)(mid)
+        cur = self.mitems.get(mid)
+        if cur is not None:
+            cur["main"].setMovable(on)
 
     def set_markers(self, items: list[dict]) -> None:
         """items = dicts: id, kind ('point' / 'range'), x0, x1 (time [s]; x1 only for a range), color '#rrggbb', width [px],
@@ -629,7 +678,7 @@ class PlotView(QWidget):
                     main = cur["main"]
                     moving = getattr(main, "moving", False) or any(getattr(l, "moving", False) for l in getattr(main, "lines", []))
                     if not moving:
-                        if it["kind"] == "range":
+                        if it["kind"] in SPAN_KINDS:
                             if tuple(main.getRegion()) != (it["x0"], it["x1"]):
                                 main.setRegion((it["x0"], it["x1"]))
                         elif abs(main.value() - it["x0"]) > 1e-9:
@@ -638,6 +687,7 @@ class PlotView(QWidget):
                 cur["main"].setToolTip(it["tip"])
             self._marker_extras()
             self._marker_style()
+            self._delta_overlay()
         finally:
             self._mset = False
 
@@ -675,10 +725,10 @@ class PlotView(QWidget):
         text = (text[:28] + "…") if len(text) > 29 else text
         restricted = bool(it["signals"])
         label_opts = {"color": col, "position": 0.985, "rotateAxis": (1, 0), "anchors": [(1, 1), (1, 1)]}
-        if it["kind"] == "range":
+        if it["kind"] in SPAN_KINDS:
             fill = self._range_fill(it)
             main = _MarkerRegion(values=(it["x0"], it["x1"]), brush=pg.mkBrush(fill), pen=self._marker_pen(it),
-                                 hoverBrush=pg.mkBrush(fill))
+                                 hoverBrush=pg.mkBrush(fill), movable=mid in self.mmovable)
             main.setZValue(7)
             main.sigRegionChangeFinished.connect(lambda r, i=mid: self._marker_dropped(i, r))
             main.sigRegionClicked.connect(lambda ev, i=mid: self._marker_clicked(i, ev))
@@ -688,7 +738,7 @@ class PlotView(QWidget):
             label = pg.InfLineLabel(main.lines[0], text, position=0.985, color=col, rotateAxis=(1, 0), anchors=[(1, 1), (1, 1)])
             self.plot.addItem(main, ignoreBounds=True)
         else:
-            main = pg.InfiniteLine(pos=it["x0"], angle=90, movable=True, pen=self._marker_pen(it),
+            main = pg.InfiniteLine(pos=it["x0"], angle=90, movable=mid in self.mmovable, pen=self._marker_pen(it),
                                    hoverPen=self._hover_pen(it), label=text, labelOpts=label_opts)
             main.setZValue(8)
             main.sigPositionChangeFinished.connect(lambda l, i=mid: self._marker_dropped(i, l))
@@ -718,7 +768,7 @@ class PlotView(QWidget):
             for k, (b, t) in self._lane_geo.items():
                 if k >= len(self.signals) or self.signals[k].name not in it["signals"]:
                     continue
-                if it["kind"] == "range":
+                if it["kind"] in SPAN_KINDS:
                     r = pg.QtWidgets.QGraphicsRectItem(it["x0"], b, it["x1"] - it["x0"], t - b)
                     fill = QColor(col)
                     fill.setAlpha(self._alpha(it))
@@ -729,12 +779,66 @@ class PlotView(QWidget):
                     self.plot.addItem(r, ignoreBounds=True)
                     cur["extras"].append(r)
                 pen = pg.mkPen(col, width=self._width(it, "sel"), style=self.LINE_STYLES.get(it["style"], Qt.SolidLine))
-                for x in ((it["x0"], it["x1"]) if it["kind"] == "range" else (it["x0"],)):     # a bar (edges of a range) in the lane
+                for x in ((it["x0"], it["x1"]) if it["kind"] in SPAN_KINDS else (it["x0"],)):     # a bar (edges of a range) in the lane
                     seg = pg.PlotCurveItem([x, x], [b, t], pen=pen)
                     seg.setZValue(7)
                     seg.setAcceptedMouseButtons(Qt.NoButton)
                     self.plot.addItem(seg, ignoreBounds=True)
                     cur["extras"].append(seg)
+
+    def _level_at(self, k: int, t: float):
+        """(raw value, y on the chart) of signal k at time t (the last sample at or before t); None when there is no such sample."""
+        s = self.signals[k]
+        ts, vs = self.buffer.snapshot(t, t)
+        if not len(ts) or k >= vs.shape[1]:
+            return None
+        j = int(np.searchsorted(ts, t, "right")) - 1
+        if j < 0:
+            return None
+        v = float(vs[j, k])
+        if not math.isfinite(v):
+            return None
+        if self.y_layout == "lanes":
+            info = self._lane_info.get(k)
+            if info is None or info[3] <= info[2]:
+                return None
+            b, top, lo, hi, _ = info
+            return v, b + (v * s.gain - lo) / (hi - lo) * (top - b)
+        return v, v * s.gain + s.offset_y
+
+    def _delta_overlay(self) -> None:
+        """'Różnica sygnału': the level of the signal at both ends of the marker, an arrow between them and the difference of the
+        values. Redrawn with every chart refresh because the lane scale follows the visible window."""
+        for e in self._delta_items:
+            self.plot.removeItem(e)
+        self._delta_items = []
+        x_lo, x_hi = self._x
+        for cur in self.mitems.values():
+            it = cur["data"]
+            if it["kind"] != "delta" or len(it["signals"]) != 1:
+                continue
+            k = next((i for i, sg in enumerate(self.signals) if sg.name == it["signals"][0] and sg.plot), None)
+            if k is None or k >= len(self.curves):
+                continue
+            a, b = self._level_at(k, it["x0"]), self._level_at(k, it["x1"])
+            if a is None or b is None:
+                continue
+            col = QColor(it["color"])
+            width = self._width(it, "sel")
+            style = self.LINE_STYLES.get(it["style"], Qt.SolidLine)
+            ref = pg.PlotCurveItem([it["x0"], it["x1"]], [a[1], a[1]], pen=pg.mkPen(col, width=1, style=Qt.DotLine))
+            arrow = pg.PlotCurveItem([it["x1"], it["x1"]], [a[1], b[1]], pen=pg.mkPen(col, width=max(width, 2), style=style))
+            dots = pg.ScatterPlotItem(x=[it["x0"], it["x1"]], y=[a[1], b[1]], size=7, brush=pg.mkBrush(col), pen=pg.mkPen(None))
+            d = b[0] - a[0]
+            right = it["x1"] > x_lo + 0.8 * (x_hi - x_lo)
+            lab = pg.TextItem(f"Δ = {d:+.5g}  ({a[0]:.5g} → {b[0]:.5g})", color=col, anchor=(1.0 if right else 0.0, 0.5))
+            lab.setPos(it["x1"] + (-1 if right else 1) * self.vb.viewPixelSize()[0] * 6, (a[1] + b[1]) / 2)
+            for e, z in ((ref, 8), (arrow, 9), (dots, 9), (lab, 10)):
+                e.setZValue(z)
+                if hasattr(e, "setAcceptedMouseButtons"):
+                    e.setAcceptedMouseButtons(Qt.NoButton)
+                self.plot.addItem(e, ignoreBounds=True)
+                self._delta_items.append(e)
 
     def _marker_style(self) -> None:
         """The marker chosen for moving ('Zmień pozycję') is drawn white and thick; the others in their own colour."""
@@ -742,7 +846,7 @@ class PlotView(QWidget):
             it, hi = cur["data"], mid in self.mhi
             pen = self._marker_pen(it, hi)
             main = cur["main"]
-            if it["kind"] == "range":
+            if it["kind"] in SPAN_KINDS:
                 main.setBrush(pg.mkBrush(QColor(255, 255, 255, 90) if hi else self._range_fill(it)))
                 for ln in main.lines:
                     ln.setPen(pen)
@@ -753,6 +857,8 @@ class PlotView(QWidget):
 
     @staticmethod
     def _alpha(it: dict) -> int:
+        if it["kind"] == "delta":
+            return 0                                                  # a difference marker has no area, only the bars and the arrow
         return int(round(max(0, min(100, it["opacity"])) * 2.55))
 
     def _range_fill(self, it: dict) -> QColor:
@@ -788,7 +894,7 @@ class PlotView(QWidget):
             tol = self.vb.viewPixelSize()[0] * 6
             for mid, cur in self.mitems.items():
                 it = cur["data"]
-                hit = (it["x0"] - tol <= x <= it["x1"] + tol) if it["kind"] == "range" else abs(x - it["x0"]) <= tol
+                hit = (it["x0"] - tol <= x <= it["x1"] + tol) if it["kind"] in SPAN_KINDS else abs(x - it["x0"]) <= tol
                 if hit:
                     sc = (it["kind"] == "point", it["priority"])          # a line wins over the area it lies in
                     if score is None or sc > score:
@@ -818,7 +924,7 @@ class PlotView(QWidget):
         cur = self.mitems.get(mid)
         if cur is None:
             return
-        if cur["data"]["kind"] == "range":
+        if cur["data"]["kind"] in SPAN_KINDS:
             a, b = item.getRegion()
             self.markerMoved.emit(mid, float(a), float(b))
         else:
@@ -855,19 +961,6 @@ class PlotView(QWidget):
 
     def update_readout(self, *_):
         lines = []
-        for i, m in enumerate(self.vmarks, 1):
-            t = m.value()
-            ts, vs = self.buffer.snapshot(t, t)
-            vals = ""
-            if len(ts):
-                j = int(np.clip(np.searchsorted(ts, t, "right") - 1, 0, len(ts) - 1))
-                vals = "  " + "  ".join(f"{s.name}={vs[j, k]:g}" for k, s in enumerate(self.signals)
-                                        if k < vs.shape[1])
-            lines.append(f"V{i}: t={t:.3f} s{vals}")
-        if len(self.vmarks) == 2:
-            dt = self.vmarks[1].value() - self.vmarks[0].value()
-            f = f"  ({1 / abs(dt):.3f} Hz)" if dt else ""
-            lines.append(f"Δt = {dt:.3f} s{f}")
         if self.y_layout == "lanes":
             hv = [self._lane_value(m.value()) for m in self.hmarks]
             for i, h in enumerate(hv, 1):
@@ -985,6 +1078,8 @@ class PlotView(QWidget):
         else:
             self.vb.setYRange(*self.y_range, padding=0)
         self._update_overview(x0, x1, ver)
+        if self.mitems:
+            self._delta_overlay()
 
     def _update_overview(self, x0: float, x1: float, ver: int) -> None:
         if len(self.buffer) == 0:

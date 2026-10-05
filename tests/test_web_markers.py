@@ -253,3 +253,19 @@ def test_marker_look_is_kept_per_account_on_the_server(srv):
     assert ola.get("/api/prefs")[1]["prefs"]["marker_look"]["width_all"] == 5
     assert ala.get("/api/prefs")[1]["prefs"]["marker_look"]["width_all"] == 2          # another account is not affected
     assert os.path.isfile(os.path.join(srv.app.data_dir, "prefs", "u_ola.json"))
+
+
+def test_delta_marker_needs_one_signal_via_the_api(srv):
+    ola = _user(srv, "ola")
+    h = _host(srv, owner="ola")
+    base = {"action": "add", "kind": "delta", "at_us": BASE + 10_000_000, "end_us": BASE + 20_000_000, "conn": h.id}
+    for bad in ({}, {"signals": []}, {"signals": ["A", "B"]}, {"signals": ["A"], "end_us": BASE + 10_000_000}):
+        code, d = ola.post("/api/markers", {**base, **bad})
+        assert code == 400 and d["error"], bad
+    code, d = ola.post("/api/markers", {**base, "signals": ["A"], "title": "Wzrost"})
+    assert code == 200 and d["marker"]["kind"] == "delta" and d["marker"]["signals"] == ["A"] and d["marker"]["end_us"] == BASE + 20_000_000
+    mid = d["marker"]["id"]
+    assert ola.post("/api/markers", {"action": "update", "id": mid, "signals": ["A", "B"]})[0] == 400
+    assert ola.post("/api/markers", {"action": "update", "id": mid, "signals": ["B"]})[1]["marker"]["signals"] == ["B"]
+    code, d = ola.post("/api/markers", {"action": "batch", "adds": [{"tmp": -1, "kind": "delta", "at_us": BASE, "end_us": BASE + 5, "signals": ["A", "B"]}]})
+    assert code == 400                                                                       # a batch is written as a whole or not at all
