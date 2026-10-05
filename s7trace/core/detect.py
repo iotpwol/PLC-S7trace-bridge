@@ -17,6 +17,7 @@ from typing import Callable
 
 from . import diagnostics as dg
 from .drivers import CONN_LABEL, conn_defaults
+from .types import fmt_diff
 
 ORDER = ["s7", "opcua", "webapi", "modbus"]
 PORTS = {"s7": 102, "opcua": 4840, "webapi": 443, "modbus": 502}
@@ -136,15 +137,15 @@ def parse_clock_pdu(raw: bytes) -> datetime:
     if data[0] != 0xFF:
         raise RuntimeError(f"sterownik odrzucił odczyt zegara (kod {data[0]:#04x}) – funkcja niedostępna lub zablokowana")
     ts = data[4: 4 + int.from_bytes(data[2:4], "big")] or data[4:]
-    if len(ts) >= 10:
-        year = _bcd(ts[1]) * 100 + _bcd(ts[2])
+    if len(ts) >= 10:                                          # the century byte is unreliable (PLCs send a fixed 0x19): S7 DATE_AND_TIME rule 90..99 = 19xx, 00..89 = 20xx
+        y = _bcd(ts[2])
         rest = ts[3:8]
     elif len(ts) >= 8:
         y = _bcd(ts[1])
-        year = 2000 + y if y < 90 else 1900 + y
         rest = ts[2:7]
     else:
         raise RuntimeError("zbyt krótkie dane zegara")
+    year = 2000 + y if y < 90 else 1900 + y
     return datetime(year, *(_bcd(b) for b in rest))
 
 
@@ -210,23 +211,65 @@ def device_data(res: DetectResult, rack: int, slot: int) -> dict:
             "rack": rack, "slot": slot}
 
 
-def read_device_s7(host_text: str, rack: int, slot: int) -> dict:
-    """One short S7 connection that only reads the controller data and its clock (no signals, no acquisition); raises on failure."""
+RACK_SLOT_FALLBACK = ((0, 1), (0, 2), (0, 0), (1, 2), (0, 3))      # the same pairs the connection wizard tries
+
+
+class DeviceReadError(Exception):
+    """The controller data could not be read; str() is a Polish explanation for the user (with the technical text in brackets)."""
+
+
+def explain_connect_error(err: str, tried: list) -> tuple[str, bool]:
+    """(Polish explanation, True when the cause is the host / network and other rack / slot pairs cannot help)."""
+    e = err.lower()
+    pairs = ", ".join(f"{r}/{s}" for r, s in tried)
+    if any(k in e for k in ("10060", "timed out", "timeout")):
+        return (f"Sterownik nie odpowiada (przekroczony czas oczekiwania) – sprawdź adres IP, połączenie sieciowe i zaporę (port 102). [{err}]", True)
+    if any(k in e for k in ("10061", "refused", "actively refused")):
+        return (f"Sterownik odrzucił połączenie – port 102 jest zamknięty lub usługa S7 jest wyłączona. [{err}]", True)
+    if any(k in e for k in ("10051", "10065", "unreachable", "no route")):
+        return (f"Brak trasy do sterownika – sprawdź adres IP i ustawienia sieci. [{err}]", True)
+    if any(k in e for k in ("10054", "forcibly closed", "connection reset", "reset by peer", "receive error", "connection closed")):
+        return (f"Sterownik zerwał połączenie zaraz po jego nawiązaniu (port 102 jest otwarty, odrzucona została sesja S7; próbowano rack/slot: {pairs}). "
+                "Sprawdź: rack/slot (S7-300: 0/2, S7-1200 / 1500: 0/1), w S7-1200 / 1500 włączony dostęp PUT/GET i wyłączony „optimized block access” "
+                "dla używanych DB, wolne zasoby połączeń sterownika (zamknij TIA Portal, panel HMI, inny S7Trace / serwer Web łączący się z tym "
+                f"adresem) oraz poziom ochrony CPU. [{err}]", False)
+    return (f"Nie udało się nawiązać połączenia S7 (próbowano rack/slot: {pairs}). [{err}]", False)
+
+
+def read_device_s7(host_text: str, rack: int, slot: int, try_others: bool = True) -> dict:
+    """One short S7 connection that only reads the controller data and its clock (no signals, no acquisition). When the PLC refuses the
+    given rack / slot the other usual pairs are tried; the pair that worked is in the result (`rack`, `slot`). Raises DeviceReadError
+    with a Polish explanation."""
     import snap7
     from .acquisition import parse_host
     host, port = parse_host(host_text)
-    c = snap7.client.Client()
-    c.connect(host, rack, slot, port)
-    try:
-        res = DetectResult(host=host)
-        res.rack, res.slot = rack, slot
-        identify_s7(c, res)
-        return device_data(res, rack, slot)
-    finally:
+    pairs = [(rack, slot)] + ([p for p in RACK_SLOT_FALLBACK if p != (rack, slot)] if try_others else [])
+    tried, last = [], ""
+    for r, sl in pairs:
+        c = snap7.client.Client()
         try:
-            c.disconnect()
-        except Exception:
-            pass
+            c.connect(host, r, sl, port)
+        except Exception as e:
+            tried.append((r, sl))
+            last = str(e) or type(e).__name__
+            try:
+                c.disconnect()
+            except Exception:
+                pass
+            if explain_connect_error(last, tried)[1]:           # a network problem: other pairs cannot help
+                break
+            continue
+        try:
+            res = DetectResult(host=host)
+            res.rack, res.slot = r, sl
+            identify_s7(c, res)
+            return device_data(res, r, sl)
+        finally:
+            try:
+                c.disconnect()
+            except Exception:
+                pass
+    raise DeviceReadError(explain_connect_error(last, tried)[0])
 
 
 def probe_s7(host: str, port: int, rack: int, slot: int, res: DetectResult) -> Step:
@@ -523,6 +566,6 @@ def format_result(res: DetectResult) -> str:
     if res.info:
         L += ["", "Dane sterownika:"] + [f"  {k}: {v}" for k, v in res.info.items()]
     if res.plc_time:
-        L.append(f"Czas sterownika: {res.plc_time:%Y-%m-%d %H:%M:%S}; różnica do czasu lokalnego {res.time_diff_local:+.1f} s, "
-                 f"do UTC {res.time_diff_utc:+.1f} s")
+        L.append(f"Czas sterownika: {res.plc_time:%Y-%m-%d %H:%M:%S}; różnica do czasu lokalnego {fmt_diff(res.time_diff_local)}, "
+                 f"do UTC {fmt_diff(res.time_diff_utc)}")
     return "\n".join(L) + "\n"

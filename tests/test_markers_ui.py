@@ -1152,6 +1152,8 @@ def test_plc_clock_is_parsed_from_the_raw_answer_and_a_failure_is_explained():
     from s7trace.core import detect
     real = bytes.fromhex("3207000000030" + "00c000e00011208128701000000000" + "0ff09000a00" + "2026100511443112" + "34")
     assert detect.parse_clock_pdu(real) == datetime(2026, 10, 5, 11, 44, 31)                  # a PLC sends 10 bytes with the century
+    wrong = bytes.fromhex("3207000000030" + "00c000e00011208128701000000000" + "0ff09000a00" + "1926100511443112" + "34")
+    assert detect.parse_clock_pdu(wrong) == datetime(2026, 10, 5, 11, 44, 31)                 # the century byte is a fixed 0x19 in some PLCs: ignored (was 1926)
     sim = bytes.fromhex("32070000000300" + "0c000c000112081287010000000000" + "ff09000800" + "261005114431" + "01")
     assert detect.parse_clock_pdu(sim) == datetime(2026, 10, 5, 11, 44, 31)                   # the simulator sends 8
     refused = bytes.fromhex("32070000000300" + "0c0004000112081287010000000000" + "0a000000")
@@ -1208,3 +1210,134 @@ def test_marker_bubble_names_the_description(app):
     m = mk.Marker(id=1, kind="point", at_us=1_000_000, title="Początek cyklu", description="Trzy sygnały są zaznaczone", notes="A to uwagi")
     t = marker_tip(m)
     assert "<i>Opis:</i> Trzy sygnały są zaznaczone" in t and "<i>Uwagi:</i> A to uwagi" in t
+
+
+class _FakeClient:
+    """snap7 client stand-in: only the listed (rack, slot) pairs are accepted, the others fail with `error`."""
+    ok_pairs: set = set()
+    error = "Receive error: [WinError 10054] An existing connection was forcibly closed by the remote host"
+    attempts: list = []
+
+    def connect(self, host, rack, slot, port=102):
+        type(self).attempts.append((rack, slot))
+        if (rack, slot) not in type(self).ok_pairs:
+            raise RuntimeError(type(self).error)
+
+    def disconnect(self):
+        pass
+
+
+def _fake_snap7(monkeypatch, ok_pairs, error=None):
+    import snap7
+    from s7trace.core import detect
+    _FakeClient.ok_pairs, _FakeClient.attempts = set(ok_pairs), []
+    _FakeClient.error = error or "Receive error: [WinError 10054] An existing connection was forcibly closed by the remote host"
+    monkeypatch.setattr(snap7.client, "Client", _FakeClient)
+    monkeypatch.setattr(detect, "identify_s7", lambda client, res, notes=None: res.info.update(family="S7-1200", model="CPU 1214C"))
+
+
+def test_read_device_tries_other_rack_slot_pairs(monkeypatch):
+    from s7trace.core import detect
+    _fake_snap7(monkeypatch, {(0, 1)})
+    d = detect.read_device_s7("10.12.92.72", 0, 2)                                            # configured 0/2, the PLC wants 0/1
+    assert (d["rack"], d["slot"]) == (0, 1) and d["info"]["family"] == "S7-1200"
+    assert _FakeClient.attempts == [(0, 2), (0, 1)]                                           # the configured pair first, then the usual ones
+    _fake_snap7(monkeypatch, {(0, 2)})
+    assert detect.read_device_s7("10.12.92.72", 0, 2)["slot"] == 2 and _FakeClient.attempts == [(0, 2)]       # no needless attempts
+
+
+def test_read_device_explains_a_refused_session_in_polish(monkeypatch):
+    from s7trace.core import detect
+    _fake_snap7(monkeypatch, set())
+    with pytest.raises(detect.DeviceReadError) as e:
+        detect.read_device_s7("10.12.92.72", 0, 2)
+    msg = str(e.value)
+    assert "zerwał połączenie" in msg and "PUT/GET" in msg and "0/2, 0/1, 0/0, 1/2, 0/3" in msg and "10054" in msg      # all pairs tried, cause + hints
+    assert _FakeClient.attempts == [(0, 2), (0, 1), (0, 0), (1, 2), (0, 3)]
+    _fake_snap7(monkeypatch, set(), error="TCP : Connection timed out [WinError 10060]")
+    with pytest.raises(detect.DeviceReadError, match="nie odpowiada"):
+        detect.read_device_s7("10.12.92.72", 0, 2)
+    assert _FakeClient.attempts == [(0, 2)]                                                   # a network problem: other pairs cannot help
+    _fake_snap7(monkeypatch, set(), error="[WinError 10061] No connection could be made because the target machine actively refused it")
+    with pytest.raises(detect.DeviceReadError, match="odrzucił połączenie"):
+        detect.read_device_s7("10.12.92.72", 0, 2)
+
+
+def test_the_pair_that_worked_becomes_the_setting(app, monkeypatch):
+    import time as _t
+    from s7trace.core import detect
+    _fake_snap7(monkeypatch, {(0, 1)})
+    tab = TraceTab(TabConfig(ip="10.12.92.72"), lambda: [])
+    tab.show()
+    assert (tab.sp_rack.value(), tab.sp_slot.value()) == (0, 2)
+    tab.read_device_now()
+    end = _t.time() + 10
+    while tab._dev_busy and _t.time() < end:
+        app.processEvents()
+        _t.sleep(0.05)
+    assert (tab.sp_rack.value(), tab.sp_slot.value()) == (0, 1) and tab.device is not None
+    assert "0/1" in tab.status_msg and "było 0/2" in tab.status_msg
+    tab.shutdown()
+
+
+def test_clock_differences_are_never_huge_numbers_of_seconds():
+    from s7trace.core.types import fmt_diff
+    assert fmt_diff(2.5) == "+2.5 s" and fmt_diff(-0.04) == "-0.0 s"
+    assert fmt_diff(-3155760944.4) == "-36525 d 00:15:44" or fmt_diff(-3155760944.4).startswith("-36")
+    assert fmt_diff(3 * 86400 + 7200) == "+3 d 02:00:00" and fmt_diff(-3725) == "-01:02:05"
+
+
+def test_table_cells_get_the_standard_left_indent(app):
+    from PySide6.QtWidgets import QTableWidget, QTableWidgetItem
+    from s7trace.ui import theme as th
+    t = QTableWidget(2, 2)
+    t.setItem(0, 0, QTableWidgetItem("Wartość"))
+    t.show()
+    app.processEvents()
+    assert isinstance(t.itemDelegate(), th.IndentDelegate) and th.CELL_INDENT >= 10           # one rule for every table, not only the QSS
+    img = t.viewport().grab().toImage()
+    row = range(2, t.rowHeight(0) - 2)
+    bg = img.pixelColor(3, 3).lightness()
+    first_ink = min(x for x in range(3, 90) if any(abs(img.pixelColor(x, y).lightness() - bg) > 60 for y in row))     # first pixel of the text
+    assert first_ink >= th.CELL_INDENT - 2
+    t.close()
+
+
+def test_status_bar_menu_alignment_and_the_interface_file(app, tmp_path):
+    from PySide6.QtWidgets import QMenu
+    from s7trace.ui import theme as th
+    from s7trace.ui.interface_dialog import InterfaceDialog
+    from s7trace.ui.main_window import MainWindow
+    w = MainWindow()
+    w.show()
+    tab = w.tabs.widget(0)
+    lbl = tab.lbl_status
+    lbl.setText("Krótki tekst")
+    app.processEvents()
+    assert lbl.align() == "right" and lbl._lbl.x() + lbl._lbl.sizeHint().width() >= lbl.width() - 2          # the default: to the right
+    seen = []
+    lbl.menuRequested.connect(lambda pos: seen.append(pos))                                                  # right click asks for the menu
+    from PySide6.QtCore import QPoint
+    from PySide6.QtGui import QContextMenuEvent
+    from PySide6.QtWidgets import QApplication
+    QApplication.sendEvent(lbl, QContextMenuEvent(QContextMenuEvent.Mouse, QPoint(5, 5), QPoint(5, 5)))
+    names = [a.text() for a in tab._status_popup.actions()]
+    assert len(seen) == 1 and "Kolor tła paska…" in names and "Justowanie tekstu: do lewej" in names and "Maksymalna liczba wierszy w pasku" in names
+    left = next(a for a in tab._status_popup.actions() if a.text() == "Justowanie tekstu: do lewej")
+    left.trigger()                                                                                           # the menu item itself
+    assert lbl.align() == "left" and w.ui["theme"]["status_align"] == "left"
+    tab._status_popup.close()
+    w._edit_theme({"status_align": "left", "status_lines": 3, "status_bg": "#112233", "profile": "custom"})   # what the menu items do
+    app.processEvents()
+    assert lbl.align() == "left" and lbl._lbl.x() == 0 and lbl.max_lines() == 3
+    assert w.ui["theme"]["status_align"] == "left" and w.ui["theme"]["status_lines"] == 3 and w.ui["theme"]["status_bg"] == "#112233"
+    p = str(tmp_path / "pasek.json")
+    th.save_profile(p, w.ui["theme"])                                                                        # saved in the interface file …
+    assert '  "status_align": "left",' in open(p, encoding="utf-8").read().splitlines()
+    assert th.load_profile(p)["status_align"] == "left"                                                      # … and read back
+    d = InterfaceDialog(w.ui["theme"], lambda t: None)                                                       # the Interface window has the setting too
+    assert d.status_align.currentData() == "left"
+    d.status_align.setCurrentIndex(d.status_align.findData("right"))
+    assert d.theme["status_align"] == "right"
+    d.close()
+    w.close()

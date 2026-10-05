@@ -466,8 +466,14 @@ class Handler(BaseHTTPRequestHandler):
                 dev = read_device_s7(host.cfg.ip, host.cfg.rack, host.cfg.slot)
             except Exception as e:
                 return self._error(502, f"Nie udało się pobrać danych sterownika: {e}")
+            note = ""
+            if (dev.get("rack"), dev.get("slot")) != (host.cfg.rack, host.cfg.slot):        # another pair worked: it becomes the setting
+                note = f"Sterownik odpowiedział na rack/slot {dev['rack']}/{dev['slot']} (było {host.cfg.rack}/{host.cfg.slot}) – ustawiono nowe wartości."
+                host.cfg.rack, host.cfg.slot = int(dev["rack"]), int(dev["slot"])
+                self.app.hosts.save(host.owner)
+                host.version += 1
             host._on_info(dev)
-            return self._json(self._config_payload(host))
+            return self._json({**self._config_payload(host), "note": note})
         elif action == "trigger":
             if not host.can_run(user, role):
                 return self._error(403, "Brak uprawnień do tego połączenia.")

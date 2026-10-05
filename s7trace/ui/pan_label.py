@@ -1,17 +1,19 @@
 """Status label with a configurable number of lines and a text that can be dragged with the mouse when it does not fit.
 
-  * One line (the default): the text is right aligned while it fits; when it is wider than the bar it starts at the
+  * One line (the default): the text is right (or left, see set_align) aligned while it fits; when it is wider than the bar it starts at the
     left edge and the mouse (or the wheel) moves it between two stops - the right end of the text at the right edge of
     the bar, and the left end of the text at the left edge. It never goes further out of the bar.
   * Several lines (the 'Interfejs' setting): the text wraps; the bar is as high as the text needs, but never more than the
     chosen number of lines - there is no empty line. A text longer than that is dragged up and down the same way."""
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPoint, Qt, Signal
 from PySide6.QtWidgets import QLabel, QSizePolicy, QWidget
 
 
 class PanLabel(QWidget):
+    menuRequested = Signal(QPoint)                            # right click: the owner shows the status bar menu (global position)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WA_StyledBackground, True)           # the background colour from the stylesheet
@@ -22,6 +24,7 @@ class PanLabel(QWidget):
         self._probe = QLabel("Xg", self)                    # measures the height of one line in the bar's own style
         self._probe.hide()
         self._max_lines = 1
+        self._align = "right"                              # justification of the text: "right" (default) / "left"
         self._off = 0                                       # x (one line) or y (several lines) of the text, <= 0
         self._press: tuple[int, int] | None = None
         self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)      # a long text never widens the window
@@ -52,6 +55,20 @@ class PanLabel(QWidget):
 
     def max_lines(self) -> int:
         return self._max_lines
+
+    def set_align(self, align: str) -> None:
+        align = "left" if align == "left" else "right"
+        if align != self._align:
+            self._align = align
+            self._off = 0
+            self._layout_text()
+
+    def align(self) -> str:
+        return self._align
+
+    def contextMenuEvent(self, e):
+        self.menuRequested.emit(e.globalPos())
+        e.accept()
 
     # ---- geometry
     def _set_height(self, h: int) -> None:
@@ -85,7 +102,8 @@ class PanLabel(QWidget):
 
     def _layout_text(self) -> None:
         self._lbl.setWordWrap(self._multi())
-        self._lbl.setAlignment((Qt.AlignRight | Qt.AlignTop) if self._multi() else (Qt.AlignLeft | Qt.AlignVCenter))
+        h_al = Qt.AlignLeft if self._align == "left" else Qt.AlignRight
+        self._lbl.setAlignment((h_al | Qt.AlignTop) if self._multi() else (Qt.AlignLeft | Qt.AlignVCenter))
         if self._multi():
             w, h = self._text_size()
             lh = self.line_height()
@@ -100,7 +118,7 @@ class PanLabel(QWidget):
             self._set_height(max(th, 18))
             self._lbl.resize(tw, self.height())
             if tw <= self.width():
-                x = self.width() - tw                       # fits: right aligned
+                x = 0 if self._align == "left" else self.width() - tw      # fits: right (default) or left aligned
                 self._off = 0
             else:
                 self._off = max(min(self._off, 0), self.width() - tw)      # the stops: [bar width - text width, 0]

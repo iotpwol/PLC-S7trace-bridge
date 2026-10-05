@@ -10,6 +10,20 @@ import threading
 
 from ..core import marker_look, panel_cfg
 
+STATUS_LINES = (1, 2, 3, 4, 5, 6, 8, 10)
+_HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def status_normalize(raw) -> dict:
+    """The status bar of the chart page: most lines, colours ('' = the colour of the page), justification of the text."""
+    raw = raw if isinstance(raw, dict) else {}
+    try:
+        lines = max(1, min(10, int(raw.get("lines", 1))))
+    except (TypeError, ValueError):
+        lines = 1
+    col = lambda v: v.lower() if isinstance(v, str) and _HEX.match(v) else ""
+    return {"lines": lines, "bg": col(raw.get("bg")), "text": col(raw.get("text")), "align": "left" if raw.get("align") == "left" else "right"}
+
 
 class Prefs:
     def __init__(self, folder: str):
@@ -26,7 +40,8 @@ class Prefs:
         except (OSError, ValueError):
             raw = {}
         raw = raw if isinstance(raw, dict) else {}
-        return {"marker_look": marker_look.normalize(raw.get("marker_look")), "panel": panel_cfg.normalize(raw.get("panel"), panel_cfg.WEB_ROWS)}
+        return {"marker_look": marker_look.normalize(raw.get("marker_look")), "panel": panel_cfg.normalize(raw.get("panel"), panel_cfg.WEB_ROWS),
+                "status": status_normalize(raw.get("status"))}
 
     def update(self, user: str, patch: dict) -> dict:
         """Merges the known keys of `patch` (validated) into the account's settings; returns the result."""
@@ -36,6 +51,8 @@ class Prefs:
                 cur["marker_look"] = marker_look.normalize(patch["marker_look"])
             if isinstance(patch.get("panel"), dict):
                 cur["panel"] = panel_cfg.normalize(patch["panel"], panel_cfg.WEB_ROWS)
+            if isinstance(patch.get("status"), dict):
+                cur["status"] = status_normalize(patch["status"])
             os.makedirs(self.folder, exist_ok=True)
             tmp = self._path(user) + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:

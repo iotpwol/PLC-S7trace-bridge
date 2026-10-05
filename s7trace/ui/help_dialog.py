@@ -314,6 +314,7 @@ nazwy zwija / rozwija pole). <b>Prawy przycisk myszy na nazwie elementu</b> (np.
 otwiera menu pola: zwiń / rozwiń oraz lista wszystkich jego elementów z haczykami (ukrywanie i odkrywanie) i „Pokaż wszystkie elementy”. Kolejność pól, zwinięte pola, ukryte elementy i aktywna zakładka dolna
 wchodzą do <b>konfiguracji interfejsu</b> – zapisują się w pliku konfiguracji aplikacji i w pliku konfiguracji interfejsu (Widok → Interfejs → Zapisz / Wczytaj).</p>
 <p>Pole <b>Sterownik</b> ma na dole przycisk <b>Pobierz dane sterownika</b>: jednorazowo łączy się ze sterownikiem i czyta tylko jego dane (model, firmware, nazwy) oraz zegar – bez uruchamiania odczytu sygnałów i wykresu (połączenie musi być zatrzymane, metoda S7comm). Zakładka „System” pokazuje też, ile procesora zajmuje sama aplikacja („w tym ta aplikacja”: program razem z procesami odczytu, jako % całego komputera).</p>
+<p><b>Prawy przycisk myszy na pasku</b> otwiera jego menu: maksymalna liczba wierszy, kolor tła, kolor tekstu i justowanie tekstu (do lewej / do prawej); to samo jest w Widok → Interfejs i zapisuje się w pliku konfiguracji interfejsu.</p>
 <p>Tekst, który się nie mieści, <b>chwyć myszą i przeciągnij</b> w lewo / prawo (albo kółkiem myszy): w skrajnych położeniach koniec tekstu
 dochodzi do prawej krawędzi paska, a początek do lewej – tekst nie ucieka poza pasek. W <b>Widok → Interfejs</b> ustawisz
 <b>maksymalną liczbę linii</b> paska (pasek ma wysokość tylko tylu linii, ile potrzebuje tekst; przy większej liczbie linii tekst przeciąga się w górę /

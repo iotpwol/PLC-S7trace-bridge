@@ -19,7 +19,7 @@ from ..core.csvio import CsvRecorder, write_csv
 from ..core.drivers import CONN_LABEL, family_of
 from ..core.store import DbRecorder, StoreConfig, device_lines, device_summary
 from ..core.trigger import TriggerEngine
-from ..core.types import Signal, signal_tip_static
+from ..core.types import Signal, fmt_diff, signal_tip_static
 from . import files
 
 MAX_SERIES_POINTS = 4000
@@ -94,7 +94,7 @@ class HostedConnection:
         if isinstance(plc_t, datetime):
             ref = datetime.utcnow() if dev.get("plc_time_utc") else datetime.now()
             plc = {"time": plc_t.strftime("%Y-%m-%d %H:%M:%S"), "utc": bool(dev.get("plc_time_utc")),
-                   "diff_s": round((plc_t - ref).total_seconds(), 1)}
+                   "diff_s": round((plc_t - ref).total_seconds(), 1), "diff_text": fmt_diff((plc_t - ref).total_seconds())}
         return {"id": self.id, "name": self.name, "ip": self.cfg.ip, "state": self.state, "message": self.message,
                 "method": CONN_LABEL.get(self.method, self.method or "automatycznie"), "cycle_ms": self.cfg.cycle_ms,
                 "started_us": self.started_us, "samples": len(self.buffer), "rating": rating, "notes": notes,

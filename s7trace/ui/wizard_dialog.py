@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (QApplication, QDialog, QHBoxLayout, QHeaderView, 
 
 from ..core import detect
 from ..core.richtext import bold, bold_numbers
+from ..core.types import fmt_diff
 from ..core.drivers import CONN_LABEL
 from ..core.store import DEVICE_LABELS
 from .dialog_kit import dialog_info
@@ -194,8 +195,8 @@ class WizardDialog(QDialog):
             self.lbl_time.setText(
                 f"Czas sterownika{' w chwili połączenia' if stored else ''}: "
                 f"<b>{res.plc_time:%Y-%m-%d %H:%M:%S}{' (UTC)' if res.plc_time_utc else ''}</b>   |   "
-                f"różnica do czasu lokalnego komputera: <b>{res.time_diff_local:+.1f} s</b>   |   "
-                f"do UTC: <b>{res.time_diff_utc:+.1f} s</b><br>"
+                f"różnica do czasu lokalnego komputera: <b>{fmt_diff(res.time_diff_local)}</b>   |   "
+                f"do UTC: <b>{fmt_diff(res.time_diff_utc)}</b><br>"
                 "Sterowniki Siemensa często pracują w UTC – właściwa jest ta różnica, która jest bliższa zera.")
         else:
             why = getattr(res, "time_error", "")

@@ -347,7 +347,7 @@ def test_status_values_are_bold_and_escaped(app):
 def test_qss_paddings_and_bold_labels():
     qss = th.build_qss(th.DARK)
     assert "QLabel[val=\"true\"]" in qss and "font-weight: bold" in qss
-    assert "QTableWidget::item { padding-left: 12px; }" in qss                   # values: twice the label padding
+    assert "QTableWidget::item { padding-left: 0px; }" in qss                    # the indent of values is IndentDelegate's (theme.CELL_INDENT)
     assert "padding: 3px 3px 3px 6px" in qss                                     # header (labels) 6 px
     assert "padding: 2px 4px 2px 10px" in qss                                    # numbers, text and drop-downs alike
 

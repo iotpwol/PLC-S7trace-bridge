@@ -73,7 +73,7 @@ function go(v) {
 async function start() {
   me = await api("/api/me");
   if (!me.user) return showLogin();
-  mkLoadPrefs(); panelLoad();
+  mkLoadPrefs(); panelLoad(); statusLoad();
   $("who").textContent = `${me.user} (${me.role})`; $("logout").hidden = false; $("nav").hidden = false;
   $("nav-users").hidden = me.role !== "admin"; $("nav-targets").hidden = me.role !== "admin";
   $("new-conn").hidden = ROLE_RANK[me.role] < ROLE_RANK.operator;
@@ -207,7 +207,7 @@ function showDevice(d) {            // one row per datum (each can be hidden by 
 $("e-readdev").addEventListener("click", async () => {
   if (!editing?.id) { $("e-devmsg").textContent = " Najpierw zapisz połączenie."; return; }
   $("e-readdev").disabled = true; $("e-devmsg").textContent = " Łączenie i odczyt danych sterownika…";
-  try { const d = await api(`/api/connections/${editing.id}/read-device`, {}); showDevice(d); $("e-devmsg").textContent = ""; }
+  try { const d = await api(`/api/connections/${editing.id}/read-device`, {}); showDevice(d); $("e-rack").value = d.rack; $("e-slot").value = d.slot; $("e-devmsg").textContent = d.note ? " " + d.note : ""; }
   catch (e) { $("e-devmsg").textContent = " " + e.message; }
   $("e-readdev").disabled = !!editing?.running;
 });
@@ -564,7 +564,7 @@ function renderDiag(d) {
   }
   h += `<h3>Sterownik</h3>` + (d.device.length ? `<table class="dg"><tbody>${d.device.map(([a, b]) => `<tr><th>${esc(a)}</th><td>${esc(b)}</td></tr>`).join("")}</tbody></table>`
     : '<p class="muted">Brak danych sterownika – pojawią się po pierwszym połączeniu.</p>');
-  if (d.plc_time) h += `<p>Czas sterownika (w chwili połączenia): <b>${esc(d.plc_time.time)}</b>${d.plc_time.utc ? " (UTC)" : ""}, różnica do zegara serwera <b>${d.plc_time.diff_s > 0 ? "+" : ""}${d.plc_time.diff_s} s</b>.</p>`;
+  if (d.plc_time) h += `<p>Czas sterownika (w chwili połączenia): <b>${esc(d.plc_time.time)}</b>${d.plc_time.utc ? " (UTC)" : ""}, różnica do zegara serwera <b>${esc(d.plc_time.diff_text)}</b>.</p>`;
   h += `<h3>Kto jeszcze odczytuje ten sterownik</h3>` + (d.others.length ? "<ul>" + d.others.map((x) => `<li>${esc(x)}</li>`).join("") + "</ul>" : '<p class="muted">Nikt inny (wśród programów okienkowych zgłaszających się do serwera i połączeń tego serwera).</p>');
   if (me.role === "admin") h += `<h3>Zaległe bufory zapisu (dysk serwera)</h3>` + (d.spools.length ? `<table class="dg"><thead><tr><th>Bufor</th><th>Cel</th><th>Nagranie</th><th>Wpisów</th><th>Rozmiar</th></tr></thead><tbody>${d.spools.map((x) =>
     `<tr><td>${esc(x.name)}</td><td>${esc(x.target)}</td><td>${esc(x.title)}</td><td>${x.rows}</td><td>${(x.size / 1024).toFixed(0)} KB</td></tr>`).join("")}</tbody></table><p class="muted">Dane zostaną dosłane przy następnym nagraniu do tej samej bazy.</p>`
@@ -717,6 +717,29 @@ function ctxMenu(x, y, items) {                                       // items: 
   const close = (e) => { if (!m.contains(e.target)) { m.remove(); removeEventListener("pointerdown", close, true); } };
   addEventListener("pointerdown", close, true);
 }
+// status bar (chart page): right click = most lines, colours, justification; the same settings as the desktop status bar, kept per account
+let STATUS = { lines: 1, bg: "", text: "", align: "right" }, statusSave = null;
+function statusApply() {
+  const e = $("c-state"); if (!e) return;
+  e.classList.toggle("multi", STATUS.lines > 1);
+  e.style.maxHeight = STATUS.lines > 1 ? `calc(${STATUS.lines} * 1.35em + 6px)` : "";
+  e.style.textAlign = STATUS.align; e.style.background = STATUS.bg || ""; e.style.color = STATUS.text || "";
+}
+function statusPersist() { statusApply(); clearTimeout(statusSave); statusSave = setTimeout(() => { api("/api/prefs", { status: STATUS }).catch(() => {}); }, 400); }
+async function statusLoad() { try { STATUS = { ...STATUS, ...(await api("/api/prefs")).prefs.status }; } catch (e) { /* defaults */ } statusApply(); }
+function statusPickColor(key, cur) {
+  const i = document.createElement("input"); i.type = "color"; i.value = cur || (key === "bg" ? "#2b2b2b" : "#d0d0d0"); i.style.cssText = "position:fixed;left:-100px;top:0";
+  document.body.appendChild(i); i.addEventListener("change", () => { STATUS[key] = i.value; statusPersist(); }); i.addEventListener("blur", () => setTimeout(() => i.remove(), 300)); i.click();
+}
+$("c-state").addEventListener("contextmenu", (e) => {
+  e.preventDefault();
+  ctxMenu(e.clientX, e.clientY, [["Pasek statusu"], ["Maksymalna liczba wierszy:"],
+    ...[1, 2, 3, 4, 5, 6, 8, 10].map((n) => [`   ${n}`, () => { STATUS.lines = n; statusPersist(); }, STATUS.lines === n]), "-",
+    ["Kolor tła paska…", () => statusPickColor("bg", STATUS.bg)], ["Kolor tekstu paska…", () => statusPickColor("text", STATUS.text)],
+    ["Kolory domyślne (jak strona)", STATUS.bg || STATUS.text ? () => { STATUS.bg = STATUS.text = ""; statusPersist(); } : null], "-",
+    ["Justowanie tekstu: do lewej", () => { STATUS.align = "left"; statusPersist(); }, STATUS.align === "left"],
+    ["Justowanie tekstu: do prawej", () => { STATUS.align = "right"; statusPersist(); }, STATUS.align === "right"]]);
+});
 function panelSetRow(group, key, show) {
   const h = (PANEL.hidden[group] || []).filter((k) => k !== key); if (!show) h.push(key);
   PANEL.hidden[group] = PANEL_ROWS[group].filter((k) => h.includes(k));

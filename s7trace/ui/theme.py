@@ -4,9 +4,9 @@ from __future__ import annotations
 import json
 import os
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, QObject, QRect, Qt
 from PySide6.QtGui import QColor, QFont, QGuiApplication, QPalette
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QStyle, QStyledItemDelegate, QStyleOptionViewItem, QTableView
 
 from ..core import marker_look, panel_cfg
 from ..core.config import app_dir
@@ -53,7 +53,7 @@ COLOR_KEYS: dict[str, tuple[str, str]] = {
 }
 
 DARK = {k: v[1] for k, v in COLOR_KEYS.items()}
-DARK.update(profile="dark", font_family="", font_size=9, rec_blink_hz=0.5, bar_always=False, status_lines=1)
+DARK.update(profile="dark", font_family="", font_size=9, rec_blink_hz=0.5, bar_always=False, status_lines=1, status_align="right")
 
 LIGHT = dict(DARK)
 LIGHT.update(
@@ -113,6 +113,7 @@ def normalize(theme: dict | None) -> dict:
             out["status_lines"] = max(1, min(10, int(theme.get("status_lines", 1))))   # most lines of the status bar
         except (TypeError, ValueError):
             pass
+        out["status_align"] = "left" if theme.get("status_align") == "left" else "right"       # justification of the status bar text
     # the look of the marker lines belongs to the interface configuration (saved in a profile file, switched with it)
     out["marker_look"] = marker_look.normalize((theme or {}).get("marker_look"))
     # and so does the layout of the left panel (order of the groups, folded groups, the bottom tab)
@@ -138,7 +139,7 @@ def save_profile(path: str, theme: dict) -> None:
     t = normalize(theme)
     ordered = {"profile": t["profile"], "font_family": t["font_family"], "font_size": t["font_size"],
                "rec_blink_hz": t["rec_blink_hz"], "bar_always": t["bar_always"],
-               "status_lines": t["status_lines"]}
+               "status_lines": t["status_lines"], "status_align": t["status_align"]}
     ordered.update({k: t[k] for k in COLOR_KEYS})
     ordered.update({"marker_" + k: v for k, v in t["marker_look"].items()})          # one flat parameter per line
     ordered.update({"panel_" + k: v for k, v in t["panel"].items()})
@@ -196,7 +197,7 @@ QToolButton {{ background: {t['button_bg']}; color: {t['button_text']}; border: 
 QToolButton#helpBtn:checked {{ background: {t['help_on_bg']}; color: {t['help_on_text']}; font-weight: bold; }}   /* help mode is on */
 QTableWidget, QListWidget {{ background: {t['table_bg']}; gridline-color: rgba(128,128,128,90);
     color: {t['table_text']}; alternate-background-color: {t['table_bg']}; }}
-QTableWidget::item {{ padding-left: 12px; }}
+QTableWidget::item {{ padding-left: 0px; }}                 /* the text indent is IndentDelegate's job (CELL_INDENT) */
 QListWidget::item {{ padding-left: 6px; }}
 QHeaderView::section {{ background: {t['header_bg']}; color: {t['text']}; border: 1px solid rgba(128,128,128,90);
     padding: 3px 3px 3px 6px; }}
@@ -229,7 +230,55 @@ QLabel#dlgText {{ color: {t['text']}; }}
 """
 
 
+CELL_INDENT = 12                 # left margin of the text in every table cell [px] - as in the edit fields (10 px + the frame)
+
+
+class IndentDelegate(QStyledItemDelegate):
+    """Draws the text of a cell CELL_INDENT px from the left edge, whatever the style sheet does with `::item` padding (the cell itself,
+    its background and selection stay full width). Cells with an icon / check box are drawn by the stock delegate."""
+
+    def paint(self, painter, option, index):
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        if opt.features & (QStyleOptionViewItem.HasDecoration | QStyleOptionViewItem.HasCheckIndicator) or not opt.text:
+            return super().paint(painter, option, index)
+        widget = opt.widget
+        style = widget.style() if widget is not None else QApplication.style()
+        text = opt.text
+        opt.text = ""
+        style.drawControl(QStyle.CE_ItemViewItem, opt, painter, widget)               # background, selection, focus frame
+        r = QRect(opt.rect).adjusted(CELL_INDENT, 0, -4, 0)
+        group = QPalette.Active if opt.state & QStyle.State_Active else QPalette.Inactive
+        role = QPalette.HighlightedText if opt.state & QStyle.State_Selected else QPalette.Text
+        painter.save()
+        painter.setFont(opt.font)
+        painter.setPen(opt.palette.color(group if opt.state & QStyle.State_Enabled else QPalette.Disabled, role))
+        flags = int(opt.displayAlignment)
+        if opt.features & QStyleOptionViewItem.WrapText:
+            painter.drawText(r, flags | int(Qt.TextWordWrap), text)
+        else:
+            painter.drawText(r, flags, opt.fontMetrics.elidedText(text, opt.textElideMode, r.width()))
+        painter.restore()
+
+
+class _IndentInstaller(QObject):
+    """Gives every table the IndentDelegate when it is first shown (unless the table has a delegate of its own)."""
+
+    def eventFilter(self, obj, ev):
+        if ev.type() == QEvent.Polish and isinstance(obj, QTableView):
+            if type(obj.itemDelegate()) is QStyledItemDelegate:
+                obj.setItemDelegate(IndentDelegate(obj))
+        return False
+
+
+_INSTALLER: _IndentInstaller | None = None
+
+
 def apply_theme(app: QApplication, theme: dict | None) -> dict:
+    global _INSTALLER
+    if _INSTALLER is None:
+        _INSTALLER = _IndentInstaller(app)
+        app.installEventFilter(_INSTALLER)
     t = normalize(theme)
     app.setStyle("Fusion")
     p = QPalette()

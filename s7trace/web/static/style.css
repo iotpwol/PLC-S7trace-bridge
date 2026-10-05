@@ -68,3 +68,7 @@ table.dg { width:auto; margin-bottom:8px; } table.dg th { text-align:left; font-
 .side-body { padding:6px 10px; min-height:5.5em; } .side-body table td { padding:1px 10px 1px 0; }
 .fold-body > div { overflow:hidden; min-height:0; }
 .fold.folded .fold-body { grid-template-rows:0fr; }
+
+/* status bar of the chart page (right click: lines, colours, justification; saved per account in /api/prefs) */
+.statusbar { margin: 2px 0 6px; padding: 3px 8px; border-radius: 3px; color: var(--muted); overflow: hidden; line-height: 1.35; white-space: nowrap; text-overflow: ellipsis; text-align: right; }
+.statusbar.multi { white-space: normal; overflow-y: auto; }

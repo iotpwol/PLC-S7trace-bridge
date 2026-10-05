@@ -315,10 +315,10 @@ def test_read_device_only_and_server_load(srv):
         assert h.device is None
         st_, d = ola.post(f"/api/connections/{h.id}/read-device", {})
         assert st_ == 200 and h.state == "stopped" and h.device is not None and h.device["method"] == "s7"      # no acquisition started
-        assert "device" in d and d["state"] == "stopped"
+        assert "device" in d and d["state"] == "stopped" and d["note"] == ""
         h.cfg.ip = "127.0.0.1:11189"                                                                      # nothing listens there
         st_, d = ola.post(f"/api/connections/{h.id}/read-device", {})
-        assert st_ == 502 and "Nie udało się pobrać danych sterownika" in d["error"]
+        assert st_ == 502 and "Nie udało się pobrać danych sterownika" in d["error"] and "odrzucił połączenie" in d["error"]
         h.cfg.conn_type = "opcua"
         st_, d = ola.post(f"/api/connections/{h.id}/read-device", {})
         assert st_ == 400
@@ -357,3 +357,15 @@ def test_device_rows_clock_error_and_description_via_the_web(srv):
     b.update_session(s["id"], {"description": "Nowy opis"})
     assert b.sessions()[0]["description"] == "Nowy opis"
     b.close()
+
+
+def test_status_bar_settings_are_kept_per_account(srv):
+    ola, ala = _user(srv, "ola"), _user(srv, "ala")
+    assert ola.get("/api/prefs")[1]["prefs"]["status"] == {"lines": 1, "bg": "", "text": "", "align": "right"}
+    st_, d = ola.post("/api/prefs", {"status": {"lines": 99, "bg": "#AABBCC", "text": "red", "align": "left"}})
+    assert st_ == 200 and d["prefs"]["status"] == {"lines": 10, "bg": "#aabbcc", "text": "", "align": "left"}      # validated
+    assert ola.get("/api/prefs")[1]["prefs"]["status"]["align"] == "left" and ala.get("/api/prefs")[1]["prefs"]["status"]["align"] == "right"
+    assert d["prefs"]["panel"] and d["prefs"]["marker_look"]                                                         # the other settings untouched
+    base = os.path.join(os.path.dirname(__import__("s7trace.web.server", fromlist=["x"]).__file__), "static")
+    js, html = (open(os.path.join(base, f), encoding="utf-8").read() for f in ("app.js", "index.html"))
+    assert 'id="c-state" class="statusbar"' in html and "statusLoad" in js and "Justowanie tekstu: do lewej" in js

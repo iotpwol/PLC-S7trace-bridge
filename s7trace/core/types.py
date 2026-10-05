@@ -157,6 +157,18 @@ def fmt_offset(seconds: float) -> str:
     return f"{'-' if neg else '+'}{days} d {h:02d}:{m:02d}:{rest // 1000:02d}.{rest % 1000:03d}"
 
 
+def fmt_diff(seconds: float) -> str:
+    """Difference of two clocks for messages: '+2.5 s' when small, otherwise days + time ('-1 d 02:00:00') - never a huge number of seconds."""
+    v = float(seconds)
+    if abs(v) < 60:
+        return f"{v:+.1f} s"
+    s = int(round(abs(v)))
+    d, rest = divmod(s, 86400)
+    h, rest = divmod(rest, 3600)
+    m, sec = divmod(rest, 60)
+    return f"{'-' if v < 0 else '+'}{str(d) + ' d ' if d else ''}{h:02d}:{m:02d}:{sec:02d}"
+
+
 def axis_shift(mode: str, start_epoch: float, plc_diff: float | None, offset: float) -> float:
     """What the time axis adds to the chart time x (seconds from the start): the offset for the relative axis, otherwise the epoch
     time of x = 0 on the chosen clock (the computer's, or the controller's = computer + the difference read at connection)."""

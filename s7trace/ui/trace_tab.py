@@ -462,7 +462,9 @@ class TraceTab(QWidget):
             mbar.addWidget(b)
         mbar.addStretch()
         right.addLayout(mbar)
-        self.lbl_status = PanLabel()                  # right aligned; a long text can be dragged with the mouse
+        self.theme_edit = lambda changes: None       # the main window points it at the interface configuration (status bar menu)
+        self.lbl_status = PanLabel()
+        self.lbl_status.menuRequested.connect(self._status_menu)                  # right aligned; a long text can be dragged with the mouse
         right.addWidget(self.lbl_status)
 
         self.split_h = FoldSplitter(Qt.Horizontal, 0, 290)   # drag the bar to resize; button / double click folds the panel
@@ -533,6 +535,39 @@ class TraceTab(QWidget):
             btn.style().polish(btn)
             btn.update()
 
+    def _status_menu(self, pos) -> None:
+        """Right click on the status bar: most lines, colours, justification - saved in the interface configuration."""
+        from PySide6.QtGui import QActionGroup, QColor
+        from PySide6.QtWidgets import QColorDialog, QMenu
+        m = QMenu(self)
+        lines = m.addMenu("Maksymalna liczba wierszy w pasku")
+        grp = QActionGroup(lines)
+        for n in (1, 2, 3, 4, 5, 6, 8, 10):
+            a = lines.addAction(f"{n}")
+            a.setCheckable(True)
+            a.setChecked(self.lbl_status.max_lines() == n)
+            grp.addAction(a)
+            a.triggered.connect(lambda _=False, n=n: self.theme_edit({"status_lines": n}))
+        cur = getattr(self, "_status_theme", {})
+
+        def pick(key: str, title: str) -> None:
+            c = QColorDialog.getColor(QColor(cur.get(key, "#808080")), self, title)
+            if c.isValid():
+                self.theme_edit({key: c.name(), "profile": "custom"})
+        m.addAction("Kolor tła paska…", lambda: pick("status_bg", "Pasek statusu: tło"))
+        m.addAction("Kolor tekstu paska…", lambda: pick("status_text", "Pasek statusu: tekst"))
+        m.addSeparator()
+        al = QActionGroup(m)
+        for key, label in (("left", "Justowanie tekstu: do lewej"), ("right", "Justowanie tekstu: do prawej")):
+            a = m.addAction(label)
+            a.setCheckable(True)
+            a.setChecked(self.lbl_status.align() == key)
+            al.addAction(a)
+            a.triggered.connect(lambda _=False, key=key: self.theme_edit({"status_align": key}))
+        m.setAttribute(Qt.WA_DeleteOnClose)
+        self._status_popup = m                                   # kept for the tests; popup() does not block
+        m.popup(pos)
+
     def apply_ctl_theme(self, theme: dict) -> None:
         """REC dot colour and blink frequency from the 'Interfejs' settings."""
         self._rec_dot = theme.get("rec_dot", self._rec_dot)
@@ -543,6 +578,8 @@ class TraceTab(QWidget):
         bar, always = theme.get("bar", DEFAULT_BAR), bool(theme.get("bar_always", False))
         self.lbl_status.set_colors(theme.get("status_bg", "#2b2b2b"), theme.get("status_text", "#d0d0d0"))
         self.lbl_status.set_max_lines(int(theme.get("status_lines", 1)))
+        self.lbl_status.set_align(theme.get("status_align", "right"))
+        self._status_theme = {k: theme.get(k) for k in ("status_bg", "status_text")}
         self.split_h.set_bar(bar, always)                # the thin resize bars: colour and permanent visibility
         self.plot.split.set_bar(bar, always)
         self.blink.start(int(1000 / (2 * hz)))          # half period = dot on / dot off
@@ -1204,7 +1241,7 @@ class TraceTab(QWidget):
         self._dev_busy = True
         self.btn_dev.setText("Pobieranie…")
         self._set_buttons()
-        self._set_dev_msg(f"Łączenie z {c.ip} i odczyt danych sterownika…")
+        self._set_dev_msg(f"Łączenie z {c.ip} i odczyt danych sterownika (w razie odmowy sprawdzę też inne pary rack/slot)…")
         ip, rack, slot = c.ip, c.rack, c.slot
 
         def work():
@@ -1224,6 +1261,11 @@ class TraceTab(QWidget):
             self._show_device()
             return
         if d:
+            if (d.get("rack"), d.get("slot")) != (self.sp_rack.value(), self.sp_slot.value()) and d.get("rack") is not None:
+                old = f"{self.sp_rack.value()}/{self.sp_slot.value()}"
+                self.sp_rack.setValue(int(d["rack"]))                   # the pair that worked becomes the setting
+                self.sp_slot.setValue(int(d["slot"]))
+                self.status_msg = f"Sterownik odpowiedział na rack/slot {d['rack']}/{d['slot']} (było {old}) – ustawiono nowe wartości."
             self._on_info(d)
         else:
             self._set_dev_msg(f"Nie udało się pobrać danych sterownika: {err}")

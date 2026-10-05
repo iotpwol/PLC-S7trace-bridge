@@ -72,6 +72,11 @@ class InterfaceDialog(QDialog):
         self.status_lines.setToolTip("Największa liczba linii tekstu w pasku statusu na dole. Pasek ma wysokość tylko tylu linii, "
                                      "ile potrzebuje tekst. Przy 1 linii za długi tekst można przesuwać myszą w lewo i w prawo.")
         form.addRow("Pasek statusu: maks. linii:", self.status_lines)
+        self.status_align = QComboBox()
+        self.status_align.addItem("Do prawej", "right")
+        self.status_align.addItem("Do lewej", "left")
+        self.status_align.setToolTip("Justowanie tekstu w pasku statusu na dole. To samo ustawisz prawym przyciskiem myszy na pasku.")
+        form.addRow("Pasek statusu: justowanie:", self.status_align)
         self.chk_bar = QCheckBox("Belki zmiany rozmiaru zawsze widoczne")
         self.chk_bar.setToolTip("Belka między panelem ustawień a wykresem oraz nad wykresem przeglądowym służy do zmiany "
                                 "rozmiaru (przeciąganie) i do schowania / pokazania panelu (dwukrotne kliknięcie). "
@@ -107,6 +112,7 @@ class InterfaceDialog(QDialog):
         self.rec_hz.valueChanged.connect(self._font_changed)
         self.chk_bar.toggled.connect(self._font_changed)
         self.status_lines.valueChanged.connect(self._font_changed)
+        self.status_align.currentIndexChanged.connect(self._font_changed)
 
     # ------------------------------------------------------------------
     def _sync_widgets(self) -> None:
@@ -131,6 +137,9 @@ class InterfaceDialog(QDialog):
         self.status_lines.blockSignals(True)
         self.status_lines.setValue(int(self.theme.get("status_lines", 1)))
         self.status_lines.blockSignals(False)
+        self.status_align.blockSignals(True)
+        self.status_align.setCurrentIndex(max(0, self.status_align.findData(self.theme.get("status_align", "right"))))
+        self.status_align.blockSignals(False)
         self.font_size.blockSignals(False)
 
     def _pick(self, key: str) -> None:
@@ -147,10 +156,11 @@ class InterfaceDialog(QDialog):
         self.theme["rec_blink_hz"] = self.rec_hz.value()
         self.theme["bar_always"] = self.chk_bar.isChecked()
         self.theme["status_lines"] = self.status_lines.value()
+        self.theme["status_align"] = self.status_align.currentData()
         self._apply(self.theme)
 
     def _load(self, preset: dict, keep_font: bool = True) -> None:
-        font = {k: self.theme[k] for k in ("font_family", "font_size", "rec_blink_hz", "bar_always", "status_lines")}
+        font = {k: self.theme[k] for k in ("font_family", "font_size", "rec_blink_hz", "bar_always", "status_lines", "status_align")}
         keep = {k: self.theme[k] for k in ("panel", "marker_look") if k in self.theme and k not in preset}
         self.theme = th.normalize({**preset, **keep})
         if keep_font:

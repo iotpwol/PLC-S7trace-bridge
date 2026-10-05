@@ -429,7 +429,7 @@ def test_wizard_dialog_report_and_use(app, monkeypatch):
     info = {dlg.t_info.item(r, 0).text(): dlg.t_info.item(r, 1).text() for r in range(dlg.t_info.rowCount())}
     assert info["Numer katalogowy (MLFB)"] == "6ES7 511-1AK02-0AB0" and info["Wersja firmware"] == "V2.9.2"
     assert "PUT/GET" in info["S7comm: odczyt pamięci bezwzględnej"]
-    assert "+3.2 s" in dlg.lbl_time.text() and "-7196.8" in dlg.lbl_time.text()
+    assert "+3.2 s" in dlg.lbl_time.text() and "-01:59:57" in dlg.lbl_time.text()
     assert "OGRANICZENIA SYSTEMOWE" in dlg.txt_limits.toPlainText() and "PUT/GET" in dlg.txt_limits.toPlainText()
     dlg._use()
     assert tab.cfg.conn_type == "opcua"

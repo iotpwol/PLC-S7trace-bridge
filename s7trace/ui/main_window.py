@@ -415,6 +415,10 @@ class MainWindow(QMainWindow):
     def run_wizard(self, tab, page: int = 0) -> None:
         WizardDialog(tab, show_tab=page, parent=self).exec()
 
+    def _edit_theme(self, changes: dict) -> None:
+        """A change of the interface configuration made outside the 'Interfejs' window (e.g. the status bar menu)."""
+        self._commit_theme({**self.theme, **changes})
+
     def _commit_theme(self, theme: dict) -> None:
         if "marker_look" not in theme:                          # e.g. a configuration file of an older version
             theme = {**theme, "marker_look": self.marker_look}
@@ -485,6 +489,7 @@ class MainWindow(QMainWindow):
         tab = TraceTab(cfg or TabConfig(), lambda: self.symbols, self.ui)
         tab.other_tabs = self._other_tabs(tab)
         tab.panel_src = lambda: self.theme["panel"]
+        tab.theme_edit = self._edit_theme
         tab.new_tab_cb = self.new_tab
         i = self.tabs.addTab(tab, tab.title())
         tab.stateChanged.connect(lambda s, t=tab: self._tab_state(t, s))
