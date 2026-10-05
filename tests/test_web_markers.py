@@ -369,3 +369,19 @@ def test_status_bar_settings_are_kept_per_account(srv):
     base = os.path.join(os.path.dirname(__import__("s7trace.web.server", fromlist=["x"]).__file__), "static")
     js, html = (open(os.path.join(base, f), encoding="utf-8").read() for f in ("app.js", "index.html"))
     assert 'id="c-state" class="statusbar"' in html and "statusLoad" in js and "Justowanie tekstu: do lewej" in js
+
+
+def test_web_tables_alternate_and_have_resizable_columns():
+    base = os.path.join(os.path.dirname(__import__("s7trace.web.server", fromlist=["x"]).__file__), "static")
+    js, css = (open(os.path.join(base, f), encoding="utf-8").read() for f in ("app.js", "style.css"))
+    assert "tableResizable" in js and '"t-recs"' in js and "col-rs" in css and "nth-child(even)" in css
+
+
+def test_web_table_colours_are_kept_per_account(srv):
+    ola, ala = _user(srv, "ola"), _user(srv, "ala")
+    st_, d = ola.post("/api/prefs", {"table": {"header_bg": "#112233", "odd_bg": "red", "border": "#AABBCC", "nope": "#000000"}})
+    assert st_ == 200 and d["prefs"]["table"] == {"header_bg": "#112233", "header_text": "", "odd_bg": "", "odd_text": "", "even_bg": "", "even_text": "", "border": "#aabbcc"}
+    assert ala.get("/api/prefs")[1]["prefs"]["table"]["header_bg"] == "" and d["prefs"]["status"] and d["prefs"]["panel"]
+    base = os.path.join(os.path.dirname(__import__("s7trace.web.server", fromlist=["x"]).__file__), "static")
+    js, html = (open(os.path.join(base, f), encoding="utf-8").read() for f in ("app.js", "index.html"))
+    assert 'id="ui-dlg"' in html and 'id="ui-btn"' in html and "Kolor ramki tabeli" in js and "tableColorsLoad" in js

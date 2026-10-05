@@ -14,6 +14,15 @@ STATUS_LINES = (1, 2, 3, 4, 5, 6, 8, 10)
 _HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
+TABLE_KEYS = ("header_bg", "header_text", "odd_bg", "odd_text", "even_bg", "even_text", "border")
+
+
+def table_normalize(raw) -> dict:
+    """Colours of the tables in the browser ('' = the colour of the page): the same seven settings as the desktop 'Interfejs'."""
+    raw = raw if isinstance(raw, dict) else {}
+    return {k: (raw[k].lower() if isinstance(raw.get(k), str) and _HEX.match(raw[k]) else "") for k in TABLE_KEYS}
+
+
 def status_normalize(raw) -> dict:
     """The status bar of the chart page: most lines, colours ('' = the colour of the page), justification of the text."""
     raw = raw if isinstance(raw, dict) else {}
@@ -41,7 +50,7 @@ class Prefs:
             raw = {}
         raw = raw if isinstance(raw, dict) else {}
         return {"marker_look": marker_look.normalize(raw.get("marker_look")), "panel": panel_cfg.normalize(raw.get("panel"), panel_cfg.WEB_ROWS),
-                "status": status_normalize(raw.get("status"))}
+                "status": status_normalize(raw.get("status")), "table": table_normalize(raw.get("table"))}
 
     def update(self, user: str, patch: dict) -> dict:
         """Merges the known keys of `patch` (validated) into the account's settings; returns the result."""
@@ -51,6 +60,8 @@ class Prefs:
                 cur["marker_look"] = marker_look.normalize(patch["marker_look"])
             if isinstance(patch.get("panel"), dict):
                 cur["panel"] = panel_cfg.normalize(patch["panel"], panel_cfg.WEB_ROWS)
+            if isinstance(patch.get("table"), dict):
+                cur["table"] = table_normalize(patch["table"])
             if isinstance(patch.get("status"), dict):
                 cur["status"] = status_normalize(patch["status"])
             os.makedirs(self.folder, exist_ok=True)

@@ -72,3 +72,17 @@ table.dg { width:auto; margin-bottom:8px; } table.dg th { text-align:left; font-
 /* status bar of the chart page (right click: lines, colours, justification; saved per account in /api/prefs) */
 .statusbar { margin: 2px 0 6px; padding: 3px 8px; border-radius: 3px; color: var(--muted); overflow: hidden; line-height: 1.35; white-space: nowrap; text-overflow: ellipsis; text-align: right; }
 .statusbar.multi { white-space: normal; overflow-y: auto; }
+
+/* tables: rows alternate light / dark, the column borders of the list tables can be dragged (same standard as the program) */
+table:not(.dg):not(.mk-t) tbody tr:nth-child(even) { background: rgba(128,128,128,.10); }
+th { position: relative; }
+th .col-rs { position: absolute; right: 0; top: 0; bottom: 0; width: 6px; cursor: col-resize; user-select: none; }
+th .col-rs:hover, th .col-rs.on { background: rgba(42,130,218,.55); }
+
+/* colours of the tables from the account's interface settings (CSS variables set by tableColorsApply) */
+th { background: var(--tb-head-bg, transparent); color: var(--tb-head-text, var(--muted)); }
+th, td { border-bottom-color: var(--tb-border, rgba(128,128,128,.25)); }
+table:not(.dg):not(.mk-t) tbody tr:nth-child(odd) { background: var(--tb-odd-bg, transparent); color: var(--tb-odd-text, inherit); }
+table:not(.dg):not(.mk-t) tbody tr:nth-child(even) { background: var(--tb-even-bg, rgba(128,128,128,.10)); color: var(--tb-even-text, inherit); }
+#ui-dlg { max-width: 520px; width: 92vw; background: var(--panel); color: var(--text); border: 2px solid var(--accent); border-radius: 6px; }
+#ui-dlg .urow { display: flex; align-items: center; gap: 10px; margin: 6px 0; } #ui-dlg .urow label { flex: 1; } #ui-dlg input[type=color] { width: 64px; height: 28px; padding: 0; }

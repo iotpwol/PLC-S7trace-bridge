@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComb
                                QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QSpinBox, QTableWidget,
                                QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
 
+from .table_kit import standard as standard_table
 from ..core import store as st
 from ..core.config import data_dir
 from ..core.csvio import write_csv
@@ -434,8 +435,7 @@ class StoreImportDialog(QDialog):
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.verticalHeader().setVisible(False)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setStretchLastSection(True)
+        standard_table(self.table)
         self.table.setSortingEnabled(True)
         self.table.itemSelectionChanged.connect(self._selected)
         self.table.itemDoubleClicked.connect(lambda *_: self.load())
@@ -931,8 +931,7 @@ class SpoolDialog(QDialog):
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.verticalHeader().setVisible(False)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setStretchLastSection(True)
+        standard_table(self.table)
         lay.addWidget(self.table, 1)
         self.lbl = QLabel()
         self.lbl.setWordWrap(True)

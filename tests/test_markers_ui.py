@@ -1341,3 +1341,53 @@ def test_status_bar_menu_alignment_and_the_interface_file(app, tmp_path):
     assert d.theme["status_align"] == "right"
     d.close()
     w.close()
+
+
+def test_every_table_follows_the_standard_look_and_resizes(app):
+    from PySide6.QtWidgets import QHeaderView, QTableWidget, QTableWidgetItem
+    from s7trace.ui import theme as th
+    from s7trace.ui.table_kit import standard
+    t = QTableWidget(3, 3)
+    t.setHorizontalHeaderLabels(["A", "Bardzo długi tytuł kolumny", "C"])
+    standard(t)
+    for r in range(3):
+        t.setItem(r, 0, QTableWidgetItem("2026-10-05 11:44:44"))
+    t.resize(600, 200)
+    t.show()
+    app.processEvents()
+    hh = t.horizontalHeader()
+    assert hh.sectionResizeMode(0) == QHeaderView.Interactive and hh.stretchLastSection() and t.alternatingRowColors()   # draggable borders
+    assert t.columnWidth(0) >= 100 and not t.wordWrap()                                                                   # the first fill fits the content
+    t.setColumnWidth(0, 250)
+    assert t.columnWidth(0) == 250
+    assert th.alt_row("#262626") != "#262626" and th.alt_row("#ffffff") != "#ffffff"                                     # light / dark rows
+    assert "alternate-background-color: " + th.alt_row(th.DARK["table_bg"]) in app.styleSheet()
+    t.close()
+    from s7trace.ui.store_dialog import StoreImportDialog
+    from s7trace.core import store as st
+    d = StoreImportDialog(st.StoreConfig(kind="sqlite"), can_load=False)
+    assert d.table.horizontalHeader().sectionResizeMode(1) == QHeaderView.Interactive and d.table.alternatingRowColors()   # 'Przegląd nagrań'
+    d.close()
+
+
+def test_table_colours_are_interface_settings(app, tmp_path):
+    from PySide6.QtWidgets import QTableWidget, QTableWidgetItem
+    from s7trace.ui import theme as th
+    from s7trace.ui.interface_dialog import InterfaceDialog
+    keys = ("header_bg", "header_text", "row_odd_bg", "row_odd_text", "row_even_bg", "row_even_text", "table_border")
+    assert all(k in th.COLOR_KEYS for k in keys)                                           # editable in Widok -> Interfejs, one button each
+    d = InterfaceDialog(th.DARK, lambda t: None)
+    assert all(k in d._buttons for k in keys)
+    d.close()
+    t = {**th.DARK, "profile": "custom", "row_odd_bg": "#101010", "row_even_bg": "#202020", "row_even_text": "#00ff00", "table_border": "#ff0000", "header_text": "#ffff00"}
+    th.apply_theme(app, t)
+    qss = app.styleSheet()
+    assert "background: #101010" in qss and "alternate-background-color: #202020" in qss and "gridline-color: #ff0000" in qss and "color: #ffff00" in qss
+    assert th.ROW_TEXT["even"] == "#00ff00"                                                # the font of the even rows (drawn by the delegate)
+    p = str(tmp_path / "tab.json")
+    th.save_profile(p, t)                                                                  # in the interface file, one parameter per line
+    assert '  "row_even_bg": "#202020",' in open(p, encoding="utf-8").read().splitlines()
+    assert th.load_profile(p)["table_border"] == "#ff0000"
+    old = th.normalize({"profile": "custom", "table_bg": "#ffffff", "table_text": "#111111", "text": "#222222", "window_bg": "#f0f0f0"})   # a file without the new keys
+    assert old["row_odd_bg"] == "#ffffff" and old["row_odd_text"] == "#111111" and old["header_text"] == "#222222"
+    th.apply_theme(app, th.DARK)

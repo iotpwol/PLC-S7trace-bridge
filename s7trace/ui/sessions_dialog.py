@@ -7,6 +7,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (QAbstractItemView, QDialog, QHBoxLayout, QHeaderView, QLabel, QPushButton, QTableWidget,
                                QTableWidgetItem, QVBoxLayout)
 
+from .table_kit import standard as standard_table
 from ..core import sessions as ss
 from .dialog_kit import dialog_info
 
@@ -43,9 +44,7 @@ class SessionsDialog(QDialog):
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.verticalHeader().setVisible(False)
-        hh = self.table.horizontalHeader()
-        hh.setSectionResizeMode(QHeaderView.ResizeToContents)
-        hh.setStretchLastSection(True)
+        standard_table(self.table)
         lay.addWidget(self.table, 1)
         note = QLabel("Lista obejmuje programy uruchomione na tym komputerze (przez wszystkich użytkowników). "
                       "Wpis znika, gdy program zostanie zamknięty lub przestanie odpowiadać (ok. 10 s).")

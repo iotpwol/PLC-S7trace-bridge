@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComb
                                QHBoxLayout, QHeaderView, QLabel, QMessageBox, QPushButton, QTableWidget,
                                QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
 
+from .table_kit import standard as standard_table
 from ..core import diagnostics as dg
 from ..core.richtext import bold_numbers
 from ..core.acquisition import parse_host
@@ -78,7 +79,7 @@ class _Table(QTableWidget):
         self.setHorizontalHeaderLabels(cols)
         self.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.setSelectionMode(QAbstractItemView.NoSelection)
-        self.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        standard_table(self, equal=True)
         self.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         self.verticalHeader().setMinimumWidth(190)
         bold = QFont(self.font())

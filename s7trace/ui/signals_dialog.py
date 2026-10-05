@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QColo
                                QTableWidgetItem, QToolTip, QVBoxLayout, QWidget)
 from PySide6.QtGui import QActionGroup
 
+from .table_kit import standard as standard_table
 from ..core.naming import NAME_OWN, NAME_PREV, new_signal_name
 from ..core.symbols import Symbol
 from ..core.types import (ALL_SOURCES, DEFAULT_COLORS, FORMATS, NODE_SOURCES, SOURCES, TYPES, Signal, address_key,
@@ -52,7 +53,7 @@ class SymbolPicker(QDialog):
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        standard_table(self.table)
         self.table.doubleClicked.connect(self.accept)
         lay.addWidget(self.table)
         row = QHBoxLayout()
@@ -194,8 +195,7 @@ class SignalsDialog(QDialog):
         self.grip.enabled_drag = not locked          # the order is the order of the data columns while running
         self.grip.moved.connect(self.move_row)
         hh = self.table.horizontalHeader()
-        hh.setSectionResizeMode(QHeaderView.Interactive)
-        hh.setStretchLastSection(True)
+        standard_table(self.table, fit=False)                # editors in the cells: the widths come from COLS
         hh.setContextMenuPolicy(Qt.CustomContextMenu)
         hh.customContextMenuRequested.connect(self._header_menu)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)

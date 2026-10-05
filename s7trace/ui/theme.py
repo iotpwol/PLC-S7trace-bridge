@@ -22,7 +22,13 @@ COLOR_KEYS: dict[str, tuple[str, str]] = {
     "button_text": ("Tekst przycisków", "#e8e8e8"),
     "table_bg": ("Tło tabeli", "#262626"),
     "table_text": ("Tekst tabeli", "#e0e0e0"),
-    "header_bg": ("Tło nagłówków tabeli", "#333333"),
+    "header_bg": ("Kolor tła nagłówka tabeli", "#333333"),
+    "header_text": ("Kolor czcionki nagłówka tabeli", "#d0d0d0"),
+    "row_odd_bg": ("Kolor tła wierszy nieparzystych", "#262626"),
+    "row_odd_text": ("Kolor czcionki wierszy nieparzystych", "#e0e0e0"),
+    "row_even_bg": ("Kolor tła wierszy parzystych", "#2f2f2f"),
+    "row_even_text": ("Kolor czcionki wierszy parzystych", "#e0e0e0"),
+    "table_border": ("Kolor ramki tabeli", "#454545"),
     "menu_bg": ("Tło menu", "#2b2b2b"),
     "menu_text": ("Tekst menu", "#e0e0e0"),
     "tab_bg": ("Tło kart (zakładek)", "#333333"),
@@ -59,7 +65,8 @@ LIGHT = dict(DARK)
 LIGHT.update(
     window_bg="#f0f0f0", panel_bg="#e6e6e6", text="#202020", edit_bg="#ffffff", edit_text="#101010",
     button_bg="#e1e1e1", button_text="#101010", table_bg="#ffffff", table_text="#101010",
-    header_bg="#dcdcdc", menu_bg="#f0f0f0", menu_text="#101010", tab_bg="#dcdcdc",
+    header_bg="#dcdcdc", header_text="#202020", row_odd_bg="#ffffff", row_odd_text="#101010", row_even_bg="#eeeeee",
+    row_even_text="#101010", table_border="#c0c0c0", menu_bg="#f0f0f0", menu_text="#101010", tab_bg="#dcdcdc",
     tab_selected="#2a82da", tab_selected_text="#ffe600", accent="#2a82da", plot_bg="#ffffff", plot_fg="#303030",
     ctl_bg="#e1e1e1", ctl_text="#101010", start_on_bg="#e1e1e1", start_on_text="#8a6d00",
     stop_on_bg="#e1e1e1", stop_on_text="#a01010", pause_on_bg="#f2d600", pause_on_text="#000000",
@@ -95,6 +102,20 @@ def normalize(theme: dict | None) -> dict:
     for k, v in (theme or {}).items():
         if k in COLOR_KEYS and isinstance(v, str) and QColor(v).isValid():
             out[k] = v
+    if theme:
+        miss = lambda k: not (isinstance(theme.get(k), str) and QColor(theme[k]).isValid())
+        if miss("header_text"):
+            out["header_text"] = out["text"]
+        if miss("row_odd_bg"):
+            out["row_odd_bg"] = out["table_bg"]
+        if miss("row_odd_text"):
+            out["row_odd_text"] = out["table_text"]
+        if miss("row_even_bg"):
+            out["row_even_bg"] = alt_row(out["row_odd_bg"])
+        if miss("row_even_text"):
+            out["row_even_text"] = out["table_text"]
+        if miss("table_border"):
+            out["table_border"] = QColor(out["text"]).darker(250).name() if QColor(out["window_bg"]).lightness() < 128 else QColor(out["text"]).lighter(400).name()
     prof = (theme or {}).get("profile")
     out["profile"] = prof if prof in PROFILE_KEYS else ("custom" if theme else "dark")
     out.update(profile_colors(out["profile"]))       # dark / light / system override the stored colours
@@ -168,6 +189,12 @@ def _disabled(c: str) -> str:
     return f"rgba({col.red()},{col.green()},{col.blue()},{col.alpha()})"
 
 
+def alt_row(table_bg: str) -> str:
+    """Colour of every second table row: a little lighter than a dark table, a little darker than a light one."""
+    c = QColor(table_bg)
+    return (c.lighter(125) if c.lightness() < 128 else c.darker(107)).name()
+
+
 def build_qss(t: dict) -> str:
     return f"""
 QMainWindow, QDialog {{ background: {t['window_bg']}; }}
@@ -195,12 +222,13 @@ QPushButton:disabled {{ color: {_disabled(t['button_text'])}; }}
 QToolButton {{ background: {t['button_bg']}; color: {t['button_text']}; border: 1px solid rgba(128,128,128,110);
     border-radius: 2px; padding: 2px 8px; }}
 QToolButton#helpBtn:checked {{ background: {t['help_on_bg']}; color: {t['help_on_text']}; font-weight: bold; }}   /* help mode is on */
-QTableWidget, QListWidget {{ background: {t['table_bg']}; gridline-color: rgba(128,128,128,90);
-    color: {t['table_text']}; alternate-background-color: {t['table_bg']}; }}
+QListWidget {{ background: {t['table_bg']}; color: {t['table_text']}; }}
+QTableWidget {{ background: {t['row_odd_bg']}; color: {t['row_odd_text']}; gridline-color: {t['table_border']};
+    alternate-background-color: {t['row_even_bg']}; border: 1px solid {t['table_border']}; }}      /* rows alternate: odd / even (text colour of the even ones: IndentDelegate) */
 QTableWidget::item {{ padding-left: 0px; }}                 /* the text indent is IndentDelegate's job (CELL_INDENT) */
 QListWidget::item {{ padding-left: 6px; }}
-QHeaderView::section {{ background: {t['header_bg']}; color: {t['text']}; border: 1px solid rgba(128,128,128,90);
-    padding: 3px 3px 3px 6px; }}
+QHeaderView::section {{ background: {t['header_bg']}; color: {t['header_text']}; border: 0px solid {t['table_border']};
+    border-right-width: 1px; border-bottom-width: 1px; padding: 3px 3px 3px 6px; }}      /* one thin line between the cells, not a doubled frame */
 QMenuBar {{ background: {t['menu_bg']}; color: {t['menu_text']}; }}
 QMenuBar::item:selected {{ background: {t['accent']}; }}
 QMenu {{ background: {t['menu_bg']}; color: {t['menu_text']}; border: 1px solid rgba(128,128,128,110); }}
@@ -230,12 +258,18 @@ QLabel#dlgText {{ color: {t['text']}; }}
 """
 
 
+ROW_TEXT = {"odd": DARK["row_odd_text"], "even": DARK["row_even_text"]}      # set by apply_theme: font colours of the odd / even table rows
 CELL_INDENT = 12                 # left margin of the text in every table cell [px] - as in the edit fields (10 px + the frame)
 
 
 class IndentDelegate(QStyledItemDelegate):
     """Draws the text of a cell CELL_INDENT px from the left edge, whatever the style sheet does with `::item` padding (the cell itself,
     its background and selection stay full width). Cells with an icon / check box are drawn by the stock delegate."""
+
+    def sizeHint(self, option, index):
+        s = super().sizeHint(option, index)
+        s.setWidth(s.width() + CELL_INDENT)                       # room for the indent (column auto-fit)
+        return s
 
     def paint(self, painter, option, index):
         opt = QStyleOptionViewItem(option)
@@ -252,7 +286,10 @@ class IndentDelegate(QStyledItemDelegate):
         role = QPalette.HighlightedText if opt.state & QStyle.State_Selected else QPalette.Text
         painter.save()
         painter.setFont(opt.font)
-        painter.setPen(opt.palette.color(group if opt.state & QStyle.State_Enabled else QPalette.Disabled, role))
+        pen = opt.palette.color(group if opt.state & QStyle.State_Enabled else QPalette.Disabled, role)
+        if role == QPalette.Text and opt.state & QStyle.State_Enabled and index.data(Qt.ForegroundRole) is None:
+            pen = QColor(ROW_TEXT["even" if opt.features & QStyleOptionViewItem.Alternate else "odd"])           # the row colours of the theme
+        painter.setPen(pen)
         flags = int(opt.displayAlignment)
         if opt.features & QStyleOptionViewItem.WrapText:
             painter.drawText(r, flags | int(Qt.TextWordWrap), text)
@@ -266,6 +303,7 @@ class _IndentInstaller(QObject):
 
     def eventFilter(self, obj, ev):
         if ev.type() == QEvent.Polish and isinstance(obj, QTableView):
+            obj.setAlternatingRowColors(True)                       # the standard look of every table (see table_kit)
             if type(obj.itemDelegate()) is QStyledItemDelegate:
                 obj.setItemDelegate(IndentDelegate(obj))
         return False
@@ -302,6 +340,7 @@ def apply_theme(app: QApplication, theme: dict | None) -> dict:
         font.setFamily(t["font_family"])
     font.setPointSize(t["font_size"])
     app.setFont(font)
+    ROW_TEXT["odd"], ROW_TEXT["even"] = t["row_odd_text"], t["row_even_text"]
     app.setStyleSheet(build_qss(t))
     return t
 

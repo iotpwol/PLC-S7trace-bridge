@@ -19,6 +19,7 @@
     <button data-view="users" id="nav-users" hidden>Użytkownicy</button>
   </nav>
   <span class="spacer"></span>
+  <button id="ui-btn" title="Ustawienia interfejsu: kolory tabel (zapisują się na koncie)">Interfejs</button>
   <button id="help-btn" title="Tryb pomocy: po włączeniu najedź kursorem na dowolny element, aby zobaczyć jego opis (Esc kończy)">?</button>
   <button id="about-btn" title="O programie">O programie</button>
   <span id="who"></span>
@@ -235,6 +236,12 @@
     </form>
   </section>
 </main>
+<dialog id="ui-dlg">
+  <h3>Ustawienia interfejsu – kolory tabel</h3>
+  <p class="muted">Te same ustawienia co w programie okienkowym (Widok → Interfejs). Zapisują się na koncie. „Domyślne” przywraca kolory strony.</p>
+  <div id="ui-rows"></div>
+  <div class="bar"><button id="ui-reset">Domyślne</button><span class="spacer"></span><button id="ui-close">Zamknij</button></div>
+</dialog>
 <dialog id="mk-dlg">
   <form id="mk-form" method="dialog">
     <h3 id="mk-title-h">Znacznik</h3>

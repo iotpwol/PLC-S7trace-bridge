@@ -9,6 +9,7 @@ from PySide6.QtCore import QThread, Qt, Signal as QtSignal
 from PySide6.QtWidgets import (QApplication, QDialog, QHBoxLayout, QHeaderView, QLabel, QPlainTextEdit, QPushButton,
                                QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
 
+from .table_kit import standard as standard_table
 from ..core import detect
 from ..core.richtext import bold, bold_numbers
 from ..core.types import fmt_diff
@@ -64,7 +65,7 @@ class WizardDialog(QDialog):
 
         self.t_steps = QTableWidget(0, 4)
         self.t_steps.setHorizontalHeaderLabels(["Test", "Wynik", "Czas [ms]", "Szczegóły"])
-        self.t_steps.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+        standard_table(self.t_steps)
         self.t_steps.verticalHeader().setVisible(False)
         self.t_steps.setWordWrap(True)
         self.t_steps.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -77,7 +78,7 @@ class WizardDialog(QDialog):
         v = QVBoxLayout(w)
         self.t_info = QTableWidget(0, 2)
         self.t_info.setHorizontalHeaderLabels(["Parametr", "Wartość"])
-        self.t_info.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        standard_table(self.t_info)
         self.t_info.verticalHeader().setVisible(False)
         self.t_info.setColumnWidth(0, 250)
         self.t_info.setEditTriggers(QTableWidget.NoEditTriggers)

@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QColo
                                QTableWidget,
                                QTableWidgetItem, QTabWidget, QTextBrowser, QVBoxLayout, QWidget)
 
+from .table_kit import standard as standard_table
 from ..core import markers as mk
 from ..core.marker_draft import MarkerDraft
 from ..core import search as sr
@@ -340,7 +341,7 @@ class PendingDialog(QDialog):
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionMode(QAbstractItemView.NoSelection)
         self.table.verticalHeader().setVisible(False)
-        self.table.horizontalHeader().setStretchLastSection(True)
+        standard_table(self.table)
         for i, c in enumerate(changes):
             m = c.marker
             when = fmt_us(m.at_us) + (f" → {fmt_us(m.end_us)}" if m.kind in mk.SPAN_KINDS else "")
@@ -928,8 +929,7 @@ class MarkersDialog(QDialog):
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)      # several markers at once -> 'Grupuj zaznaczone'
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
-        self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        standard_table(self.table)
         self.table.itemSelectionChanged.connect(self._show_detail)
         self.table.itemDoubleClicked.connect(lambda *_: self.go())
         lay.addWidget(self.table, 3)
@@ -1253,8 +1253,7 @@ class SearchDialog(QDialog):
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.verticalHeader().setVisible(False)
-        self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        standard_table(self.table)
         self.table.itemDoubleClicked.connect(lambda *_: self.go())
         lay.addWidget(self.table, 1)
         self.lbl = QLabel("")

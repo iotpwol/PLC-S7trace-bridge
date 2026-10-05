@@ -73,7 +73,7 @@ function go(v) {
 async function start() {
   me = await api("/api/me");
   if (!me.user) return showLogin();
-  mkLoadPrefs(); panelLoad(); statusLoad();
+  mkLoadPrefs(); panelLoad(); statusLoad(); tableColorsLoad();
   $("who").textContent = `${me.user} (${me.role})`; $("logout").hidden = false; $("nav").hidden = false;
   $("nav-users").hidden = me.role !== "admin"; $("nav-targets").hidden = me.role !== "admin";
   $("new-conn").hidden = ROLE_RANK[me.role] < ROLE_RANK.operator;
@@ -846,3 +846,49 @@ fetch("/api/version").then((r) => r.json()).then((v) => { document.querySelector
   document.addEventListener("mousemove", (e) => { if (on && HELP && !$("helpbubble").hidden) { const b = $("helpbubble"); b.style.left = Math.min(e.clientX + 14, innerWidth - 440) + "px"; b.style.top = Math.min(e.clientY + 18, innerHeight - b.offsetHeight - 8) + "px"; } });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && on) set(false); if (e.key === "F1" && e.shiftKey) { e.preventDefault(); set(!on); } });
 })();
+
+// column widths of the list tables are set by dragging the right border of a header cell (as in the program's tables)
+function tableResizable(table) {
+  if (!table || table.dataset.rs) return; table.dataset.rs = "1";
+  const ths = [...table.querySelectorAll("thead th")];
+  ths.slice(0, -1).forEach((th) => {
+    const h = document.createElement("span"); h.className = "col-rs"; th.appendChild(h);
+    h.addEventListener("pointerdown", (e) => {
+      e.preventDefault(); e.stopPropagation(); h.setPointerCapture(e.pointerId); h.classList.add("on");
+      if (table.style.tableLayout !== "fixed") { ths.forEach((t) => { t.style.width = t.offsetWidth + "px"; }); table.style.tableLayout = "fixed"; }
+      const x0 = e.clientX, w0 = th.offsetWidth;
+      const move = (ev) => { th.style.width = Math.max(30, w0 + ev.clientX - x0) + "px"; };
+      const up = () => { h.classList.remove("on"); h.removeEventListener("pointermove", move); h.removeEventListener("pointerup", up); };
+      h.addEventListener("pointermove", move); h.addEventListener("pointerup", up);
+    });
+    h.addEventListener("click", (e) => e.stopPropagation());                       // a drag must not sort / click the header
+  });
+}
+["t-conn", "t-agents", "t-sess", "e-sig", "t-recs", "t-mkl", "t-targets", "t-users", "t-tokens", "mkp-t"].forEach((id) => tableResizable(document.getElementById(id)));
+
+// colours of the tables (header, odd / even rows, frame): the same seven settings as the desktop interface configuration, kept per account
+const TABLE_COLORS = [["header_bg", "Kolor tła nagłówka tabeli", "--tb-head-bg"], ["header_text", "Kolor czcionki nagłówka tabeli", "--tb-head-text"],
+  ["odd_bg", "Kolor tła wierszy nieparzystych", "--tb-odd-bg"], ["odd_text", "Kolor czcionki wierszy nieparzystych", "--tb-odd-text"],
+  ["even_bg", "Kolor tła wierszy parzystych", "--tb-even-bg"], ["even_text", "Kolor czcionki wierszy parzystych", "--tb-even-text"],
+  ["border", "Kolor ramki tabeli", "--tb-border"]];
+let TBL = {}, tblSave = null;
+function tableColorsApply() { for (const [k, , v] of TABLE_COLORS) { if (TBL[k]) document.documentElement.style.setProperty(v, TBL[k]); else document.documentElement.style.removeProperty(v); } }
+function tableColorsPersist() { tableColorsApply(); clearTimeout(tblSave); tblSave = setTimeout(() => { api("/api/prefs", { table: TBL }).catch(() => {}); }, 400); }
+async function tableColorsLoad() { try { TBL = { ...((await api("/api/prefs")).prefs.table || {}) }; } catch (e) { /* defaults */ } tableColorsApply(); }
+function rgbHex(c) { const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(c || ""); return m ? "#" + [m[1], m[2], m[3]].map((x) => (+x).toString(16).padStart(2, "0")).join("") : "#808080"; }
+function tableColorsDialog() {
+  const box = $("ui-rows"); box.innerHTML = "";
+  const th = document.querySelector("th"), td = document.querySelector("td") || th;
+  const dflt = { header_bg: rgbHex(th && getComputedStyle(th).backgroundColor), header_text: rgbHex(th && getComputedStyle(th).color), odd_bg: rgbHex(getComputedStyle(document.body).backgroundColor),
+    odd_text: rgbHex(td && getComputedStyle(td).color), even_bg: "#2f2f2f", even_text: rgbHex(td && getComputedStyle(td).color), border: "#454545" };
+  for (const [k, label] of TABLE_COLORS) {
+    const r = document.createElement("div"); r.className = "urow";
+    const l = document.createElement("label"); l.textContent = label; const i = document.createElement("input"); i.type = "color"; i.value = TBL[k] || dflt[k];
+    i.addEventListener("input", () => { TBL[k] = i.value; tableColorsPersist(); });
+    r.append(l, i); box.appendChild(r);
+  }
+  if (!$("ui-dlg").open) $("ui-dlg").showModal();
+}
+$("ui-btn").addEventListener("click", tableColorsDialog);
+$("ui-close").addEventListener("click", () => $("ui-dlg").close());
+$("ui-reset").addEventListener("click", () => { TBL = {}; tableColorsPersist(); tableColorsDialog(); });
