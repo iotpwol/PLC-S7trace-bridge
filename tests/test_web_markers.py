@@ -385,3 +385,15 @@ def test_web_table_colours_are_kept_per_account(srv):
     base = os.path.join(os.path.dirname(__import__("s7trace.web.server", fromlist=["x"]).__file__), "static")
     js, html = (open(os.path.join(base, f), encoding="utf-8").read() for f in ("app.js", "index.html"))
     assert 'id="ui-dlg"' in html and 'id="ui-btn"' in html and "Kolor ramki tabeli" in js and "tableColorsLoad" in js
+
+
+def test_legend_style_is_kept_per_account_on_the_server(srv):
+    ola, ala = _user(srv, "ola"), _user(srv, "ala")
+    assert ola.get("/api/prefs")[1]["prefs"]["legend_style"] == "legend"
+    st_, d = ola.post("/api/prefs", {"legend_style": "labels"})
+    assert st_ == 200 and d["prefs"]["legend_style"] == "labels"
+    assert ola.get("/api/prefs")[1]["prefs"]["legend_style"] == "labels"
+    assert ala.get("/api/prefs")[1]["prefs"]["legend_style"] == "legend"          # another account is not affected
+    assert ola.post("/api/prefs", {"legend_style": "rubbish"})[1]["prefs"]["legend_style"] == "legend"      # validated
+    st_, body = ola.get("/static/chartx.js")
+    assert "cxTags" in (body if isinstance(body, str) else body.decode("utf-8"))   # the boxed names are drawn by the front end

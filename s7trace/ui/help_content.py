@@ -5,30 +5,15 @@ Wszystkie rysunki w `s7trace/help/img` są zdjęciami RZECZYWISTEGO programu –
 from __future__ import annotations
 
 import os
-import struct
 
 HELP_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "help")
-DPI_SCALE = 1.25                       # rysunki powstały przy skalowaniu ekranu 125 % – pokazujemy je w rozmiarze logicznym
-MAX_W = 760
-
-
-def _png_width(name: str) -> int:
-    try:
-        with open(os.path.join(HELP_DIR, "img", name + ".png"), "rb") as f:
-            head = f.read(24)
-        return struct.unpack(">I", head[16:20])[0]
-    except (OSError, struct.error):
-        return 0
 
 
 def _img(name: str, caption: str = "", width: int | None = None) -> str:
-    """Rysunek (zdjęcie z programu) z opcjonalnym podpisem; domyślnie w rozmiarze logicznym, nie szerszy niż MAX_W."""
-    if width is None:
-        px = _png_width(name)
-        width = min(MAX_W, round(px / DPI_SCALE)) if px else None
-    w = f' width="{width}"' if width else ""
+    """Rysunek (zdjęcie z programu) z opcjonalnym podpisem. Rozmiar i wygładzone skalowanie robi `ImageBrowser` (help_dialog.py);
+    kliknięcie rysunku otwiera go w pełnej rozdzielczości (odnośnik `zoom:<nazwa>`)."""
     cap = f'<br><i style="font-size:small">{caption}</i>' if caption else ""
-    return f'<p><img src="img/{name}.png"{w}>{cap}</p>'
+    return f'<p><a href="zoom:{name}"><img src="img/{name}.png"></a>{cap}</p>'
 
 
 def _imgs(*pairs: tuple[str, str]) -> str:
@@ -130,11 +115,12 @@ programu</b> (menu, pola, okna) i opis: co to jest, do czego służy, jak się z
 <h2>Menu Widok</h2>
 """ + _img("menu_widok") + _table([
         ("Dopasuj widok do całości (Ctrl+0)", "Pokazuje całą nagraną historię na wykresie głównym (wstrzymuje widok na żywo)."),
-        ("Legenda", "Włącza lub wyłącza legendę wykresu (ustawienie tej karty)."),
+        ("Legenda", "Włącza lub wyłącza nazwy sygnałów na wykresie – legendę albo opisy przy sygnałach (zależnie od stylu poniżej). Ustawienie wspólne dla kart."),
+        ("Nazwy sygnałów na wykresie", "Wybór stylu: <b>Legenda (ramka z listą w rogu)</b> albo <b>Opisy przy sygnałach</b> – patrz rozdział „Wykres główny”. Ustawienie wchodzi do konfiguracji interfejsu."),
         ("Siatka", "Włącza lub wyłącza siatkę wykresu."),
         ("Punkty (znaczniki próbek na krzywych, ta karta)", "Pokazuje znaczniki pojedynczych próbek na krzywych (ustawienie karty). Gdy w oknie jest więcej próbek niż limit z Ustawienia → Renderowanie wykresu, punkty są ukrywane – przybliż wykres."),
         ("Położenie legendy (ta karta)", "Narożnik wykresu, w którym stoi legenda (można ją też przeciągnąć myszą). Zapamiętywane osobno dla każdej karty."),
-    ]) + _img("menu_widok_legenda", "Podmenu „Położenie legendy”") + """
+    ]) + _imgs(("menu_widok_nazwy", "Podmenu „Nazwy sygnałów na wykresie”"), ("menu_widok_legenda", "Podmenu „Położenie legendy” (działa w stylu „Legenda”)")) + """
 <p>Kolory, czcionki i wygląd tabel ustawia się w <b>Ustawienia → Interfejs…</b> (rozdział „Interfejs: kolory, czcionka, tabele”).</p>
 """))
 
@@ -353,7 +339,7 @@ w pasku statusu widać licznik zapisanych wpisów. Szczegóły baz: rozdział �
 <li><b>Ukrywanie elementów</b> – prawy przycisk na nazwie elementu (np. „IP”, „Cykle [ms]”) ukrywa go; prawy przycisk na nazwie pola otwiera menu z listą wszystkich jego elementów (haczyki)
 i „Pokaż wszystkie elementy”.</li>
 </ul>
-""" + _img("grp_zwiniete", "Zwinięte pola Połączenie i Sterownik – pozostałe pola przesunęły się do góry", width=300) + _imgs(
+""" + _img("grp_zwiniete", "Zwinięte pola Połączenie i Sterownik – pozostałe pola przesunęły się do góry") + _imgs(
         ("menu_pole_polaczenie", "Prawy przycisk na nazwie pola: zwiń / rozwiń i lista elementów z haczykami"),
         ("menu_wiersz_ip", "Prawy przycisk na nazwie elementu: ukrycie tego elementu")) + """
 <p>Kolejność pól, zwinięte pola, ukryte elementy i aktywna zakładka dolna wchodzą do <b>konfiguracji interfejsu</b> – zapisują się w pliku konfiguracji aplikacji
@@ -384,9 +370,20 @@ w każdym razie niewidoczny, niezależnie od ustawienia.</p>
 <li><b>Oś czasu</b>: sekundy od startu albo zegar (patrz panel „Zakres okna wykresu”); powyżej godziny g:mm:ss, przy bardzo małym oknie także ułamki sekundy.</li>
 <li><b>Przesuwanie i zoom myszą</b>: przeciągnięcie przesuwa wykres w czasie, kółko myszy powiększa / zmniejsza okno czasu. Wstrzymuje to widok na żywo (zbieranie trwa dalej) – <b>Wznów</b> wraca do podglądu bieżących danych.
 Widok nie wyjdzie poza zebrane dane; najwęższe okno to 0,1 s.</li>
-<li><b>Legenda</b> – nazwy i kolory sygnałów. Przeciągnij, aby zmienić położenie; podwójne kliknięcie otwiera „Sygnały…”. Najechanie na pozycję pokazuje dymek (adres, typ, skala, opis, aktualna wartość).</li>
+<li><b>Legenda</b> – nazwy i kolory sygnałów. Przeciągnij, aby zmienić położenie; podwójne kliknięcie otwiera „Sygnały…”. Najechanie na pozycję pokazuje dymek (adres, typ, skala, opis, aktualna wartość). Zamiast legendy można włączyć <b>opisy przy sygnałach</b> (niżej).</li>
 <li>Pionowa czerwona linia <b>TRIG</b> oznacza chwilę wyzwolenia triggera.</li>
 </ul>
+<h3>Nazwy sygnałów: legenda albo opisy przy sygnałach</h3>
+<p>Nazwy sygnałów można pokazywać na dwa sposoby – wybierasz w <b>Widok → Nazwy sygnałów na wykresie</b>, w prawym menu legendy albo w <b>Ustawienia → Interfejs</b> („Nazwy sygnałów na wykresie”):</p>
+<ul>
+<li><b>Legenda (ramka z listą w rogu)</b> – jedna ramka ze wszystkimi nazwami; można ją przeciągnąć w dowolne miejsce, położenie jest zapamiętywane osobno dla każdej karty.</li>
+<li><b>Opisy przy sygnałach</b> – legenda znika, a przy <b>każdym sygnale</b> pojawia się jego nazwa w półprzezroczystej ramce, <b>w połowie wysokości pasma</b> sygnału, tuż <b>po prawej stronie osi pionowej</b>. Ramka ma kolor tła wykresu z przezroczystością, a napis – kolor sygnału, dzięki temu litery nie mieszają się z pikselami krzywej o tym samym kolorze.
+W układzie „Offset + Gain” (jedna wspólna skala) opis stoi przy krzywej, a bliskie sobie opisy są rozsuwane tak, żeby się nie nakładały i nie wychodziły poza wykres.</li>
+</ul>
+""" + _imgs(("wykres_opisy", "Opisy przy sygnałach zamiast legendy (nazwy sygnałów)"), ("wykres_opisy_adres", "Ten sam wykres po przełączeniu opisów na adres / węzeł OPC")) + """
+<p><b>Prawy przycisk na legendzie albo na opisie</b> otwiera menu: <b>Sygnały…</b>, <b>Legenda pokazuje</b> (nazwa sygnału / adres – węzeł OPC; ustawienie karty), <b>Nazwy sygnałów na wykresie</b> (legenda / opisy), położenie legendy (tylko w stylu „Legenda”) i ukrycie. Podwójne kliknięcie opisu otwiera okno „Sygnały…”, a najechanie pokazuje ten sam dymek co przy legendzie.
+Przełącznik <b>Widok → Legenda</b> ukrywa i pokazuje nazwy w obu stylach. Wybrany styl jest częścią konfiguracji interfejsu (zapisuje się w pliku konfiguracji interfejsu); w trybie Web jest zapamiętywany w ustawieniach konta (lista „Nazwy sygnałów” w pasku narzędzi wykresu, ten sam prawy przycisk na opisie).</p>
+""" + _imgs(("menu_legenda", "Menu prawego przycisku na legendzie"), ("menu_opis_sygnalu", "To samo menu otwarte na opisie przy sygnale (styl „Opisy”)")) + """
 <h3>Menu prawego przycisku na wykresie</h3>
 """ + _img("menu_wykres_prawy") + _table([
         ("Dodaj znacznik…", "Znacznik punktowy, zakres czasu albo różnica sygnału w miejscu kliknięcia (rozdział „Znaczniki”)."),
@@ -410,7 +407,7 @@ Widok nie wyjdzie poza zebrane dane; najwęższe okno to 0,1 s.</li>
 <li>Wysokość paska zmieniasz, chwytając poziomy pasek podziału między wykresami (ustawienie jest zapamiętywane).</li>
 <li>Jak często i z ilu punktów pasek jest przeliczany – Ustawienia → Renderowanie wykresu.</li>
 </ul>
-""" + _img("okno_glowne", "Pasek podglądu to dolny wykres z żółtym zaznaczeniem widocznego okna", width=760)))
+""" + _img("okno_glowne", "Pasek podglądu to dolny wykres z żółtym zaznaczeniem widocznego okna")))
 
     # ------------------------------------------------------------------------------------------------------------ 19
     s.append(("19. Przyciski sterujące i znaczników", """
@@ -676,6 +673,7 @@ Starsze pliki konfiguracji bez tych kolorów dostają wartości wyliczone z doty
 <ul>
 <li><b>Czcionka</b>: rodzaj i rozmiar. <b>REC: częstotliwość migania</b> kropki (domyślnie 0,5 Hz).</li>
 <li><b>Pasek statusu</b>: maksymalna liczba linii, kolor tła i tekstu, justowanie tekstu.</li>
+<li><b>Nazwy sygnałów na wykresie</b>: „Legenda (ramka z listą)” albo „Opisy przy sygnałach” (rozdział „Wykres główny”).</li>
 <li><b>Belki zmiany rozmiaru</b> (między panelem a wykresem i nad wykresem przeglądowym): kolor oraz „zawsze widoczne” – domyślnie belka jest cienka i pojawia się dopiero po najechaniu kursorem.</li>
 <li>Zmiany widać na żywo; <b>Anuluj</b> przywraca poprzedni wygląd, <b>Domyślne</b> – ustawienia fabryczne.</li>
 </ul>

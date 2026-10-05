@@ -56,6 +56,8 @@ _RAW: dict[str, str] = {
     "Kursory V": _e("Kursory pionowe (czas).", "Pomiar czasu, Δt i częstotliwości oraz wartości sygnałów.", "Włącz i klikaj na wykresie (maks. 2)."),
     "Kursory H": _e("Kursory poziome (wartość).", "Pomiar wartości i ΔY.", "Włącz i klikaj na wykresie (maks. 2)."),
     "Legenda": _e("Lista sygnałów z kolorami.", "Po najechaniu na pozycję pokazuje opis sygnału; można wybrać, czy pokazywać nazwę, czy adres.", "W programie: prawy przycisk na legendzie → „Legenda pokazuje”."),
+    "Nazwy sygnałów na wykresie": _e("Sposób pokazywania nazw sygnałów na wykresie.", "Legenda to jedna ramka z listą (program: w rogu wykresu, Web: pod wykresem). Opisy przy sygnałach to nazwa w półprzezroczystej ramce przy każdym sygnale, w połowie jego pasma po prawej stronie osi pionowej – litery nie mieszają się z krzywą. W obu stylach prawy przycisk na legendzie / opisie przełącza nazwę na adres (węzeł OPC).", "Wybierz z listy albo z menu Widok → Nazwy sygnałów na wykresie. Ustawienie wchodzi do konfiguracji interfejsu (w Web: do ustawień konta)."),
+    "Nazwy sygnałów": _e("Sposób pokazywania nazw sygnałów na wykresie: legenda albo opisy przy sygnałach.", "Opis to nazwa w półprzezroczystej ramce przy każdym sygnale, po prawej stronie osi pionowej. Zapamiętywane w ustawieniach konta.", "Wybierz z listy; prawy przycisk na opisie przełącza nazwę / adres."),
     "Legenda pokazuje": _e("Co wyświetla legenda: nazwę sygnału albo jego adres (węzeł OPC).", "Ułatwia rozpoznanie sygnałów po adresie.", "Wybierz z listy."),
     # ---- trigger
     "Włącz trigger": _e("Włącznik wyzwalacza.", "Aktywuje wyzwalanie warunkiem na wybranym sygnale.", "Zaznacz, a następnie ustaw sygnał, tryb i wartości."),

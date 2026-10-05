@@ -7,7 +7,7 @@ from typing import Callable
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtCore import QObject, QRectF, Qt, Signal as QtSignal
+from PySide6.QtCore import QObject, QPointF, QRectF, Qt, Signal as QtSignal
 from PySide6.QtGui import QColor, QCursor, QFontMetricsF, QPen
 from PySide6.QtWidgets import QApplication, QLabel, QSplitter, QToolTip, QVBoxLayout, QWidget
 
@@ -209,6 +209,12 @@ class PlotView(QWidget):
         self.legend_mode = "name"                      # "name" / "address": what the legend shows
         self.legend_tip = None                         # callable(signal index) -> bubble text of the signal under the cursor
         self._legend_idx: list[int] = []               # signal index of every legend row
+        self.legend_style = "legend"                   # "legend" (box in a corner) / "labels" (a name beside every signal)
+        self._legend_on = True                         # the View -> Legend switch (shared by both styles)
+        self.tags: list[pg.TextItem] = []              # the 'labels' style: one box with the signal name per plotted signal
+        self._tag_idx: list[int] = []
+        self._tag_y: dict[int, float] = {}             # offset layout: view y where the tag of a signal stands
+        self._tag_look = (QColor(0, 0, 0, 170), QColor("#b0b0b0"))
         self._ov_want: int | None = None
         self.y_layout = "lanes"                     # "lanes" (Share) / "offset" (Offset Y + Gain)
         self._lane_geo: dict[int, tuple[float, float]] = {}
@@ -265,6 +271,7 @@ class PlotView(QWidget):
         self.legend.sigDoubleClicked.connect(lambda *_: self.legendDoubleClicked.emit())   # -> 'Sygnały…'
         self.legend.setBrush(pg.mkBrush(0, 0, 0, 170))
         self.legend.setPen(pg.mkPen("#b0b0b0"))
+        self.vb.sigResized.connect(lambda *_: self._place_tags())
         self.curves: list[pg.PlotDataItem] = []
         self.points: list[pg.PlotDataItem] = []
         self.ov_curves: list[pg.PlotDataItem] = []
@@ -304,17 +311,91 @@ class PlotView(QWidget):
     def _rebuild_legend(self) -> None:
         self.legend.clear()
         self._legend_idx = []
+        for t in self.tags:
+            t.setParentItem(None)
+            if t.scene() is not None:
+                t.scene().removeItem(t)
+        self.tags, self._tag_idx = [], []
         for i, (c, s) in enumerate(zip(self.curves, self.signals)):
             if s.plot:
                 self.legend.addItem(c, legend_text(s, self.legend_mode))
                 self._legend_idx.append(i)
+                tag = pg.TextItem(legend_text(s, self.legend_mode), color=s.color, anchor=(0, 0.5))
+                tag.setParentItem(self.vb)
+                tag.setZValue(50)
+                self._style_tag(tag)
+                self.tags.append(tag)
+                self._tag_idx.append(i)
+        self._apply_legend_vis()
+        self._place_tags()
 
     def set_legend_mode(self, mode: str) -> None:
         self.legend_mode = "address" if mode == "address" else "name"
         self._rebuild_legend()
 
+    def set_legend_style(self, style: str) -> None:
+        """'legend' = one box in a corner, 'labels' = a name in a translucent box beside every signal (right of the Y axis)."""
+        self.legend_style = "labels" if style == "labels" else "legend"
+        self._apply_legend_vis()
+        self._place_tags()
+
+    def _apply_legend_vis(self) -> None:
+        self.legend.setVisible(self._legend_on and self.legend_style == "legend")
+        for t in self.tags:
+            t.setVisible(self._legend_on and self.legend_style == "labels")
+
+    def _style_tag(self, tag: pg.TextItem) -> None:
+        bg, fg = self._tag_look
+        tag.fill = pg.mkBrush(bg)
+        tag.border = pg.mkPen(fg)
+        tag.update()
+
+    def _tags_shown(self) -> bool:
+        return self._legend_on and self.legend_style == "labels" and bool(self.tags)
+
+    def _place_tags(self) -> None:
+        """Every name stands at the middle of its lane (offset layout: at its curve), just right of the vertical axis."""
+        if not self._tags_shown():
+            return
+        pos = []
+        for k in self._tag_idx:
+            if self.y_layout == "lanes" and k in self._lane_geo:
+                b, t = self._lane_geo[k]
+                yv = (b + t) / 2
+            else:
+                yv = self._tag_y.get(k)
+            pos.append(None if yv is None else self.vb.mapFromView(QPointF(0.0, yv)).y())
+        for tag, p in zip(self.tags, pos):
+            tag.setVisible(p is not None)
+        shown = [(p, tag) for p, tag in zip(pos, self.tags) if p is not None]
+        if self.y_layout != "lanes":                       # curves may be close together: push the names apart
+            shown.sort(key=lambda x: x[0])
+            ps = [p for p, _ in shown]
+            hs = [tag.boundingRect().height() + 2 for _, tag in shown]
+            top, bottom = 0.0, float(self.vb.height())
+            for i in range(len(ps)):                       # downwards: no overlap, not above the top edge
+                ps[i] = max(ps[i], top + hs[i] / 2 if i == 0 else ps[i - 1] + (hs[i - 1] + hs[i]) / 2)
+            for i in range(len(ps) - 1, -1, -1):           # upwards: back inside the plot when the stack ran over the bottom
+                lim = bottom - hs[i] / 2 if i == len(ps) - 1 else ps[i + 1] - (hs[i + 1] + hs[i]) / 2
+                ps[i] = min(ps[i], lim)
+            shown = [(p, tag) for p, (_, tag) in zip(ps, shown)]
+        for p, tag in shown:
+            tag.setPos(6.0, p)
+
+    def _tag_row_at(self, pos):
+        """Signal index of the name label under the scene position (None = none)."""
+        if not self._tags_shown():
+            return None
+        for tag, k in zip(self.tags, self._tag_idx):
+            if tag.isVisible() and tag.sceneBoundingRect().contains(pos):
+                return k
+        return None
+
     def _legend_row_at(self, pos):
-        """Index of the signal whose legend row is under the scene position (None = none)."""
+        """Index of the signal whose legend row (or name label) is under the scene position (None = none)."""
+        k = self._tag_row_at(pos)
+        if k is not None:
+            return k
         if not self.legend.isVisible():
             return None
         for k, (sample, label) in enumerate(self.legend.items):
@@ -375,6 +456,9 @@ class PlotView(QWidget):
         self.legend.setBrush(pg.mkBrush(c))
         self.legend.setPen(pen)
         self.legend.setLabelTextColor(fg)
+        self._tag_look = (c, QColor(fg))
+        for tag in self.tags:
+            self._style_tag(tag)
         self.readout.setStyleSheet(f"background: rgba({c.red()},{c.green()},{c.blue()},200); color: {fg};"
                                    f" border: 1px solid {fg}; padding: 4px; font-family: Consolas, monospace;")
 
@@ -449,6 +533,7 @@ class PlotView(QWidget):
         if self.mitems:                                       # bookmarks of chosen plots follow the lanes
             self._marker_extras()
             self._marker_style()
+        self._place_tags()
 
     def lane_geometry(self) -> dict[int, tuple[float, float]]:
         return dict(self._lane_geo)
@@ -521,7 +606,9 @@ class PlotView(QWidget):
         self._dirty = True
 
     def set_legend_visible(self, on: bool) -> None:
-        self.legend.setVisible(on)
+        self._legend_on = bool(on)
+        self._apply_legend_vis()
+        self._place_tags()
 
     def set_grid(self, on: bool) -> None:
         self.plot.showGrid(x=on, y=on, alpha=0.25)
@@ -587,6 +674,15 @@ class PlotView(QWidget):
             ev.accept()
             self.legendContextMenu.emit(ev.screenPos().toPoint())
             return
+        if self._tag_row_at(ev.scenePos()) is not None:           # a name label: the same menu / double click as the legend
+            if ev.button() == Qt.RightButton:
+                ev.accept()
+                self.legendContextMenu.emit(ev.screenPos().toPoint())
+                return
+            if ev.button() == Qt.LeftButton and ev.double():
+                ev.accept()
+                self.legendDoubleClicked.emit()
+                return
         if self.place_marker is not None:
             mid = self.place_marker
             if ev.button() == Qt.LeftButton and self.vb.sceneBoundingRect().contains(ev.scenePos()):
@@ -1033,6 +1129,7 @@ class PlotView(QWidget):
         px = max(self.vb.height(), 1.0)
         lo = hi = None
         ticks, marks, info = [], [], {}
+        tag_y: dict[int, float] = {}
         for k, s in enumerate(self.signals):
             if k >= len(self.curves):
                 break
@@ -1058,6 +1155,8 @@ class PlotView(QWidget):
             if len(fin):
                 lo = fin.min() if lo is None else min(lo, fin.min())
                 hi = fin.max() if hi is None else max(hi, fin.max())
+                tag_y[k] = float(np.median(fin))
+        self._tag_y = tag_y
         self.vb.setXRange(x0, x1, padding=0)
         if lanes:
             self._lane_info = info
@@ -1077,6 +1176,7 @@ class PlotView(QWidget):
             self.vb.setYRange(lo - pad, hi + pad, padding=0)
         else:
             self.vb.setYRange(*self.y_range, padding=0)
+        self._place_tags()
         self._update_overview(x0, x1, ver)
         if self.mitems:
             self._delta_overlay()

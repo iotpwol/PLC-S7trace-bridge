@@ -5,7 +5,7 @@ import json
 import os
 
 from PySide6.QtCore import QByteArray, QEvent, QSize, QTimer, Qt
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtGui import QAction, QActionGroup, QKeySequence
 from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QInputDialog, QMainWindow, QMenu,
                                QMessageBox, QStackedWidget, QTabBar, QToolButton, QToolTip, QWidget)
 
@@ -209,6 +209,16 @@ class MainWindow(QMainWindow):
         self.act_points = self._act(v, "Punkty (znaczniki próbek na krzywych, ta karta)",
                                     lambda on: self._cur(lambda t: t.act_pts.setChecked(on)), checked=False)
         v.addSeparator()
+        self.menu_style = v.addMenu("Nazwy sygnałów na wykresie")
+        self.grp_style = QActionGroup(self)
+        self.act_style = {}
+        for key, label in (("legend", "Legenda (ramka z listą w rogu)"), ("labels", "Opisy przy sygnałach (po prawej stronie osi Y)")):
+            a = self.menu_style.addAction(label)
+            a.setCheckable(True)
+            a.setChecked(key == self.ui.get("theme", {}).get("legend_style", "legend"))
+            self.grp_style.addAction(a)
+            a.triggered.connect(lambda _=False, k=key: self._edit_theme({"legend_style": k}))
+            self.act_style[key] = a
         self.menu_legend = v.addMenu("Położenie legendy (ta karta)")
         for label, pos in (("Lewy górny róg", (0, 0)), ("Prawy górny róg", (1, 0)),
                            ("Lewy dolny róg", (0, 1)), ("Prawy dolny róg", (1, 1))):
@@ -363,6 +373,8 @@ class MainWindow(QMainWindow):
         for i in range(self.tabs.count()):
             self.tabs.widget(i).apply_plot_theme(self.theme["plot_bg"], self.theme["plot_fg"])
             self.tabs.widget(i).apply_ctl_theme(self.theme)
+        if hasattr(self, "act_style"):
+            self.act_style[self.theme["legend_style"]].setChecked(True)
         self._relayout_tabs()
 
     # ------------------------------------------------- tab bar sizing / layout sync

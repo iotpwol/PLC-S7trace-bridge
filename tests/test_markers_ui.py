@@ -1440,3 +1440,49 @@ def test_method_row_says_what_automatic_picked(app):
     tab.update_method_label()
     assert tab.lbl_method.text() == "OPC UA"                                                  # a manual choice is shown as it is
     tab.state = "stopped"
+
+
+def test_signal_names_as_labels_instead_of_legend(app, tmp_path):
+    """Interface setting 'legend_style': names in boxes beside the signals (right of the Y axis) instead of the legend box."""
+    from s7trace.ui import theme as th
+    from s7trace.ui.interface_dialog import InterfaceDialog
+    from s7trace.ui.main_window import MainWindow
+    w = MainWindow(config_file=str(tmp_path / "c.json"))
+    w.resize(1200, 800)
+    w.show()
+    tab = w.tabs.widget(0)
+    tab.cfg.signals = [Signal(name="A", dtype="BOOL", db=1, byte=0, bit=0, color="#ff0000"),
+                       Signal(name="B", dtype="INT", db=1, byte=2, color="#00ff00"),
+                       Signal(name="C", dtype="REAL", db=1, byte=4, color="#0000ff")]
+    tab._load_cfg()
+    pl = tab.plot
+    pl.set_signals([Signal.from_dict(s.to_dict()) for s in tab.cfg.signals])
+    app.processEvents()
+    assert pl.legend_style == "legend" and pl.legend.isVisible() and not any(t.isVisible() for t in pl.tags)
+    w._edit_theme({"legend_style": "labels"})                                  # what the menu / the legend menu do
+    app.processEvents()
+    assert w.ui["theme"]["legend_style"] == "labels" and pl.legend_style == "labels"
+    assert not pl.legend.isVisible() and len(pl.tags) == 3 and all(t.isVisible() for t in pl.tags)
+    ys = [t.pos().y() for t in pl.tags]
+    assert ys == sorted(ys) and len(set(round(y) for y in ys)) == 3            # one per lane, top to bottom
+    assert all(abs(t.pos().x() - 6.0) < 1e-6 for t in pl.tags)                 # just right of the Y axis
+    assert w.act_style["labels"].isChecked()
+    w.act_legend.setChecked(False)                                             # the View -> Legend switch hides the labels too
+    assert not any(t.isVisible() for t in pl.tags)
+    w.act_legend.setChecked(True)
+    tab.set_legend_mode("address")                                             # right click on a label: name <-> address
+    from s7trace.core.types import legend_text
+    assert pl.tags[0].textItem.toPlainText() == legend_text(pl.signals[0], "address") != "A"
+    p = str(tmp_path / "opisy.json")
+    th.save_profile(p, w.ui["theme"])                                          # saved in the interface file and read back
+    assert '  "legend_style": "labels",' in open(p, encoding="utf-8").read().splitlines()
+    assert th.load_profile(p)["legend_style"] == "labels"
+    d = InterfaceDialog(w.ui["theme"], lambda t: None)
+    assert d.legend_style.currentData() == "labels"
+    d.legend_style.setCurrentIndex(d.legend_style.findData("legend"))
+    assert d.theme["legend_style"] == "legend"
+    d.close()
+    w._edit_theme({"legend_style": "legend"})
+    assert pl.legend.isVisible() and not any(t.isVisible() for t in pl.tags)
+    assert th.normalize({"legend_style": "x"})["legend_style"] == "legend"
+    w.close()

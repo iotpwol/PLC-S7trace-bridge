@@ -3,11 +3,52 @@ from __future__ import annotations
 
 import os
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLineEdit, QListWidget, QPushButton, QSplitter, QTextBrowser,
-                               QVBoxLayout, QWidget)
+from PySide6.QtCore import QSize, Qt, QTimer, QUrl
+from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QLineEdit, QListWidget, QPushButton, QScrollArea, QSplitter,
+                               QTextBrowser, QVBoxLayout, QWidget)
 
 from .help_content import HELP_DIR, sections                      # noqa: E402,F401  (HELP_DIR / sections: part of this module's interface)
+
+
+class ImageBrowser(QTextBrowser):
+    """QTextBrowser that shows the pictures 1:1 in screen pixels (no scaling when they fit) and scales only the wider ones itself, smoothly -
+    the built-in scaling is a fast, unfiltered one and made the photographs blurry. A click on a picture opens it in full resolution (link `zoom:<name>`)."""
+
+    def loadResource(self, rtype, url: QUrl):
+        if rtype == 2 and url.path().lower().endswith(".png"):                       # QTextDocument.ImageResource
+            path = os.path.join(HELP_DIR, url.path().replace("/", os.sep).lstrip(os.sep))
+            img = QImage(path)
+            if not img.isNull():
+                dpr = self.devicePixelRatioF()
+                room = max(300, round((self.viewport().width() - 30) * dpr))            # text area in real pixels
+                if img.width() > room:                                                   # only a picture that does not fit is scaled
+                    img = img.scaledToWidth(room, Qt.SmoothTransformation)
+                img.setDevicePixelRatio(dpr)
+                return img
+        return super().loadResource(rtype, url)
+
+
+class ZoomDialog(QDialog):
+    """A picture of the help in its full resolution (scrollable)."""
+
+    def __init__(self, name: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Zdjęcie – {name}")
+        pm = QPixmap(os.path.join(HELP_DIR, "img", name + ".png"))
+        lab = QLabel()
+        lab.setPixmap(pm)
+        area = QScrollArea()
+        area.setWidget(lab)
+        lay = QVBoxLayout(self)
+        lay.addWidget(area, 1)
+        btn = QPushButton("Zamknij")
+        btn.clicked.connect(self.accept)
+        row = QHBoxLayout()
+        row.addStretch()
+        row.addWidget(btn)
+        lay.addLayout(row)
+        self.resize(min(pm.width() + 40, 1500), min(pm.height() + 100, 950))
 
 
 class HelpDialog(QDialog):
@@ -30,9 +71,16 @@ class HelpDialog(QDialog):
         self.toc = QListWidget()
         self.toc.addItems([t for t, _ in self._sections])
         self.toc.setMaximumWidth(300)
-        self.view = QTextBrowser()
+        self.view = ImageBrowser()
         self.view.setSearchPaths([HELP_DIR])
+        self.view.setOpenLinks(False)
         self.view.setOpenExternalLinks(False)
+        self.view.anchorClicked.connect(self._link)
+        self._relayout = QTimer(self)                              # the pictures are scaled to the width of the text area
+        self._relayout.setSingleShot(True)
+        self._relayout.setInterval(250)
+        self._relayout.timeout.connect(self._rerender)
+        self._last_w = 0
         split.addWidget(self.toc)
         split.addWidget(self.view)
         split.setStretchFactor(1, 1)
@@ -50,7 +98,23 @@ class HelpDialog(QDialog):
             if topic and topic.lower() in title.lower():
                 self.toc.setCurrentRow(i)
 
+    def _link(self, url: QUrl) -> None:
+        if url.scheme() == "zoom":
+            ZoomDialog(url.path(), self).exec()
+
+    def resizeEvent(self, e) -> None:
+        super().resizeEvent(e)
+        self._relayout.start()
+
+    def _rerender(self) -> None:
+        w = self.view.viewport().width()
+        if abs(w - self._last_w) > 20 and self.isVisible():
+            sb = self.view.verticalScrollBar().value()
+            self._show(self.toc.currentRow())
+            self.view.verticalScrollBar().setValue(sb)
+
     def _show(self, i: int) -> None:
+        self._last_w = self.view.viewport().width()
         if 0 <= i < len(self._sections):
             self.view.setHtml(self._sections[i][1])
 

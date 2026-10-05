@@ -59,7 +59,7 @@ COLOR_KEYS: dict[str, tuple[str, str]] = {
 }
 
 DARK = {k: v[1] for k, v in COLOR_KEYS.items()}
-DARK.update(profile="dark", font_family="", font_size=9, rec_blink_hz=0.5, bar_always=False, status_lines=1, status_align="right")
+DARK.update(profile="dark", font_family="", font_size=9, rec_blink_hz=0.5, bar_always=False, status_lines=1, status_align="right", legend_style="legend")
 
 LIGHT = dict(DARK)
 LIGHT.update(
@@ -135,6 +135,7 @@ def normalize(theme: dict | None) -> dict:
         except (TypeError, ValueError):
             pass
         out["status_align"] = "left" if theme.get("status_align") == "left" else "right"       # justification of the status bar text
+        out["legend_style"] = "labels" if theme.get("legend_style") == "labels" else "legend"   # signal names: legend box / labels at the signals
     # the look of the marker lines belongs to the interface configuration (saved in a profile file, switched with it)
     out["marker_look"] = marker_look.normalize((theme or {}).get("marker_look"))
     # and so does the layout of the left panel (order of the groups, folded groups, the bottom tab)
@@ -160,7 +161,7 @@ def save_profile(path: str, theme: dict) -> None:
     t = normalize(theme)
     ordered = {"profile": t["profile"], "font_family": t["font_family"], "font_size": t["font_size"],
                "rec_blink_hz": t["rec_blink_hz"], "bar_always": t["bar_always"],
-               "status_lines": t["status_lines"], "status_align": t["status_align"]}
+               "status_lines": t["status_lines"], "status_align": t["status_align"], "legend_style": t["legend_style"]}
     ordered.update({k: t[k] for k in COLOR_KEYS})
     ordered.update({"marker_" + k: v for k, v in t["marker_look"].items()})          # one flat parameter per line
     ordered.update({"panel_" + k: v for k, v in t["panel"].items()})

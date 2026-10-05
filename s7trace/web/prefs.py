@@ -23,6 +23,11 @@ def table_normalize(raw) -> dict:
     return {k: (raw[k].lower() if isinstance(raw.get(k), str) and _HEX.match(raw[k]) else "") for k in TABLE_KEYS}
 
 
+def legend_style_normalize(raw) -> str:
+    """How the chart shows the signal names: 'legend' (a list under the chart) or 'labels' (a boxed name at every signal)."""
+    return "labels" if raw == "labels" else "legend"
+
+
 def status_normalize(raw) -> dict:
     """The status bar of the chart page: most lines, colours ('' = the colour of the page), justification of the text."""
     raw = raw if isinstance(raw, dict) else {}
@@ -50,7 +55,8 @@ class Prefs:
             raw = {}
         raw = raw if isinstance(raw, dict) else {}
         return {"marker_look": marker_look.normalize(raw.get("marker_look")), "panel": panel_cfg.normalize(raw.get("panel"), panel_cfg.WEB_ROWS),
-                "status": status_normalize(raw.get("status")), "table": table_normalize(raw.get("table"))}
+                "status": status_normalize(raw.get("status")), "table": table_normalize(raw.get("table")),
+                "legend_style": legend_style_normalize(raw.get("legend_style"))}
 
     def update(self, user: str, patch: dict) -> dict:
         """Merges the known keys of `patch` (validated) into the account's settings; returns the result."""
@@ -62,6 +68,8 @@ class Prefs:
                 cur["panel"] = panel_cfg.normalize(patch["panel"], panel_cfg.WEB_ROWS)
             if isinstance(patch.get("table"), dict):
                 cur["table"] = table_normalize(patch["table"])
+            if "legend_style" in patch:
+                cur["legend_style"] = legend_style_normalize(patch["legend_style"])
             if isinstance(patch.get("status"), dict):
                 cur["status"] = status_normalize(patch["status"])
             os.makedirs(self.folder, exist_ok=True)

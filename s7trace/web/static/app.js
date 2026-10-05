@@ -1,5 +1,6 @@
 "use strict";
 // S7Trace web mode: login, overview (connections / controllers / users), live chart (Server-Sent Events), accounts.
+let LEGSTYLE = "legend";                                   // names of the signals on the chart: "legend" / "labels" (per account, see legendStyleSet)
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 // one rule for the whole page (as in the program): data inside a sentence - numbers with units - is bold (core/richtext.py)
@@ -73,7 +74,7 @@ function go(v) {
 async function start() {
   me = await api("/api/me");
   if (!me.user) return showLogin();
-  mkLoadPrefs(); panelLoad(); statusLoad(); tableColorsLoad();
+  mkLoadPrefs(); panelLoad(); statusLoad(); tableColorsLoad(); legendStyleLoad();
   $("who").textContent = `${me.user} (${me.role})`; $("logout").hidden = false; $("nav").hidden = false;
   $("nav-users").hidden = me.role !== "admin"; $("nav-targets").hidden = me.role !== "admin";
   $("new-conn").hidden = ROLE_RANK[me.role] < ROLE_RANK.operator;
@@ -382,8 +383,9 @@ function drawChart(cv, ds, t0, t1, o) {
         }
       }
     }
-    g.fillStyle = c; g.fillText(ds.names[k], pad.l + 6, top + 14 + (offsetMode ? 14 * k : 0));
+    if (LEGSTYLE !== "labels") { g.fillStyle = c; g.fillText(ds.names[k], pad.l + 6, top + 14 + (offsetMode ? 14 * k : 0)); }
     g.strokeStyle = c; g.lineWidth = 1.2; g.beginPath(); let pen = false, py = 0;
+    let medY = null;
     const pts = [];
     for (let i = 0; i < ds.t.length; i++) {
       const v = col[i]; if (v === null || v === undefined) { pen = false; continue; }
@@ -392,11 +394,15 @@ function drawChart(cv, ds, t0, t1, o) {
       py = y;
       if (o.points && inRange(i)) pts.push(x, y);
     }
+    if (offsetMode) { const ys = fin.map((v) => bot - (v - lo) / span * (bot - top - 6) - 3).sort((a, b) => a - b); if (ys.length) medY = ys[ys.length >> 1]; }
+    lanes[k].tagY = offsetMode ? medY : (top + bot) / 2;
     if (o.hold && pen) g.lineTo(X(t1), py);          // a recording of changes: the last value holds to the end of the range
     g.stroke();
     if (o.points && pts.length <= 6000) { g.fillStyle = c; for (let i = 0; i < pts.length; i += 2) g.fillRect(pts[i] - 2, pts[i + 1] - 2, 4, 4); }   // "Punkty": at most 3000 shown
   }
   cv._geo = { t0, t1, pad, W, H, lanes, offsetMode };
+  cv._tags = [];
+  if (LEGSTYLE === "labels") cxTags(g, cv, ds, lanes, colors, pad, H);                // a translucent box with the name beside every signal, right of the Y axis
   if (o.mk) mkPaint(g, cv, o.mk, cv._geo, lanes);                                    // markers (bookmarks) over the curves
   g.strokeStyle = "#ff4d4d"; g.fillStyle = "#ff4d4d"; g.lineWidth = 1; g.setLineDash([5, 4]);
   for (const t of o.markers || []) { if (t < t0 || t > t1) continue; const x = X(t); g.beginPath(); g.moveTo(x, pad.t); g.lineTo(x, H - pad.b); g.stroke(); g.fillText("T", x + 3, H - pad.b - 4); }
@@ -404,7 +410,8 @@ function drawChart(cv, ds, t0, t1, o) {
   if (o.clock) cxAxis(g, cv._geo, o.clock);                                           // a clock axis (server / PLC time) replaces the "-200 s ... teraz" labels
   else { g.fillText(o.left || "", pad.l, H - 6); if (o.right) { const w = g.measureText(o.right).width; g.fillText(o.right, W - pad.r - w, H - 6); } }
   if (cv._cx) cxPaint(g, cv);                                                        // cursors V1/V2, H1/H2 and their read-out
-  if (o.legend) o.legend.innerHTML = ds.names.map((nm, k) => { const last = [...(ds.values[k] || [])].reverse().find((x) => x !== null && x !== undefined), tip = (ds.tips?.[k] || "Nazwa: " + nm) + "\nAktualna wartość: " +(last === undefined ? "—" : +(+last).toPrecision(8));
+  if (o.legend && LEGSTYLE === "labels") o.legend.innerHTML = "";                     // the names are on the chart: no list under it
+  else if (o.legend) o.legend.innerHTML = ds.names.map((nm, k) => { const last = [...(ds.values[k] || [])].reverse().find((x) => x !== null && x !== undefined), tip = (ds.tips?.[k] || "Nazwa: " + nm) + "\nAktualna wartość: " +(last === undefined ? "—" : +(+last).toPrecision(8));
     return `<span title="${esc(tip)}"><i style="background:${colors[k] || COLORS[k % COLORS.length]}"></i>${esc(cxLegend(cv, ds, k))}</span>`; }).join("");
 }
 
@@ -883,6 +890,15 @@ const TABLE_COLORS = [["header_bg", "Kolor tła nagłówka tabeli", "--tb-head-b
   ["odd_bg", "Kolor tła wierszy nieparzystych", "--tb-odd-bg"], ["odd_text", "Kolor czcionki wierszy nieparzystych", "--tb-odd-text"],
   ["even_bg", "Kolor tła wierszy parzystych", "--tb-even-bg"], ["even_text", "Kolor czcionki wierszy parzystych", "--tb-even-text"],
   ["border", "Kolor ramki tabeli", "--tb-border"]];
+// names of the signals on the chart: 'legend' (list under the chart) or 'labels' (a boxed name at every signal); per account, like the desktop interface configuration
+let legSave = null;
+function legendStyleApply() { document.querySelectorAll("[data-x=lst]").forEach((s) => { s.value = LEGSTYLE; }); }
+function legendStyleSet(v) {
+  LEGSTYLE = v === "labels" ? "labels" : "legend"; legendStyleApply();
+  clearTimeout(legSave); legSave = setTimeout(() => { api("/api/prefs", { legend_style: LEGSTYLE }).catch(() => {}); }, 400);
+  if (typeof draw === "function") draw(); if (typeof rv !== "undefined" && rv.data) drawRec();
+}
+async function legendStyleLoad() { try { LEGSTYLE = (await api("/api/prefs")).prefs.legend_style === "labels" ? "labels" : "legend"; } catch (e) { /* default */ } legendStyleApply(); if (typeof draw === "function") draw(); }
 let TBL = {}, tblSave = null;
 function tableColorsApply() { for (const [k, , v] of TABLE_COLORS) { if (TBL[k]) document.documentElement.style.setProperty(v, TBL[k]); else document.documentElement.style.removeProperty(v); } }
 function tableColorsPersist() { tableColorsApply(); clearTimeout(tblSave); tblSave = setTimeout(() => { api("/api/prefs", { table: TBL }).catch(() => {}); }, 400); }

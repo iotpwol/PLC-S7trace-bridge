@@ -77,6 +77,12 @@ class InterfaceDialog(QDialog):
         self.status_align.addItem("Do lewej", "left")
         self.status_align.setToolTip("Justowanie tekstu w pasku statusu na dole. To samo ustawisz prawym przyciskiem myszy na pasku.")
         form.addRow("Pasek statusu: justowanie:", self.status_align)
+        self.legend_style = QComboBox()
+        self.legend_style.addItem("Legenda (ramka z listą)", "legend")
+        self.legend_style.addItem("Opisy przy sygnałach", "labels")
+        self.legend_style.setToolTip("Jak wykres pokazuje nazwy sygnałów: jedna legenda w rogu albo osobny opis (nazwa w półprzezroczystej ramce) "
+                                     "przy każdym sygnale, po prawej stronie osi pionowej. To samo: Widok → Opis sygnałów na wykresie.")
+        form.addRow("Nazwy sygnałów na wykresie:", self.legend_style)
         self.chk_bar = QCheckBox("Belki zmiany rozmiaru zawsze widoczne")
         self.chk_bar.setToolTip("Belka między panelem ustawień a wykresem oraz nad wykresem przeglądowym służy do zmiany "
                                 "rozmiaru (przeciąganie) i do schowania / pokazania panelu (dwukrotne kliknięcie). "
@@ -113,6 +119,7 @@ class InterfaceDialog(QDialog):
         self.chk_bar.toggled.connect(self._font_changed)
         self.status_lines.valueChanged.connect(self._font_changed)
         self.status_align.currentIndexChanged.connect(self._font_changed)
+        self.legend_style.currentIndexChanged.connect(self._font_changed)
 
     # ------------------------------------------------------------------
     def _sync_widgets(self) -> None:
@@ -140,6 +147,9 @@ class InterfaceDialog(QDialog):
         self.status_align.blockSignals(True)
         self.status_align.setCurrentIndex(max(0, self.status_align.findData(self.theme.get("status_align", "right"))))
         self.status_align.blockSignals(False)
+        self.legend_style.blockSignals(True)
+        self.legend_style.setCurrentIndex(max(0, self.legend_style.findData(self.theme.get("legend_style", "legend"))))
+        self.legend_style.blockSignals(False)
         self.font_size.blockSignals(False)
 
     def _pick(self, key: str) -> None:
@@ -157,10 +167,11 @@ class InterfaceDialog(QDialog):
         self.theme["bar_always"] = self.chk_bar.isChecked()
         self.theme["status_lines"] = self.status_lines.value()
         self.theme["status_align"] = self.status_align.currentData()
+        self.theme["legend_style"] = self.legend_style.currentData()
         self._apply(self.theme)
 
     def _load(self, preset: dict, keep_font: bool = True) -> None:
-        font = {k: self.theme[k] for k in ("font_family", "font_size", "rec_blink_hz", "bar_always", "status_lines", "status_align")}
+        font = {k: self.theme[k] for k in ("font_family", "font_size", "rec_blink_hz", "bar_always", "status_lines", "status_align", "legend_style")}
         keep = {k: self.theme[k] for k in ("panel", "marker_look") if k in self.theme and k not in preset}
         self.theme = th.normalize({**preset, **keep})
         if keep_font:

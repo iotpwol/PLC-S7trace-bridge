@@ -11,7 +11,7 @@ from collections import deque
 from datetime import datetime, timedelta
 
 from PySide6.QtCore import QEvent, QTimer, Qt, Signal as QtSignal
-from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QAction, QActionGroup, QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
                                QGroupBox, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMenu, QMessageBox,
                                QPushButton, QScrollArea, QSizePolicy, QSpinBox, QSplitter, QTabWidget, QVBoxLayout, QWidget)
@@ -538,7 +538,7 @@ class TraceTab(QWidget):
 
     def _status_menu(self, pos) -> None:
         """Right click on the status bar: most lines, colours, justification - saved in the interface configuration."""
-        from PySide6.QtGui import QActionGroup, QColor
+        from PySide6.QtGui import QColor
         from PySide6.QtWidgets import QColorDialog, QMenu
         m = QMenu(self)
         lines = m.addMenu("Maksymalna liczba wierszy w pasku")
@@ -581,6 +581,7 @@ class TraceTab(QWidget):
         self.lbl_status.set_colors(theme.get("status_bg", "#2b2b2b"), theme.get("status_text", "#d0d0d0"))
         self.lbl_status.set_max_lines(int(theme.get("status_lines", 1)))
         self.lbl_status.set_align(theme.get("status_align", "right"))
+        self.plot.set_legend_style(theme.get("legend_style", "legend"))
         self._status_theme = {k: theme.get(k) for k in ("status_bg", "status_text")}
         self.split_h.set_bar(bar, always)                # the thin resize bars: colour and permanent visibility
         self.plot.split.set_bar(bar, always)
@@ -610,7 +611,8 @@ class TraceTab(QWidget):
         self._build_legend_menu().exec(pos)
 
     def _build_legend_menu(self) -> QMenu:
-        """Right click on the legend: signals window, corner of this tab's legend, hide the legend."""
+        """Right click on the legend or on a signal's name label: signals window, what the names show, legend / labels style,
+        corner of this tab's legend, hide the legend."""
         m = QMenu(self)
         m.addAction("Sygnały…", lambda: self.edit_signals())
         shows = m.addMenu("Legenda pokazuje")
@@ -619,12 +621,21 @@ class TraceTab(QWidget):
             a.setCheckable(True)
             a.setChecked(self.cfg.legend_mode == key)
             a.triggered.connect(lambda _=False, k=key: self.set_legend_mode(k))
+        style = m.addMenu("Nazwy sygnałów na wykresie")
+        grp = QActionGroup(style)
+        for key, label in (("legend", "Legenda (ramka z listą w rogu)"), ("labels", "Opisy przy sygnałach (po prawej stronie osi Y)")):
+            a = style.addAction(label)
+            a.setCheckable(True)
+            a.setChecked(self.plot.legend_style == key)
+            grp.addAction(a)
+            a.triggered.connect(lambda _=False, k=key: self.theme_edit({"legend_style": k}))
         corners = m.addMenu("Położenie legendy (ta karta)")
+        corners.setEnabled(self.plot.legend_style == "legend")
         for label, p in (("Lewy górny róg", (0, 0)), ("Prawy górny róg", (1, 0)),
                          ("Lewy dolny róg", (0, 1)), ("Prawy dolny róg", (1, 1))):
             corners.addAction(label, lambda p=p: self.set_legend_pos(*p))
         m.addSeparator()
-        m.addAction("Ukryj legendę", lambda: self.legendHideRequested.emit())
+        m.addAction("Ukryj legendę" if self.plot.legend_style == "legend" else "Ukryj opisy sygnałów", lambda: self.legendHideRequested.emit())
         return m
 
     def set_legend_mode(self, mode: str) -> None:

@@ -1,0 +1,12 @@
+Version 1.10: signal names as boxed labels instead of the legend (desktop + Web), sharp help pictures
+
+- New interface setting legend_style ("legend" | "labels"): View -> Signal names on the chart, legend / label right
+  click menu, Interface dialog, one line in the interface profile file. In the labels style every plotted signal gets
+  a translucent box with its name in the middle of its band (offset layout: at the curve, pushed apart and clamped),
+  right of the Y axis; right click switches name <-> address / OPC node like the legend, double click opens Signals.
+- Web: same style via the "Nazwy sygnałów" toolbar list, drawn on the canvas (cxTags), kept per account in
+  /api/prefs (legend_style), same right click menu.
+- Help: pictures are shown 1:1 (only wider ones are scaled, smoothly) with click-to-zoom (ImageBrowser / ZoomDialog),
+  all pictures regenerated, 5 new ones for the label style; help texts, README, WEB.md, CLAUDE.md, tests updated.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
