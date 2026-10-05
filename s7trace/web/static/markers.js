@@ -35,7 +35,7 @@ function mkTip(m) {   // the bubble: times in a monospaced table (digit under di
   rows.push(hl("Dotyczy: " + (m.signals.length ? esc(m.signals.join(", ")) : "wszystkich przebiegów"), "signals"));
   if (m.group_name || ch.has("group_name")) rows.push(hl(`Grupa: <b>${esc(m.group_name) || "(brak)"}</b>`, "group_name"));
   if (m.show_label === 0 || ch.has("show_label")) rows.push(hl("Nazwa na wykresie: " + (m.show_label === 0 ? "ukryta" : "pokazywana"), "show_label"));
-  if (m.description) rows.push(hl(esc(m.description).replace(/\n/g, "<br>"), "description")); else if (ch.has("description")) rows.push(hl("(opis usunięty)", "description"));
+  if (m.description) rows.push(hl("<i>Opis:</i> " + esc(m.description).replace(/\n/g, "<br>"), "description")); else if (ch.has("description")) rows.push(hl("(opis usunięty)", "description"));
   if (m.notes) rows.push(hl("<i>Uwagi:</i> " + esc(m.notes).replace(/\n/g, "<br>"), "notes")); else if (ch.has("notes")) rows.push(hl("(uwagi usunięte)", "notes"));
   rows.push(`Autor: ${esc(m.author || "–")}`, `Założono: ${mkStamp(m.created_us).slice(0, 19)}`, `Zmodyfikował: ${esc(m.modified_by || "–")}`, `Zmieniono: ${mkStamp(m.modified_us).slice(0, 19)}`);
   return rows.join("<br>");

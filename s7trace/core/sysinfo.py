@@ -24,8 +24,8 @@ def _times() -> tuple[int, int, int] | None:
         return None
 
 
-def cpu_percent() -> float | None:
-    """Load of all processors [%] since the previous call (None = not known yet / not available)."""
+def cpu_time_percent() -> float | None:
+    """Classic load of all processors [%] ('% Processor Time': busy time / total time) since the previous call; None = not known yet."""
     global _prev, _last
     now = time.monotonic()
     if now - _last[0] < MIN_INTERVAL:
@@ -41,6 +41,57 @@ def cpu_percent() -> float | None:
         _prev = cur
     _last = (now, pct if pct is not None else _last[1])
     return _last[1]
+
+
+# ------------------------------------------------------------------ '% Processor Utility' = the number the Task Manager shows
+# Task Manager (Windows 10 1709+ / Server 2019+) reports the frequency-scaled 'Processor Utility', which on a busy / turbo / virtual CPU is
+# clearly higher than the plain busy time; PDH gives the same counter. Where it is not available the plain busy time is used.
+_pdh: dict = {"q": None, "c": None, "tried": False, "t": 0.0, "v": None}
+
+
+def _utility_percent() -> float | None:
+    if sys.platform != "win32":
+        return None
+    now = time.monotonic()
+    if _pdh["tried"] and _pdh["q"] is None:
+        return None
+    if now - _pdh["t"] < MIN_INTERVAL:
+        return _pdh["v"]
+    try:
+        import ctypes
+        from ctypes import wintypes
+        pdh = ctypes.windll.pdh
+        if not _pdh["tried"]:
+            _pdh["tried"] = True
+            q, c = ctypes.c_void_p(), ctypes.c_void_p()
+            if pdh.PdhOpenQueryW(None, 0, ctypes.byref(q)) != 0:
+                return None
+            if pdh.PdhAddEnglishCounterW(q, r"\Processor Information(_Total)\% Processor Utility", 0, ctypes.byref(c)) != 0:
+                pdh.PdhCloseQuery(q)
+                return None
+            _pdh["q"], _pdh["c"] = q, c
+            pdh.PdhCollectQueryData(q)                         # the first sample only starts the interval
+            _pdh["t"] = now
+            return None
+        pdh.PdhCollectQueryData(_pdh["q"])
+
+        class VAL(ctypes.Structure):
+            _fields_ = [("CStatus", wintypes.DWORD), ("pad", wintypes.DWORD), ("v", ctypes.c_double)]
+        v, kind = VAL(), wintypes.DWORD()
+        if pdh.PdhGetFormattedCounterValue(_pdh["c"], 0x200, ctypes.byref(kind), ctypes.byref(v)) == 0:       # PDH_FMT_DOUBLE
+            _pdh["v"] = max(0.0, min(100.0, float(v.v)))
+        _pdh["t"] = now
+        return _pdh["v"]
+    except Exception:
+        _pdh["q"] = None
+        return None
+
+
+def cpu_percent() -> float | None:
+    """Load of the computer [%] as the Task Manager shows it ('Processor Utility'); the plain busy time where that counter is missing."""
+    u = _utility_percent()
+    raw = cpu_time_percent()
+    return u if u is not None else raw
 
 
 # ------------------------------------------------------------------ the load this program itself puts on the computer
@@ -120,7 +171,33 @@ def app_cpu_percent() -> float | None:
         _app_prev.clear()
         _app_prev.update(times)
         _app_state["t"] = now
+        u, raw = _utility_percent(), _last[1]
+        if pct is not None and u is not None and raw and raw > 0.3:        # the same scale as the Task Manager: share of the busy time x utility
+            pct = min(u, pct * u / raw)
         _app_last = (now, 0.0, pct)
         return pct
     except Exception:
         return None
+
+
+_os_name: str | None = None
+
+
+def os_name() -> str:
+    """The system the program runs under, e.g. 'Windows Server 2019 Standard (build 17763)'."""
+    global _os_name
+    if _os_name is None:
+        import platform
+        name = ""
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows NT\CurrentVersion") as k:
+                name = str(winreg.QueryValueEx(k, "ProductName")[0])
+                build = str(winreg.QueryValueEx(k, "CurrentBuildNumber")[0])
+            if name.startswith("Windows 10") and build.isdigit() and int(build) >= 22000:
+                name = "Windows 11" + name[len("Windows 10"):]            # the registry keeps the old product name on Windows 11
+            name = f"{name} (build {build})"
+        except Exception:
+            name = platform.platform()
+        _os_name = name
+    return _os_name

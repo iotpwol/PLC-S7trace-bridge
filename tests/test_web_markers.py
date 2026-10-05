@@ -267,11 +267,20 @@ def test_panel_layout_is_kept_per_account_and_sysinfo_answers(srv):
     assert ala.get("/api/prefs")[1]["prefs"]["panel"] == panel_cfg.DEFAULTS
     st_, si = ola.get("/api/sysinfo")
     assert st_ == 200 and "  " in si["time"] and (si["cpu"] is None or 0 <= si["cpu"] <= 100)
-    html = open(os.path.join(os.path.dirname(__import__("s7trace.web.server", fromlist=["x"]).__file__), "static", "index.html"), encoding="utf-8").read()
+    html_path = os.path.join(os.path.dirname(__import__("s7trace.web.server", fromlist=["x"]).__file__), "static", "index.html")
+    html = open(html_path, encoding="utf-8").read()
     assert 'id="e-folds"' in html and 'id="c-side"' in html and html.count('class="fold" data-fold=') == 5
     import re
     for m in re.finditer(r'<div class="fold" data-fold="([^"]+)">(.*?)(?=<div class="fold" data-fold=|</div>\s*<h3>Sygnały|<p class="muted">Znaczniki w nazwach)', html, re.S):
-        assert set(re.findall(r'data-row="([^"]+)"', m.group(2))) == set(panel_cfg.WEB_ROWS[m.group(1)]), m.group(1)   # names the menus use
+        static = set(re.findall(r'data-row="([^"]+)"', m.group(2)))
+        want = set(panel_cfg.WEB_ROWS[m.group(1)])
+        if m.group(1) == "Sterownik":                                              # the controller rows are made by the page from device_rows
+            assert static == {"Czas PLC", "Pobierz dane"}
+        else:
+            assert static == want, m.group(1)                                      # names the menus use
+    js = open(os.path.join(os.path.dirname(html_path), "app.js"), encoding="utf-8").read()
+    for g, keys in panel_cfg.WEB_ROWS.items():                                      # the page knows the same elements (PANEL_ROWS in app.js)
+        assert all(f'"{k}"' in js for k in keys), g
     st_, d = ola.post("/api/prefs", {"panel": {"hidden": {"Połączenie": ["Rack", "IP", "Slot"], "Trigger": ["Warunek"]}}})
     assert d["prefs"]["panel"]["hidden"]["Połączenie"] == ["Rack", "Slot"] and d["prefs"]["panel"]["hidden"]["Trigger"] == ["Warunek"]   # known names only
     assert ala.get("/api/prefs")[1]["prefs"]["panel"]["hidden"]["Trigger"] == []
@@ -319,3 +328,32 @@ def test_read_device_only_and_server_load(srv):
     assert "app_cpu" in si
     html = open(os.path.join(os.path.dirname(__import__("s7trace.web.server", fromlist=["x"]).__file__), "static", "index.html"), encoding="utf-8").read()
     assert 'id="e-readdev"' in html
+
+
+def test_device_rows_clock_error_and_description_via_the_web(srv):
+    from s7trace.core import store as stm
+    ola = _user(srv, "ola")
+    h = _host(srv, owner="ola")
+    st_, d = ola.get(f"/api/connections/{h.id}/config")
+    assert st_ == 200 and d["device_rows"] == [] and d["plc_error"] == ""
+    h.device = {"method": "s7", "info": {"family": "S7-300", "model": "CPU 315-2 PN/DP", "firmware": "V3.2.10", "serial": "S C-1", "pdu": 240},
+                "time_diff_local": None, "time_error": "sterownik odrzucił odczyt zegara"}
+    d = ola.get(f"/api/connections/{h.id}/config")[1]
+    rows = dict(d["device_rows"])
+    assert [k for k, _ in d["device_rows"]][:4] == ["Rodzina", "Model", "Numer katalogowy (MLFB)", "Firmware"]
+    assert rows["Rodzina"] == "S7-300" and rows["Numer seryjny"] == "S C-1" and rows["Długość PDU [B]"] == "240" and rows["Stan CPU"] == "—"
+    assert d["plc_error"] == "sterownik odrzucił odczyt zegara" and d["plc_diff"] is None
+    assert ola.get("/api/sysinfo")[1]["os"]
+    # the description (Opis) of a recording: stored, listed, edited
+    cfg = stm.StoreConfig(kind="sqlite", sqlite_path=os.path.join(srv.app.data_dir, "dbs", "d.db"))
+    os.makedirs(os.path.dirname(cfg.sqlite_path), exist_ok=True)
+    rec = stm.DbRecorder(cfg, h.signals, START, {"tab": "L", "ip": "10.0.0.5", "title": "T", "description": "Opis nagrania", "notes": "N"})
+    for i in range(5):
+        rec.write(i * 0.1, [float(i), 0.0])
+    rec.close()
+    b = stm.open_backend(cfg)
+    (s,) = b.sessions()
+    assert s["description"] == "Opis nagrania" and s["title"] == "T"
+    b.update_session(s["id"], {"description": "Nowy opis"})
+    assert b.sessions()[0]["description"] == "Nowy opis"
+    b.close()

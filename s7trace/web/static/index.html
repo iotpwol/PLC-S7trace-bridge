@@ -70,8 +70,8 @@
         <pre id="e-report" hidden></pre>
       </div></div></div>
       <div class="fold" data-fold="Sterownik"><h3 class="fold-h">Sterownik<span class="tri"></span></h3><div class="fold-body"><div>
-        <table class="dg" data-row="Dane sterownika"><tbody id="e-device"></tbody></table>
-        <div id="e-plcnote" class="muted" data-row="Dane sterownika" hidden></div>
+        <table class="dg"><tbody id="e-device"></tbody></table>
+        <div id="e-plcnote" class="muted" data-row="Czas PLC" hidden></div>
         <div class="inline" data-row="Pobierz dane" style="margin-top:6px"><button type="button" id="e-readdev" title="Jednorazowo łączy się ze sterownikiem (z zapisanej konfiguracji) i czyta tylko jego dane oraz zegar – bez odczytu sygnałów i wykresu. Dostępne dla zatrzymanego połączenia S7comm.">Pobierz dane sterownika</button><span id="e-devmsg" class="muted"></span></div>
       </div></div></div>
       <div class="fold" data-fold="Zakres okna wykresu"><h3 class="fold-h">Zakres okna wykresu<span class="tri"></span></h3><div class="fold-body"><div>
@@ -125,7 +125,7 @@
       <span id="c-state" class="muted"></span></div>
     <div class="bar" id="c-ctl"><span id="c-trig" class="muted"></span>
       <button id="c-rearm" hidden>Wznów (uzbrój wyzwalacz)</button>
-      <input id="c-title" placeholder="nazwa nagrania (opcjonalnie)" maxlength="200" hidden>
+      <input id="c-title" placeholder="nazwa nagrania (opcjonalnie)" maxlength="200" hidden><input id="c-desc" placeholder="opis (opcjonalnie)" maxlength="500" hidden>
       <button id="c-rec" hidden>● REC</button><span id="c-recinfo" class="muted"></span>
       <button id="c-addmark" title="Znacznik w ostatniej próbce (albo prawy przycisk myszy na wykresie)">+ Znacznik</button>
       <button id="c-live" hidden>Wróć do danych na żywo</button><button id="c-files">Pliki</button></div>
@@ -149,7 +149,7 @@
     <table id="t-recs"><thead><tr><th>Tytuł</th><th>Start</th><th>Czas</th><th>Właściciel</th><th>Komputer</th><th>Połączenie</th><th>Sterownik</th>
       <th>Sygnały</th><th>Tagi</th><th></th></tr></thead><tbody></tbody></table>
     <div id="rv-edit" class="inline" hidden>
-      <input id="rv-title" placeholder="tytuł" maxlength="200"><input id="rv-notes" placeholder="uwagi" maxlength="500">
+      <input id="rv-title" placeholder="tytuł" maxlength="200"><input id="rv-desc" placeholder="opis" maxlength="500"><input id="rv-notes" placeholder="uwagi" maxlength="500">
       <input id="rv-tags" placeholder="tagi (po przecinku)" maxlength="500"><button id="rv-save">Zapisz opis</button>
       <button id="rv-cancel">Anuluj</button></div>
     <div id="rv-view" hidden>

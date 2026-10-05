@@ -22,7 +22,7 @@ from ..core import store as st
 from ..core.config import TabConfig
 from ..core.detect import read_device_s7
 from .. import version
-from ..core import help_texts, sysinfo
+from ..core import help_texts, panel_cfg, sysinfo
 from . import editing
 from . import files
 from . import sso
@@ -184,7 +184,7 @@ class Handler(BaseHTTPRequestHandler):
                     now = datetime.now()
                     cpu = sysinfo.cpu_percent()
                     app = sysinfo.app_cpu_percent()                         # this server (+ its acquisition processes)
-                    self._json({"time": now.strftime("%Y-%m-%d  %H:%M:%S"), "cpu": None if cpu is None else round(cpu, 1),
+                    self._json({"time": now.strftime("%Y-%m-%d  %H:%M:%S"), "os": sysinfo.os_name(), "cpu": None if cpu is None else round(cpu, 1),
                                 "app_cpu": None if app is None else round(app, 1)})
                 return
             if path == "/api/version":
@@ -410,10 +410,20 @@ class Handler(BaseHTTPRequestHandler):
             return self._error(400, str(e))
         self._json(host.describe(s["username"], s["role"]))
 
+    @staticmethod
+    def _device_rows(host) -> list:
+        """[row name, value] of the controller box (the same rows and names as the program's 'Sterownik' box)."""
+        info = (host.device or {}).get("info") or {}
+        if not info or (host.device or {}).get("method") == "other":
+            return []
+        return [[k, str(info.get(key) or "—")] for k, key in panel_cfg.DEVICE_KEYS]
+
     def _config_payload(self, host) -> dict:
         return {**editing.view(host.cfg, host.web, self.app.targets.names()), "state": host.state,
                 "recording": host.recorder is not None,
                 "device": st.device_lines(st.device_summary(host.device, host.cfg.ip)),
+                "device_rows": self._device_rows(host),
+                "plc_error": (host.device or {}).get("time_error", ""),
                 "plc_diff": (host.device or {}).get("time_diff_local"),      # PLC clock - server clock [s], read at the connection
                 "server_now": time.time(), "server_tz": time.localtime().tm_gmtoff}
 

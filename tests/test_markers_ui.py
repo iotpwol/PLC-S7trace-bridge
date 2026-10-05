@@ -778,8 +778,8 @@ def test_left_panel_rows_hide_via_menus_and_profile(app, tmp_path):
     tab = TraceTab(TabConfig(), lambda: [])
     tab.resize(1200, 900)
     tab.show()
-    for g in panel_cfg.GROUPS:                                                # the names the menus use = panel_cfg.ROWS
-        assert tuple(tab._row_keys[g]) == panel_cfg.ROWS[g]
+    for g in panel_cfg.ALL_GROUPS:                                            # the names the menus use = panel_cfg.ROWS
+        assert tuple(k for k in tab._row_keys[g] if k) == panel_cfg.ROWS[g]
     assert tab.ed_ip.isVisible() and tab.sp_cycle.isVisible()
     tab._toggle_row("Połączenie", "IP", False)                               # right click on the name "IP" -> Ukryj
     assert not tab.ed_ip.isVisible() and tab.sp_cycle.isVisible()
@@ -826,8 +826,9 @@ def test_side_tabs_system_and_network(app):
     tab.show()
     assert [tab.info_tabs.tabText(i) for i in range(tab.info_tabs.count())] == ["System", "Sieć"]
     tab._update_side()
-    assert "Godzina systemowa" in tab.lbl_sys.text() and "Obciążenie CPU" in tab.lbl_sys.text()
-    assert "Brak połączenia" in tab.lbl_net.text()
+    assert tab.sys_vals["Godzina systemowa"].text() and tab.sys_vals["Obciążenie CPU"].text()
+    assert tab.sys_vals["System operacyjny"].text() and "Windows" in tab.sys_vals["System operacyjny"].text()
+    assert "Brak połączenia" in tab.lbl_netmsg.text() and not tab.net_vals["Missed"].isVisibleTo(tab.page_net)
     tab._update_status()
     assert "PLC comm lag" not in tab.lbl_status.text()
     v = sysinfo.cpu_percent()
@@ -1040,13 +1041,12 @@ def test_sterownik_box_shows_the_plc_clock_and_suggests_an_offset(tab):
     tab._infoRaw.emit(dev)
     QApplication.processEvents()
     plc = datetime.now() + timedelta(seconds=dev["time_diff_local"])
-    t = tab.lbl_dev.text()
-    assert "Czas PLC:" in t and f"{plc:%Y-%m-%d}&nbsp;&nbsp;{plc:%H:%M}" in t                  # date and time separated by two spaces
+    t = tab.device_text()
+    assert f"Czas PLC: {plc:%Y-%m-%d}  {plc:%H:%M}" in t                                        # date and time separated by two spaces
     assert t.index("Nazwa modułu") < t.index("Czas PLC")                                        # the sixth line
     assert "+3 d 02:00:00.000" in tab.lbl_status.text() and "Offset osi" in tab.lbl_status.text()  # a day or more: announced
-    before = tab.lbl_dev.text()
     tab._tick_plc_time()                                                                        # refreshed from the computer's clock
-    assert "Czas PLC:" in tab.lbl_dev.text() and tab.plc_timer.interval() == 1000 and tab.plc_timer.isActive()
+    assert "Czas PLC:" in tab.device_text() and tab.plc_timer.interval() == 1000 and tab.plc_timer.isActive()
     tab.sp_toff.setValue(-dev["time_diff_local"])                                               # 'Wyrównaj do komputera'
     tab.cb_taxis.setCurrentIndex(tab.cb_taxis.findData("plc"))
     ax = tab.plot.plot.getAxis("bottom")
@@ -1054,10 +1054,13 @@ def test_sterownik_box_shows_the_plc_clock_and_suggests_an_offset(tab):
     tab.status_msg = "Gotowy."
     tab._update_status()
     tab._infoRaw.emit({**dev, "time_diff_local": 2.0})
-    assert "Czas PLC" in tab.lbl_dev.text() and "różni się" not in tab.lbl_status.text()         # a small difference is not announced
+    assert "Czas PLC" in tab.device_text() and "różni się" not in tab.lbl_status.text()         # a small difference is not announced
+    tab._infoRaw.emit({**dev, "time_diff_local": None, "time_error": "sterownik odrzucił odczyt zegara"})
+    assert "Czas PLC: nie odczytano" in tab.device_text()                                       # the clock could not be read
+    assert "odrzucił" in tab.dev_vals["Czas PLC"].toolTip()
     tab.device = None
     tab._show_device()
-    assert "Czas PLC" not in tab.lbl_dev.text()
+    assert "Czas PLC" not in tab.device_text()
 
 
 # ------------------------------------------------------------------ 'Pobierz dane sterownika' + the load of this program
@@ -1121,5 +1124,87 @@ def test_system_tab_shows_the_load_of_this_program(app):
     tab = TraceTab(TabConfig(), lambda: [])
     tab.show()
     tab._update_side()
-    assert "w tym ta aplikacja" in tab.lbl_sys.text()
+    assert tab.sys_vals["w tym ta aplikacja"].text() not in ("", "—") or sysinfo.app_cpu_percent() is None
     tab.shutdown()
+
+
+def test_recording_info_dialog_has_title_description_notes_tags(app):
+    from PySide6.QtWidgets import QLabel
+    from s7trace.ui.store_dialog import RecInfoDialog
+    d = RecInfoDialog("Piec 2", "uwaga", "rozruch", "Nazwa", description="opis 1")
+    labels = [w.text() for w in d.findChildren(QLabel) if w.text().endswith(":")]
+    assert labels == ["Tytuł:", "Opis:", "Uwagi:", "Tagi:"]                                   # the order of the standard fields
+    assert d.values() == {"title": "Piec 2", "description": "opis 1", "notes": "uwaga", "tags": "rozruch"}
+    d.ed_desc.setPlainText("zmieniony")
+    assert d.values()["description"] == "zmieniony"
+
+
+def test_data_in_sentences_is_bold_everywhere():
+    from s7trace.core.richtext import bold, bold_numbers
+    t = bold_numbers("Pominięte cykle: 19.8% – cykl (25 ms), zalecany ≥ 45 ms; CPU S7-300, DB1, 10.12.91.1 <ok>")
+    assert "<b>19.8%</b>" in t and "<b>25 ms</b>" in t and "<b>≥ 45 ms</b>" in t
+    assert "S7-300" in t and "DB1" in t and "10.12.91.1" in t and "&lt;ok&gt;" in t        # names / addresses / markup are left alone
+    assert bold("10.12.91.1 <x>") == "<b>10.12.91.1 &lt;x&gt;</b>"
+
+
+def test_plc_clock_is_parsed_from_the_raw_answer_and_a_failure_is_explained():
+    from datetime import datetime
+    from s7trace.core import detect
+    real = bytes.fromhex("3207000000030" + "00c000e00011208128701000000000" + "0ff09000a00" + "2026100511443112" + "34")
+    assert detect.parse_clock_pdu(real) == datetime(2026, 10, 5, 11, 44, 31)                  # a PLC sends 10 bytes with the century
+    sim = bytes.fromhex("32070000000300" + "0c000c000112081287010000000000" + "ff09000800" + "261005114431" + "01")
+    assert detect.parse_clock_pdu(sim) == datetime(2026, 10, 5, 11, 44, 31)                   # the simulator sends 8
+    refused = bytes.fromhex("32070000000300" + "0c0004000112081287010000000000" + "0a000000")
+    with pytest.raises(RuntimeError, match="odrzucił"):
+        detect.parse_clock_pdu(refused)
+
+
+def test_every_data_row_of_the_boxes_hides_and_the_read_button_comes_from_the_menu(app):
+    from PySide6.QtWidgets import QMenu
+    from s7trace.core import panel_cfg
+    tab = TraceTab(TabConfig(), lambda: [])
+    tab.show()
+    tab._infoRaw.emit({"method": "s7", "info": {"family": "S7-300", "model": "M", "serial": "SN1", "state": "S7CpuStatusRun"}, "time_diff_local": 1.0})
+    QApplication.processEvents()
+    assert tab.dev_vals["Rodzina"].isVisible() and not tab.dev_vals["Numer seryjny"].isVisible()      # the extra data starts hidden
+    tab._toggle_row("Sterownik", "Numer seryjny", True)                                       # ... and can be shown one by one
+    assert tab.dev_vals["Numer seryjny"].isVisible() and not tab.dev_vals["Stan CPU"].isVisible()
+    tab._toggle_row("Sterownik", "Rodzina", False)
+    assert not tab.dev_vals["Rodzina"].isVisible() and tab.dev_vals["Model"].isVisible()
+    tab._toggle_row("Sterownik", "Pobierz dane", False)                                       # the button hides like any element
+    assert not tab.btn_dev.isVisible()
+    m = QMenu()
+    tab._device_action(m)                                                                     # ... and stays available from the menu
+    assert [a.text() for a in m.actions()] == ["Pobierz dane sterownika"] and m.actions()[0].isEnabled()
+    tab._update_side()                                                                        # the bottom tabs: single rows
+    assert tab.sys_vals["GUI lag"].isVisibleTo(tab.page_sys)
+    tab._toggle_row("System", "GUI lag", False)
+    assert not tab.sys_vals["GUI lag"].isVisibleTo(tab.page_sys) and tab.sys_vals["Obciążenie CPU"].isVisibleTo(tab.page_sys)
+    assert tab.panel_state()["hidden"]["System"] == ["GUI lag"] and "Rodzina" in tab.panel_state()["hidden"]["Sterownik"]
+    assert panel_cfg.normalize({})["hidden"]["Sterownik"] == panel_cfg.DEFAULT_HIDDEN["Sterownik"]       # the defaults
+    assert panel_cfg.normalize({"hidden": {"Sterownik": []}})["hidden"]["Sterownik"] == []              # an explicit choice wins
+    tab.shutdown()
+
+
+def test_help_mode_button_lights_up_and_the_menu_item_is_ticked(app):
+    from s7trace.ui import theme as th
+    from s7trace.ui.main_window import MainWindow
+    w = MainWindow()
+    w.show()
+    assert w.help_btn.objectName() == "helpBtn" and not w.help_btn.isChecked() and not w.act_help_mode.isChecked()
+    qss = app.styleSheet()
+    assert "QToolButton#helpBtn:checked" in qss and th.DARK["help_on_bg"] in qss                   # orange while the mode is on (theme keys)
+    assert "help_on_bg" in th.COLOR_KEYS and "help_on_text" in th.COLOR_KEYS                       # editable: Widok -> Interfejs
+    w.help_mode.set_active(True)
+    assert w.help_btn.isChecked() and w.act_help_mode.isChecked() and w.act_help_mode.isCheckable()  # the tick in the Pomoc menu
+    w.act_help_mode.setChecked(False)                                                              # clicking the item again switches it off
+    assert not w.help_mode.active and not w.help_btn.isChecked()
+    w.close()
+
+
+def test_marker_bubble_names_the_description(app):
+    from s7trace.core import markers as mk
+    from s7trace.ui.markers_ui import marker_tip
+    m = mk.Marker(id=1, kind="point", at_us=1_000_000, title="Początek cyklu", description="Trzy sygnały są zaznaczone", notes="A to uwagi")
+    t = marker_tip(m)
+    assert "<i>Opis:</i> Trzy sygnały są zaznaczone" in t and "<i>Uwagi:</i> A to uwagi" in t

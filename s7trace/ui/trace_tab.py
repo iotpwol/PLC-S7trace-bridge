@@ -71,9 +71,7 @@ class ClickLabel(QLabel):
         super().mouseReleaseEvent(e)
 
 
-DEVICE_ROWS = (("Rodzina", "family"), ("Model", "model"), ("Firmware", "firmware"), ("Nazwa stacji", "plc_name"),
-               ("Nazwa modułu", "module_name"))
-PLC_TIME_LABEL = "Czas PLC"
+PLC_TIME_LABEL = panel_cfg.PLC_TIME_ROW
 
 
 class _Names(dict):
@@ -196,7 +194,12 @@ class TraceTab(QWidget):
 
         self.folds: dict[str, FoldGroup] = {}
         self._forms: dict[str, QFormLayout] = {}
-        self._hidden: dict[str, list[str]] = {g: [] for g in panel_cfg.GROUPS}      # hidden elements of the groups (part of the panel layout)
+        self._hidden: dict[str, list[str]] = {g: list(v) for g, v in panel_cfg.DEFAULTS["hidden"].items()}   # hidden elements (part of the panel layout)
+        self._bodies: dict[str, QWidget] = {}
+        self._body_ctx: dict[QWidget, str] = {}
+        self._dev_msg = ""                                                            # a message that replaces the controller data (busy / error)
+        self._dev_rows_on = False                                                     # the controller rows are shown (there is data and no message)
+        self._net_on = False                                                          # the 'Sieć' rows are shown (the connection works)
         self._row_keys: dict[str, list[str]] = {}
         self._row_ctx: dict[QWidget, tuple[str, str]] = {}                           # label / spanning widget -> (group, row name)
 
@@ -213,6 +216,7 @@ class TraceTab(QWidget):
             g.contextRequested.connect(lambda pos, name=title: self._group_menu(name, pos))     # right click on the title = menu of the group
             self.folds[title] = g
             self._forms[title] = f
+            self._bodies[title] = body
             lv.addWidget(g)
             return f
 
@@ -246,19 +250,26 @@ class TraceTab(QWidget):
         self._conn_widgets = [self.ed_ip, self.sp_rack, self.sp_slot, self.sp_cycle, self.cb_mode]
 
         f = group("Sterownik")
-        self.lbl_dev = ClickLabel()
+        self.lbl_dev = ClickLabel()                  # replaces the rows while there is no data / a message (busy, error)
         self.lbl_dev.setTextFormat(Qt.RichText)
         self.lbl_dev.setWordWrap(True)
-        self.lbl_dev.setMinimumHeight(self.lbl_dev.fontMetrics().lineSpacing() * (len(DEVICE_ROWS) + 1) + 8)
         self.lbl_dev.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         self.lbl_dev.clicked.connect(self.open_device_info)
         f.addRow(self.lbl_dev)
+        self.dev_vals: dict[str, ClickLabel] = {}    # one row per datum (each can be hidden); values are bold
+        for label in [k for k, _ in panel_cfg.DEVICE_KEYS] + [PLC_TIME_LABEL]:
+            v = ClickLabel()
+            v.setProperty("val", True)
+            v.setTextFormat(Qt.PlainText)
+            v.setWordWrap(True)
+            v.clicked.connect(self.open_device_info)
+            self.dev_vals[label] = v
+            f.addRow(label + ":", v)
         self.btn_dev = QPushButton("Pobierz dane sterownika")
         self.btn_dev.setToolTip("Jednorazowo łączy się ze sterownikiem i czyta tylko jego dane (model, firmware, nazwy, czas PLC) – bez uruchamiania "
                                 "odczytu sygnałów i wykresu. Dostępne, gdy połączenie jest zatrzymane (S7comm).")
         self.btn_dev.clicked.connect(self.read_device_now)
         f.addRow(self.btn_dev)
-        self._show_device()
 
         f = group("Zakres okna wykresu")
         self.sp_window = DurationCombo(200.0)      # typed seconds or a pick from the list (5 s ... 24 h)
@@ -361,7 +372,6 @@ class TraceTab(QWidget):
         f.addRow("Próbki:", self.cb_rmode)
         f.addRow("Folder:", rr)
         f.addRow("Nazwa pliku:", self.ed_rname)
-        self._index_rows()
         lv.addStretch()
         scroll = QScrollArea()
         scroll.setWidget(left)
@@ -374,18 +384,37 @@ class TraceTab(QWidget):
         lb.setSpacing(2)
         lb.addWidget(scroll, 1)
         self.info_tabs = QTabWidget()
-        self.lbl_sys = QLabel()
-        self.lbl_net = QLabel()
-        for lbl in (self.lbl_sys, self.lbl_net):
-            lbl.setTextFormat(Qt.RichText)
-            lbl.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-            lbl.setContentsMargins(8, 6, 8, 6)
-        self.info_tabs.addTab(self.lbl_sys, "System")
-        self.info_tabs.addTab(self.lbl_net, "Sieć")
+
+        def info_page(title, keys):                    # a tab = one row per datum (each can be hidden by a right click)
+            page = QWidget()
+            form = QFormLayout(page)
+            form.setContentsMargins(10, 6, 8, 6)
+            form.setVerticalSpacing(2)
+            form.setLabelAlignment(Qt.AlignLeft)
+            vals = {}
+            for k in keys:
+                v = QLabel()
+                v.setProperty("val", True)
+                v.setTextFormat(Qt.PlainText)
+                v.setWordWrap(True)
+                vals[k] = v
+                form.addRow(k + ":", v)
+            self._forms[title] = form
+            self._bodies[title] = page
+            self.info_tabs.addTab(page, title)
+            return page, form, vals
+        self.page_sys, _f_sys, self.sys_vals = info_page("System", panel_cfg.ROWS["System"])
+        self.page_net, f_net, self.net_vals = info_page("Sieć", panel_cfg.ROWS["Sieć"])
+        self.lbl_netmsg = QLabel("<i>Brak połączenia ze sterownikiem – parametry sieci pojawią się po Start.</i>")
+        self.lbl_netmsg.setTextFormat(Qt.RichText)
+        self.lbl_netmsg.setWordWrap(True)
+        f_net.addRow(self.lbl_netmsg)
         self.info_tabs.setToolTip("System: godzina i obciążenie komputera, na którym działa program. Sieć: parametry połączenia ze sterownikiem "
                                   "(czas odczytu, pominięte cykle, ping).")
-        self.info_tabs.setFixedHeight(self.fontMetrics().lineSpacing() * 4 + 52)
+        self.info_tabs.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         lb.addWidget(self.info_tabs)
+        self._index_rows()
+        self._show_device()                            # (also applies the hidden elements)
         self.info_tabs.currentChanged.connect(self._layout_moved)
         self._left_min = 230                           # kept up to date by _fit_left_min (content width, screen permitting)
 
@@ -586,38 +615,69 @@ class TraceTab(QWidget):
 
     # ---- elements of the groups: right click on a name hides the row, right click on a group title lists them all
     def _index_rows(self) -> None:
-        """Names the rows of every group (the label without the colon; a row without a label is named after its content) and catches
-        right clicks on them."""
-        alone = {id(self.lbl_dev): "Dane sterownika", id(self.btn_dev): "Pobierz dane", id(self.chk_auto): "Auto Y", id(self.chk_trig): "Włącz trigger"}
+        """Names the rows of every group / tab (the label without the colon; a row without a label is named after its content) and
+        catches right clicks on them (on the name, on a value, on the empty part of the box)."""
+        alone = {id(self.btn_dev): "Pobierz dane", id(self.chk_auto): "Auto Y", id(self.chk_trig): "Włącz trigger"}
         for title, f in self._forms.items():
             keys = []
             for r in range(f.rowCount()):
-                lab = f.itemAt(r, QFormLayout.LabelRole)
+                lab, fld = f.itemAt(r, QFormLayout.LabelRole), f.itemAt(r, QFormLayout.FieldRole)
+                ws = []
                 if lab is not None and lab.widget() is not None:
-                    key, w = lab.widget().text().rstrip(":").strip(), lab.widget()
+                    key = lab.widget().text().rstrip(":").strip()
+                    ws.append(lab.widget())
+                    if fld is not None and isinstance(fld.widget(), QLabel):
+                        ws.append(fld.widget())
                 else:
                     span = f.itemAt(r, QFormLayout.SpanningRole)
                     w = span.widget() if span is not None else None
                     key = alone.get(id(w), "") if w is not None else ""
+                    if w is not None:
+                        ws.append(w)
                 keys.append(key)
-                if w is not None and key:
-                    self._row_ctx[w] = (title, key)
-                    w.installEventFilter(self)
+                if key:
+                    for w in ws:
+                        self._row_ctx[w] = (title, key)
+                        w.installEventFilter(self)
             self._row_keys[title] = keys
+        for title, body in self._bodies.items():
+            self._body_ctx[body] = title
+            body.installEventFilter(self)
 
     def eventFilter(self, obj, ev):
-        if ev.type() == QEvent.ContextMenu and obj in self._row_ctx:
-            title, key = self._row_ctx[obj]
-            self._row_menu(title, key, ev.globalPos())
-            return True
+        if ev.type() == QEvent.ContextMenu:
+            if obj in self._row_ctx:
+                title, key = self._row_ctx[obj]
+                self._row_menu(title, key, ev.globalPos())
+                return True
+            if obj in self._body_ctx:
+                self._group_menu(self._body_ctx[obj], ev.globalPos())
+                return True
         return super().eventFilter(obj, ev)
 
-    def _set_hidden(self, hidden: dict) -> None:
-        self._hidden = {g: list(hidden.get(g, [])) for g in panel_cfg.GROUPS}
+    def _row_shown(self, title: str, key: str) -> bool:
+        if title == "Sterownik":
+            if key == "":                                       # the line that stands in for the data
+                return not self._dev_rows_on
+            if key != "Pobierz dane" and not self._dev_rows_on:
+                return False
+        elif title == "Sieć":
+            if key == "":
+                return not self._net_on
+            if not self._net_on:
+                return False
+        return key not in self._hidden.get(title, [])
+
+    def _apply_rows(self) -> None:
         for title, f in self._forms.items():
             for r, key in enumerate(self._row_keys.get(title, [])):
-                f.setRowVisible(r, key not in self._hidden[title])
+                f.setRowVisible(r, self._row_shown(title, key))
         self._fit_left_min()
+
+    def _set_hidden(self, hidden: dict) -> None:
+        self._hidden = {g: list(hidden.get(g, [])) for g in panel_cfg.ALL_GROUPS}
+        if self._row_keys:
+            self._apply_rows()
 
     def _toggle_row(self, title: str, key: str, show: bool) -> None:
         if show:
@@ -630,7 +690,7 @@ class TraceTab(QWidget):
     def _rows_menu(self, m: QMenu, title: str) -> None:
         """Check list of the elements of a group (checked = visible)."""
         for key in dict.fromkeys(k for k in self._row_keys.get(title, []) if k):
-            a = m.addAction(key)
+            a = m.addAction("Pobierz dane sterownika (przycisk)" if key == "Pobierz dane" else key)
             a.setCheckable(True)
             a.setChecked(key not in self._hidden[title])
             a.triggered.connect(lambda checked, k=key: self._toggle_row(title, k, checked))
@@ -639,13 +699,22 @@ class TraceTab(QWidget):
         a.setEnabled(bool(self._hidden[title]))
         a.triggered.connect(lambda: (self._set_hidden({**self._hidden, title: []}), self._layout_moved()))
 
+    def _device_action(self, m: QMenu) -> None:
+        a = m.addAction("Pobierz dane sterownika")          # also when the button itself is hidden
+        a.setEnabled(self.btn_dev.isEnabled())
+        a.triggered.connect(self.read_device_now)
+
     def _group_menu(self, title: str, pos) -> None:
-        """Right click on the title of a group: its folding and which elements are shown."""
+        """Right click on the title of a group (or on the empty part of its box): its folding and which elements are shown."""
         m = QMenu(self)
-        g = self.folds[title]
-        m.addAction("Rozwiń pole" if g.folded() else "Zwiń pole", lambda: g.set_folded(not g.folded()))
-        m.addSeparator()
-        head = m.addAction(f"Elementy pola „{title}”")
+        g = self.folds.get(title)
+        if g is not None:
+            m.addAction("Rozwiń pole" if g.folded() else "Zwiń pole", lambda: g.set_folded(not g.folded()))
+            m.addSeparator()
+        if title == "Sterownik":
+            self._device_action(m)
+            m.addSeparator()
+        head = m.addAction(f"Elementy: {title}")
         head.setEnabled(False)
         self._rows_menu(m, title)
         m.exec(pos)
@@ -654,7 +723,9 @@ class TraceTab(QWidget):
         """Right click on the name of an element: hide it (it comes back from the menu of the group title)."""
         m = QMenu(self)
         m.addAction(f"Ukryj „{key}”", lambda: self._toggle_row(title, key, False))
-        sub = m.addMenu(f"Elementy pola „{title}”")
+        if title == "Sterownik":
+            self._device_action(m)
+        sub = m.addMenu(f"Elementy: {title}")
         self._rows_menu(sub, title)
         m.exec(pos)
 
@@ -721,6 +792,8 @@ class TraceTab(QWidget):
     def _fit_left_min(self) -> None:
         """The settings panel is never narrower than what its widgets need (fonts / scaling change that), unless that
         would take more than half of the tab - then the panel scrolls sideways instead."""
+        if not hasattr(self, "_left_min"):                       # still being built
+            return
         try:
             sc = self._left_scroll
         except RuntimeError:                                   # the tab is already gone (a queued call)
@@ -1109,6 +1182,7 @@ class TraceTab(QWidget):
     def _on_info(self, d: dict) -> None:
         """Data of the PLC read right after a (re)connection: replaces the previous data of this address."""
         self.device, self._device_ip = d, self.ed_ip.text()
+        self._dev_msg = ""
         self._show_device()
         self.apply_time_axis()                                     # the PLC clock follows the newest difference
         if self.plc_diff() is not None:
@@ -1122,15 +1196,15 @@ class TraceTab(QWidget):
             return
         c = self._collect()
         if c.conn_type not in ("auto", "s7"):
-            self.lbl_dev.setText("<i>Dane sterownika można pobrać tylko dla połączenia S7comm (metoda: automatyczna lub S7comm).</i>")
+            self._set_dev_msg("Dane sterownika można pobrać tylko dla połączenia S7comm (metoda: automatyczna lub S7comm).")
             return
         if ipv4_state(c.ip) != ACCEPTABLE:
-            self.lbl_dev.setText("<i>Niepoprawny adres IP – nie można pobrać danych sterownika.</i>")
+            self._set_dev_msg("Niepoprawny adres IP – nie można pobrać danych sterownika.")
             return
         self._dev_busy = True
         self.btn_dev.setText("Pobieranie…")
         self._set_buttons()
-        self.lbl_dev.setText(f"<i>Łączenie z {html.escape(c.ip)} i odczyt danych sterownika…</i>")
+        self._set_dev_msg(f"Łączenie z {c.ip} i odczyt danych sterownika…")
         ip, rack, slot = c.ip, c.rack, c.slot
 
         def work():
@@ -1146,38 +1220,68 @@ class TraceTab(QWidget):
         self.btn_dev.setText("Pobierz dane sterownika")
         self._set_buttons()
         if ip != self.ed_ip.text():                              # the address was changed meanwhile: the answer is stale
+            self._dev_msg = ""
             self._show_device()
             return
         if d:
             self._on_info(d)
         else:
-            self.lbl_dev.setText(f"<i>Nie udało się pobrać danych sterownika: {html.escape(err)}</i>")
+            self._set_dev_msg(f"Nie udało się pobrać danych sterownika: {err}")
 
     def _ip_changed_device(self, *_) -> None:
         if self.device is not None and self.ed_ip.text() != self._device_ip:      # another device: the data is stale
             self.device = None
+            self._dev_msg = ""
             self._show_device()
             self.apply_time_axis()
 
+    def device_text(self) -> str:
+        """Plain text of the controller box: the line that stands in for the data and the rows that are shown ('Rodzina: S7-300' ...)."""
+        parts = [re.sub("<[^>]+>", "", self.lbl_dev.text()).strip()]
+        if self._dev_rows_on:
+            parts += [f"{k}: {v.text()}" for k, v in self.dev_vals.items() if self._row_shown("Sterownik", k)]
+        return chr(10).join(p for p in parts if p)
+
+    def _set_dev_msg(self, text: str) -> None:
+        """A line that replaces the controller rows (busy / error); '' = back to the data."""
+        self._dev_msg = text
+        self._show_device()
+
     def _show_device(self) -> None:
         d = self.device
-        if d is None:
+        info = (d or {}).get("info") or {}
+        has = d is not None and d.get("method") != "other" and bool(info)
+        if self._dev_msg:
+            self.lbl_dev.setText(f"<i>{html.escape(self._dev_msg)}</i>")
+        elif d is None:
             self.lbl_dev.setText("<i>Brak danych sterownika – pobierz je przyciskiem poniżej albo zostaną pobrane po pierwszym połączeniu.</i>")
-            self.lbl_dev.setCursor(Qt.ArrowCursor)
-            self.lbl_dev.setToolTip("Dane sterownika pojawią się po pierwszym połączeniu albo po naciśnięciu „Pobierz dane sterownika”.")
-            return
-        info = d.get("info") or {}
-        if d.get("method") == "other" or not info:
+        elif not has:
             self.lbl_dev.setText("<i>Brak danych sterownika dla tej metody połączenia.</i>")
         else:
-            rows = "".join(f"<tr><td>{label}:&nbsp;&nbsp;</td><td><b>{html.escape(str(info.get(key) or '—'))}</b></td></tr>"
-                           for label, key in DEVICE_ROWS)       # a table: all values start in one vertical line
-            plc = self.plc_time()
-            if plc is not None:                                 # the sixth line: the clock of the controller (date and time)
-                rows += f"<tr><td>{PLC_TIME_LABEL}:&nbsp;&nbsp;</td><td><b>{plc.strftime('%Y-%m-%d')}&nbsp;&nbsp;{plc.strftime('%H:%M:%S')}</b></td></tr>"
-            self.lbl_dev.setText(f'<table cellspacing="0" cellpadding="0">{rows}</table>')
-        self.lbl_dev.setCursor(Qt.PointingHandCursor)
-        self.lbl_dev.setToolTip("Kliknij, aby zobaczyć pełne informacje o sterowniku (zakładka „Sterownik i czas”).")
+            self.lbl_dev.setText("")
+        self._dev_rows_on = has and not self._dev_msg
+        self.lbl_dev.setCursor(Qt.PointingHandCursor if self._dev_rows_on else Qt.ArrowCursor)
+        self.lbl_dev.setToolTip("Dane sterownika pojawią się po pierwszym połączeniu albo po naciśnięciu „Pobierz dane sterownika”."
+                                if d is None else "Kliknij, aby zobaczyć pełne informacje o sterowniku (zakładka „Sterownik i czas”).")
+        if has:
+            for label, key in panel_cfg.DEVICE_KEYS:
+                self.dev_vals[label].setText(str(info.get(key) or "—"))
+                self.dev_vals[label].setToolTip("Kliknij, aby zobaczyć pełne informacje o sterowniku (zakładka „Sterownik i czas”).")
+            self._update_plc_time_row()
+        self._apply_rows()
+
+    def _update_plc_time_row(self) -> None:
+        """'Czas PLC': date and time (two spaces between), or 'nie odczytano' (the reason is in the tip)."""
+        v = self.dev_vals[PLC_TIME_LABEL]
+        plc = self.plc_time()
+        if plc is not None:
+            txt, tip = f"{plc:%Y-%m-%d}  {plc:%H:%M:%S}", "Zegar sterownika: czytany raz przy połączeniu, dalej liczony z zegara komputera i różnicy."
+        else:
+            why = (self.device or {}).get("time_error") or ""
+            txt, tip = "nie odczytano", "Nie udało się odczytać zegara sterownika" + (f": {why}" if why else ".")
+        if v.text() != txt:
+            v.setText(txt)
+        v.setToolTip(tip)
 
     def plc_diff(self) -> float | None:
         """PLC clock minus the computer's [s], measured once at the connection; None = unknown."""
@@ -1198,8 +1302,8 @@ class TraceTab(QWidget):
         self._update_side()
 
     def _tick_plc_time(self) -> None:
-        if self.device is not None and self.plc_diff() is not None and getattr(self, "loaded", None) is None and self.isVisible():
-            self._show_device()
+        if self._dev_rows_on and self.plc_diff() is not None and getattr(self, "loaded", None) is None and self.isVisible():
+            self._update_plc_time_row()
 
     def _offset_menu(self, pos) -> None:
         m = QMenu(self)
@@ -1224,7 +1328,7 @@ class TraceTab(QWidget):
         d = self.device or {}
         res = DetectResult(host=self._device_ip)
         res.info = dict(d.get("info") or {})
-        for k in ("plc_time", "plc_time_utc", "time_diff_local", "time_diff_utc"):
+        for k in ("plc_time", "plc_time_utc", "time_diff_local", "time_diff_utc", "time_error"):
             if k in d:
                 setattr(res, k, d[k])
         res.rack, res.slot = d.get("rack", 0), d.get("slot", 2)
@@ -1413,28 +1517,36 @@ class TraceTab(QWidget):
 
     def _update_side(self) -> None:
         """The two tabs at the bottom of the left panel: System (the computer the program runs on) and Sieć (the link to the PLC: what the
-        status bar showed before)."""
-        def table(rows):
-            return "<table cellspacing='0' cellpadding='1'>" + "".join(f"<tr><td>{k}:&nbsp;&nbsp;</td><td><b>{v}</b></td></tr>" for k, v in rows) + "</table>"
+        status bar showed before). Every row can be hidden."""
         now = datetime.now()
         cpu = sysinfo.cpu_percent()
         app = sysinfo.app_cpu_percent()
-        sys_rows = [("Godzina systemowa", f"{now:%Y-%m-%d}&nbsp;&nbsp;{now:%H:%M:%S}"), ("Obciążenie CPU", f"{cpu:.0f} %" if cpu is not None else "—"),
-                    ("w tym ta aplikacja", f"{app:.1f} %" if app is not None else "—"), ("GUI lag", f"{self.plot.gui_lag_ms:.1f} ms")]
-        txt = table(sys_rows)
-        if txt != self.lbl_sys.text():
-            self.lbl_sys.setText(txt)
-        if self.acq and self.state in ("running", "reconnecting"):
+        sv = self.sys_vals
+        sv["Godzina systemowa"].setText(f"{now:%Y-%m-%d}  {now:%H:%M:%S}")
+        sv["System operacyjny"].setText(sysinfo.os_name())
+        sv["Obciążenie CPU"].setText(f"{cpu:.0f} %" if cpu is not None else "—")
+        sv["w tym ta aplikacja"].setText(f"{app:.1f} %" if app is not None else "—")
+        sv["GUI lag"].setText(f"{self.plot.gui_lag_ms:.1f} ms")
+        raw = sysinfo.cpu_time_percent()
+        tip = ("Obciążenie CPU jest liczone tak jak w Menedżerze zadań (Windows: „Wykorzystanie procesora” – licznik Processor Utility, "
+               "uwzględnia częstotliwość procesora, więc bywa wyższe niż sam czas zajętości)."
+               + (f" Sam czas zajętości procesora: {raw:.0f} %." if raw is not None else "")
+               + " „w tym ta aplikacja” = udział programu (z procesami odczytu) w tej samej skali.")
+        if sv["Obciążenie CPU"].toolTip() != tip:
+            sv["Obciążenie CPU"].setToolTip(tip)
+            sv["w tym ta aplikacja"].setToolTip(tip)
+        net_on = bool(self.acq and self.state in ("running", "reconnecting"))
+        if net_on:
             st = self.acq.stats
-            rows = [("PLC comm lag Avg", f"{st.avg_lag:.1f} ms (n={st.n})"), ("PLC comm lag Last", f"{st.last_lag:.1f} ms"),
-                    ("Missed", f"{st.missed} ({st.missed_pct:.1f}%)")]
+            nv = self.net_vals
+            nv["PLC comm lag Avg"].setText(f"{st.avg_lag:.1f} ms (n={st.n})")
+            nv["PLC comm lag Last"].setText(f"{st.last_lag:.1f} ms")
+            nv["Missed"].setText(f"{st.missed} ({st.missed_pct:.1f}%)")
             ping = self._ping_parts()
-            rows.append(("Ping", f"{ping[0]}, utrata {ping[1]:.1f}%" if ping else "—"))
-            txt = table(rows)
-        else:
-            txt = "<i>Brak połączenia ze sterownikiem – parametry sieci pojawią się po Start.</i>"
-        if txt != self.lbl_net.text():
-            self.lbl_net.setText(txt)
+            nv["Ping"].setText(f"{ping[0]}, utrata {ping[1]:.1f}%" if ping else "—")
+        if net_on != self._net_on:
+            self._net_on = net_on
+            self._apply_rows()
 
     def _update_status(self):
         hint = (" | <b>Punkty ukryte: za dużo próbek w oknie – przybliż wykres albo zwiększ limit "
@@ -1701,7 +1813,7 @@ class TraceTab(QWidget):
             m = info["meta"]
             sec("Przebieg wczytany z bazy danych")
             row("Tytuł", m.get("title") or "–")
-            for label, key in (("Uwagi", "notes"), ("Etykiety", "tags"), ("Autor (konto)", "owner"), ("Komputer", "computer")):
+            for label, key in (("Opis", "description"), ("Uwagi", "notes"), ("Etykiety", "tags"), ("Autor (konto)", "owner"), ("Komputer", "computer")):
                 row(label, m.get(key) or "–")
             row("Początek", when(m.get("start_us")))
             row("Koniec", when(m.get("end_us")))
@@ -1836,7 +1948,7 @@ class TraceTab(QWidget):
                 if ask and mode == "start":                    # question first, recording after the answer
                     d = RecInfoDialog(info.get("title") or c.conf_name, info.get("notes", ""), info.get("tags", ""),
                                       "Nazwa nagrania – zostanie zapisana w bazie razem z nagraniem.",
-                                      "Rozpocznij nagrywanie", "Anuluj REC", self)
+                                      "Rozpocznij nagrywanie", "Anuluj REC", self, description=info.get("description", ""))
                     if not d.exec():
                         self.recorder = None
                         self.btn_rec.setChecked(False)
@@ -1864,7 +1976,7 @@ class TraceTab(QWidget):
         rec = self.recorder
         d = RecInfoDialog(info.get("title") or default_title, info.get("notes", ""), info.get("tags", ""),
                           "Nagrywanie trwa. Nadaj nazwę nagraniu – możesz to zrobić w dowolnej chwili, także później w oknie "
-                          "„Przegląd nagrań”.", "Zapisz", "Pomiń", self)
+                          "„Przegląd nagrań”.", "Zapisz", "Pomiń", self, description=info.get("description", ""))
         d.setModal(False)
         d.accepted.connect(lambda: self._apply_info(rec, d.values()))
         self._info_dlg = d
@@ -1921,7 +2033,8 @@ class TraceTab(QWidget):
                 and not self._rec_info.get("title"):
             from .store_dialog import RecInfoDialog
             d = RecInfoDialog(self.cfg.conf_name, self._rec_info.get("notes", ""), self._rec_info.get("tags", ""),
-                              "Zatrzymano nagrywanie. Nadaj nazwę nagraniu.", "Zapisz", "Pomiń", self)
+                              "Zatrzymano nagrywanie. Nadaj nazwę nagraniu.", "Zapisz", "Pomiń", self,
+                              description=self._rec_info.get("description", ""))
             if d.exec():
                 self.recorder.update_info(**d.values())
         if self.recorder:

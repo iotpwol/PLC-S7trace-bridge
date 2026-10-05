@@ -1,6 +1,8 @@
 """Kreator połączenia: rozpoznaje metodę komunikacji, pokazuje dane sterownika, różnicę czasu i ograniczenia."""
 from __future__ import annotations
 
+import html
+
 import threading
 
 from PySide6.QtCore import QThread, Qt, Signal as QtSignal
@@ -8,6 +10,7 @@ from PySide6.QtWidgets import (QApplication, QDialog, QHBoxLayout, QHeaderView, 
                                QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
 
 from ..core import detect
+from ..core.richtext import bold, bold_numbers
 from ..core.drivers import CONN_LABEL
 from ..core.store import DEVICE_LABELS
 from .dialog_kit import dialog_info
@@ -52,6 +55,7 @@ class WizardDialog(QDialog):
         self.resize(900, 700)
         lay = QVBoxLayout(self)
         self.lbl = QLabel()
+        self.lbl.setTextFormat(Qt.RichText)                     # data inside the sentences is bold (core/richtext.py)
         self.lbl.setWordWrap(True)
         lay.addWidget(self.lbl)
         self.tabs = QTabWidget()
@@ -113,7 +117,7 @@ class WizardDialog(QDialog):
         self.result = res
         self.btn_again.setEnabled(True)
         self.btn_use.setEnabled(False)
-        self.lbl.setText(f"Dane sterownika {res.host} pobrane przy ostatnim połączeniu. "
+        self.lbl.setText(f"Dane sterownika {bold(res.host)} pobrane przy ostatnim połączeniu. "
                          "„Uruchom ponownie” wykonuje pełne rozpoznawanie (nowy odczyt).")
         self._fill_info(res, stored=True)
         self._fill_limits()
@@ -126,7 +130,7 @@ class WizardDialog(QDialog):
         self.t_steps.setRowCount(0)
         self.btn_again.setEnabled(False)
         self.btn_use.setEnabled(False)
-        self.lbl.setText(f"Rozpoznawanie połączenia z {t.ed_ip.text().strip()} …")
+        self.lbl.setText(f"Rozpoznawanie połączenia z {bold(t.ed_ip.text().strip())} …")
         self.worker = DetectWorker(t.ed_ip.text(), dict(t.cfg.conn), t.sp_rack.value(), t.sp_slot.value(),
                                    self.methods, stop_at_first=self.auto, parent=self)
         self.worker.stepDone.connect(self._add_step)
@@ -159,7 +163,7 @@ class WizardDialog(QDialog):
             head = f"Zalecana metoda: {CONN_LABEL[res.recommended]}"
         else:
             head = "Nie wykryto działającej metody komunikacji."
-        self.lbl.setText(head + "\n" + "\n".join("• " + a for a in res.advice if not a.startswith("Zalecana")))
+        self.lbl.setText(bold_numbers(head) + "<br>" + "<br>".join("• " + bold_numbers(a) for a in res.advice if not a.startswith("Zalecana")))
         self._fill_info(res)
         self._fill_limits()
         if self.auto and res.recommended:
@@ -194,7 +198,8 @@ class WizardDialog(QDialog):
                 f"do UTC: <b>{res.time_diff_utc:+.1f} s</b><br>"
                 "Sterowniki Siemensa często pracują w UTC – właściwa jest ta różnica, która jest bliższa zera.")
         else:
-            self.lbl_time.setText("Czas sterownika: nie udało się odczytać.")
+            why = getattr(res, "time_error", "")
+            self.lbl_time.setText("Czas sterownika: <b>nie odczytano</b>" + (f" ({html.escape(why)})" if why else "") + ".")
 
     def _use(self) -> None:
         if self.method:

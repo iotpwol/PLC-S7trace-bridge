@@ -247,7 +247,7 @@ class HostedConnection:
         return c, self.mgr.data_dir
 
     def rec_start(self, user: str, info: dict | None = None, address: str = "") -> None:
-        info = {k: str(v)[:500] for k, v in (info or {}).items() if k in ("title", "notes", "tags")}
+        info = {k: str(v)[:500] for k, v in (info or {}).items() if k in ("title", "description", "notes", "tags")}
         with self._rec_lock:
             if self.recorder is not None:
                 raise ValueError("Nagrywanie już trwa.")
@@ -281,7 +281,7 @@ class HostedConnection:
         return rec, label
 
     def rec_info_update(self, info: dict) -> None:
-        info = {k: str(v)[:500] for k, v in (info or {}).items() if k in ("title", "notes", "tags")}
+        info = {k: str(v)[:500] for k, v in (info or {}).items() if k in ("title", "description", "notes", "tags")}
         with self._rec_lock:
             rec = self.recorder
             if rec is None:

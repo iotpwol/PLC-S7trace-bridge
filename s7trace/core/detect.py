@@ -71,6 +71,7 @@ class DetectResult:
     plc_time_utc: bool = False
     time_diff_local: float | None = None
     time_diff_utc: float | None = None
+    time_error: str = ""                             # why the PLC clock could not be read ("" = it was read or not tried)
     recommended: str | None = None
     advice: list = field(default_factory=list)
     rack: int = 0
@@ -111,6 +112,56 @@ def _classify(err: str) -> str:
     return "other"
 
 
+def _bcd(v: int) -> int:
+    if (v >> 4) > 9 or (v & 0xF) > 9:
+        raise ValueError(f"nieprawidłowy bajt BCD {v:#04x}")
+    return (v >> 4) * 10 + (v & 0xF)
+
+
+def parse_clock_pdu(raw: bytes) -> datetime:
+    """Controller clock from the raw answer of the S7 'read clock' user-data request. A real PLC sends 10 data bytes (reserved, century,
+    year, month, day, hour, minute, second, ms, ms + weekday), the simulator 8 (no century): both are understood."""
+    if len(raw) < 10 or raw[0] != 0x32:
+        raise RuntimeError("niepoprawna odpowiedź na odczyt zegara")
+    if raw[1] in (2, 3):                                       # ACK / ACK_DATA: 12-byte header with the error class / code
+        if len(raw) >= 12 and raw[10] != 0:
+            raise RuntimeError(f"sterownik odrzucił odczyt zegara (błąd S7 {raw[10]:02X}{raw[11]:02X})")
+        hdr = 12
+    else:                                                      # USERDATA: 10-byte header
+        hdr = 10
+    plen, dlen = int.from_bytes(raw[6:8], "big"), int.from_bytes(raw[8:10], "big")
+    data = raw[hdr + plen: hdr + plen + dlen]
+    if len(data) < 4:
+        raise RuntimeError("sterownik nie zwrócił danych zegara (funkcja niedostępna lub zablokowana)")
+    if data[0] != 0xFF:
+        raise RuntimeError(f"sterownik odrzucił odczyt zegara (kod {data[0]:#04x}) – funkcja niedostępna lub zablokowana")
+    ts = data[4: 4 + int.from_bytes(data[2:4], "big")] or data[4:]
+    if len(ts) >= 10:
+        year = _bcd(ts[1]) * 100 + _bcd(ts[2])
+        rest = ts[3:8]
+    elif len(ts) >= 8:
+        y = _bcd(ts[1])
+        year = 2000 + y if y < 90 else 1900 + y
+        rest = ts[2:7]
+    else:
+        raise RuntimeError("zbyt krótkie dane zegara")
+    return datetime(year, *(_bcd(b) for b in rest))
+
+
+def read_plc_clock(client) -> datetime:
+    """Controller date and time: own parsing of the raw answer (snap7 3.x silently returns the computer's clock when it cannot read the
+    PLC's), falling back to the library's call only when its internals are not available."""
+    try:
+        conn = client._get_connection()
+        request = client.protocol.build_get_clock_request()
+    except AttributeError:
+        return client.get_plc_datetime()
+    with client._reconnect_lock:
+        client._send_data(conn, request)
+        raw = conn.receive_data()
+    return parse_clock_pdu(raw)
+
+
 def identify_s7(client, res: DetectResult, notes: list | None = None) -> None:
     """Device data of a connected snap7 client into `res` (model, MLFB, firmware, serial, station / module name,
     state, protection, PDU, PLC clock). Every call is optional: a missing function only adds a note."""
@@ -142,9 +193,11 @@ def identify_s7(client, res: DetectResult, notes: list | None = None) -> None:
     pdu = attempt("PDU", client.get_pdu_length)
     if pdu:
         info["pdu"] = pdu
-    t = attempt("czas sterownika", client.get_plc_datetime)
+    t = attempt("czas sterownika", lambda: read_plc_clock(client))
     if t is not None:
         _note_time(res, t)
+    else:
+        res.time_error = next((n.split(": ", 1)[1] for n in reversed(notes) if n.startswith("czas sterownika: ")), "nieznany błąd")
     family = _family(info.get("model", ""), info.get("order_code", ""))
     if family:
         info["family"] = family
@@ -153,7 +206,8 @@ def identify_s7(client, res: DetectResult, notes: list | None = None) -> None:
 def device_data(res: DetectResult, rack: int, slot: int) -> dict:
     """The device dict kept by the tab / hosted connection (shown in the 'Sterownik' box, saved with recordings)."""
     return {"method": "s7", "info": res.info, "plc_time": res.plc_time, "plc_time_utc": res.plc_time_utc,
-            "time_diff_local": res.time_diff_local, "time_diff_utc": res.time_diff_utc, "rack": rack, "slot": slot}
+            "time_diff_local": res.time_diff_local, "time_diff_utc": res.time_diff_utc, "time_error": res.time_error,
+            "rack": rack, "slot": slot}
 
 
 def read_device_s7(host_text: str, rack: int, slot: int) -> dict:

@@ -48,6 +48,8 @@ COLOR_KEYS: dict[str, tuple[str, str]] = {
     "rec_dot": ("REC: migająca kropka", "#ff2020"),
     "mark_on_bg": ("V / H znacznik, Punkty załączone: tło", "#2a82da"),
     "mark_on_text": ("V / H znacznik, Punkty załączone: tekst", "#000000"),
+    "help_on_bg": ("Przycisk „?” (tryb pomocy włączony): tło", "#ff9800"),
+    "help_on_text": ("Przycisk „?” (tryb pomocy włączony): tekst", "#000000"),
 }
 
 DARK = {k: v[1] for k, v in COLOR_KEYS.items()}
@@ -181,7 +183,7 @@ QLineEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabl
     color: {_disabled(t['edit_text'])}; }}
 QComboBox {{ padding-left: 11px; }}                      /* optically level with the spin boxes */
 QLineEdit[invalid="true"], QComboBox[invalid="true"] {{ border: 1px solid #e04040; }}
-QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QComboBox QAbstractItemView {{ font-weight: bold; }}    /* values are bold */
+QLineEdit, QSpinBox, QDoubleSpinBox, QTimeEdit, QDateEdit, QDateTimeEdit, QComboBox, QComboBox QAbstractItemView {{ font-weight: bold; }}    /* values are bold */
 QComboBox QAbstractItemView {{ background: {t['edit_bg']}; color: {t['edit_text']};
     selection-background-color: {t['accent']}; }}
 QPushButton {{ background: {t['button_bg']}; color: {t['button_text']}; border: 1px solid rgba(128,128,128,110);
@@ -191,6 +193,7 @@ QPushButton:pressed, QPushButton:checked {{ background: {t['accent']}; color: #f
 QPushButton:disabled {{ color: {_disabled(t['button_text'])}; }}
 QToolButton {{ background: {t['button_bg']}; color: {t['button_text']}; border: 1px solid rgba(128,128,128,110);
     border-radius: 2px; padding: 2px 8px; }}
+QToolButton#helpBtn:checked {{ background: {t['help_on_bg']}; color: {t['help_on_text']}; font-weight: bold; }}   /* help mode is on */
 QTableWidget, QListWidget {{ background: {t['table_bg']}; gridline-color: rgba(128,128,128,90);
     color: {t['table_text']}; alternate-background-color: {t['table_bg']}; }}
 QTableWidget::item {{ padding-left: 12px; }}

@@ -301,9 +301,9 @@ class StoreDialog(QDialog):
 class RecInfoDialog(QDialog):
     """Title, notes and tags of a recording (asked when REC starts / during / ends, and edited in the overview)."""
 
-    def __init__(self, title="", notes="", tags="", heading="", ok_text="Zapisz", cancel_text="Pomiń", parent=None):
+    def __init__(self, title="", notes="", tags="", heading="", ok_text="Zapisz", cancel_text="Pomiń", parent=None, description=""):
         super().__init__(parent)
-        self.setWindowTitle("Nagranie – tytuł i uwagi")
+        self.setWindowTitle("Nagranie – tytuł, opis i uwagi")
         self.setMinimumWidth(460)
         lay = QVBoxLayout(self)
         if heading:
@@ -314,11 +314,15 @@ class RecInfoDialog(QDialog):
         lay.addLayout(form)
         self.ed_title = QLineEdit(title)
         self.ed_title.setPlaceholderText("np. Rozruch pieca 2 po remoncie")
+        self.ed_desc = QPlainTextEdit(description)
+        self.ed_desc.setPlaceholderText("co zawiera nagranie, w jakich warunkach powstało")
+        self.ed_desc.setFixedHeight(70)
         self.ed_notes = QPlainTextEdit(notes)
-        self.ed_notes.setFixedHeight(90)
+        self.ed_notes.setFixedHeight(70)
         self.ed_tags = QLineEdit(tags)
         self.ed_tags.setPlaceholderText("tagi po przecinku, np. rozruch, piec 2")
         form.addRow("Tytuł:", self.ed_title)
+        form.addRow("Opis:", self.ed_desc)
         form.addRow("Uwagi:", self.ed_notes)
         form.addRow("Tagi:", self.ed_tags)
         row = QHBoxLayout()
@@ -332,7 +336,8 @@ class RecInfoDialog(QDialog):
         lay.addLayout(row)
 
     def values(self) -> dict:
-        return {"title": self.ed_title.text().strip(), "notes": self.ed_notes.toPlainText().strip(),
+        return {"title": self.ed_title.text().strip(), "description": self.ed_desc.toPlainText().strip(),
+                "notes": self.ed_notes.toPlainText().strip(),
                 "tags": self.ed_tags.text().strip()}
 
 
@@ -369,7 +374,7 @@ class StoreImportDialog(QDialog):
     """Przegląd nagrań: the recordings of a database (sort, search, filter by user), their title / notes / tags, the trash,
     deleting, export to CSV and loading a recording (or a time range of it) into the tab."""
 
-    COLS = [("start", "Początek"), ("dur", "Czas trwania"), ("title", "Tytuł"), ("tags", "Tagi"), ("notes", "Uwagi"),
+    COLS = [("start", "Początek"), ("dur", "Czas trwania"), ("title", "Tytuł"), ("desc", "Opis"), ("tags", "Tagi"), ("notes", "Uwagi"),
             ("owner", "Użytkownik"), ("computer", "Komputer"), ("conf", "Konfiguracja"), ("ip", "IP"), ("tab", "Karta"),
             ("plc", "Sterownik"), ("plc_sn", "Nr seryjny"), ("mode", "Zapis"), ("sigs", "Sygnały"), ("events", "Wpisy")]
 
@@ -634,7 +639,7 @@ class StoreImportDialog(QDialog):
                 continue
             if who and who.startswith("u:") and s["owner"] != who[2:]:
                 continue
-            hay = " ".join([str(s.get(k, "")) for k in ("title", "notes", "tags", "conf", "name", "tab", "ip", "owner",
+            hay = " ".join([str(s.get(k, "")) for k in ("title", "description", "notes", "tags", "conf", "name", "tab", "ip", "owner",
                                                            "computer")] + [v for _l, v in st.device_lines(s.get("device"))]).lower()
             if needle and needle not in hay:
                 continue
@@ -671,7 +676,7 @@ class StoreImportDialog(QDialog):
             vals = {
                 "start": (datetime.fromtimestamp(s["start_us"] / 1e6).strftime("%Y-%m-%d %H:%M:%S"), s["start_us"]),
                 "dur": (fmt_duration(dur) if dur is not None else "trwa / nie zakończono", dur if dur is not None else -1),
-                "title": (s["title"], None), "tags": (s["tags"], None),
+                "title": (s["title"], None), "desc": (s.get("description", "").replace("\n", " "), None), "tags": (s["tags"], None),
                 "notes": (s["notes"].replace("\n", " "), None), "owner": (s["owner"], None),
                 "computer": (s["computer"], None), "conf": (s.get("conf") or s.get("name") or "", None),
                 "ip": (s.get("ip", ""), None), "tab": (s.get("tab", ""), None),
@@ -747,7 +752,8 @@ class StoreImportDialog(QDialog):
         if len(sel) != 1 or not self.can_modify(sel[0]):
             return
         s = sel[0]
-        d = RecInfoDialog(s["title"], s["notes"], s["tags"], ok_text="Zapisz", cancel_text="Anuluj", parent=self)
+        d = RecInfoDialog(s["title"], s["notes"], s["tags"], ok_text="Zapisz", cancel_text="Anuluj", parent=self,
+                          description=s.get("description", ""))
         if not d.exec():
             return
         try:

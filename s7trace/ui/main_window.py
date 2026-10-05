@@ -123,6 +123,7 @@ class MainWindow(QMainWindow):
         bar.installEventFilter(self)                   # the tooltip of a tab lists its connection / recording and database
         self.help_btn = QToolButton()                  # help mode: the same '?' as in the title bar of every dialog
         self.help_btn.setText("?")
+        self.help_btn.setObjectName("helpBtn")          # lights up (theme keys help_on_bg / help_on_text) while the mode is on
         self.help_btn.setCheckable(True)
         self.help_btn.setToolTip("Tryb pomocy: po włączeniu najedź kursorem na dowolny element, aby zobaczyć jego opis (Shift+F1, Esc kończy)")
         self.help_mode = help_mode.install(QApplication.instance())
@@ -258,7 +259,9 @@ class MainWindow(QMainWindow):
 
         h = mb.addMenu("&Pomoc")
         self._act(h, "Pomoc – opis programu…", lambda: self.show_help(), "F1")
-        self._act(h, "Tryb pomocy (opisy elementów po najechaniu)", lambda: self.help_mode.toggle(), "Shift+F1")
+        self.act_help_mode = self._act(h, "Tryb pomocy (opisy elementów po najechaniu)", lambda on: self.help_mode.set_active(on), "Shift+F1",
+                                       checked=False)                # a tick while the mode is on
+        self.help_mode.modeChanged.connect(self.act_help_mode.setChecked)
         h.addSeparator()
         self._act(h, "Adresowanie, rack/slot, S7-1200/1500",
                   lambda: QMessageBox.information(self, "Pomoc", RACK_SLOT_HELP))

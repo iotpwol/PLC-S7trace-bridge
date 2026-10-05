@@ -23,7 +23,7 @@ td button { padding:2px 8px; }
 .grid2 { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:10px; max-width:1000px; } .grid2 label { display:flex; flex-direction:column; gap:3px; }
 #c-filelist { background:var(--panel); padding:8px 12px; margin-bottom:8px; } #c-filelist a { margin-right:6px; }
 .rec-on { background:#c0392b; color:#fff; border-color:#c0392b; } #c-title { min-width:220px; } #editor { overflow-x:auto; } #e-sig { min-width:900px; }
-#help-btn.on { background:var(--accent); color:#fff; } body.helpmode, body.helpmode * { cursor:help !important; }
+#help-btn.on { background:#ff9800; color:#000; font-weight:bold; } body.helpmode, body.helpmode * { cursor:help !important; }
 #helpbubble { position:fixed; z-index:50; max-width:420px; background:#ffffe1; color:#111; border:1px solid #777; border-radius:3px; padding:6px 9px; font-size:13px; line-height:1.4; pointer-events:none; box-shadow:2px 2px 6px rgba(0,0,0,.4); }
 canvas.ov { margin-top:4px; cursor:ew-resize; } .tools button.on { background:var(--accent); color:#fff; } .tools label { display:flex; gap:4px; align-items:center; }
 #rv-canvas { cursor:crosshair; } #rv-edit { margin:8px 0; } #rv-edit input { min-width:200px; }

@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComb
                                QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
 
 from ..core import diagnostics as dg
+from ..core.richtext import bold_numbers
 from ..core.acquisition import parse_host
 from .dialog_kit import dialog_info
 
@@ -116,7 +117,7 @@ class DiagDialog(QDialog):
         self.lbl_head.setWordWrap(True)
         self.lbl_notes = QLabel()
         self.lbl_notes.setWordWrap(True)
-        self.lbl_notes.setTextFormat(Qt.PlainText)
+        self.lbl_notes.setTextFormat(Qt.RichText)                 # numbers with units are bold (core/richtext.py)
         top = QHBoxLayout()
         top.addWidget(QLabel("Ocena łącza:"))
         top.addWidget(self.lbl_rating)
@@ -282,7 +283,7 @@ class DiagDialog(QDialog):
             f"Odczyt chwilowo: {_b(_f(lg.get('last')) + ' ms')}, średnio: {_b(_f(lg.get('avg')) + ' ms')}   |   "
             f"Utracone cykle: {_b(format(d['missed_pct'], '.1f') + '%')}   |   "
             f"Próbkowanie: {_b(_f(d['rate10']) + ' Hz')} z {_b(_f(d['expected_rate']) + ' Hz')}{ping_txt}")
-        self.lbl_notes.setText("\n".join("• " + n for n in notes))
+        self.lbl_notes.setText("<br>".join("• " + bold_numbers(n) for n in notes))
 
         # latencies
         for c, (_, k) in enumerate(STAT_COLS):

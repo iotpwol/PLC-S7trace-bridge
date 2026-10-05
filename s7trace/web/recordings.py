@@ -138,7 +138,7 @@ class Library:
                 if bool(s["deleted_us"]) != trash:
                     continue
                 names = [d.get("name", "") for d in s.get("signals", []) if isinstance(d, dict)]
-                out.append({"id": s["id"], "title": s["title"], "notes": s["notes"], "tags": s["tags"], "owner": s["owner"],
+                out.append({"id": s["id"], "title": s["title"], "description": s.get("description", ""), "notes": s["notes"], "tags": s["tags"], "owner": s["owner"],
                             "computer": s["computer"], "name": s["name"], "ip": s["ip"], "tab": s["tab"], "conf": s["conf"],
                             "mode": s["mode"], "start_us": s["start_us"], "end_us": s["end_us"], "deleted_us": s["deleted_us"],
                             "signals": names, "entries": counts.get(s["id"]), "can_modify": mod,
@@ -264,7 +264,7 @@ class Library:
                 raise RecError("Brak uprawnień do zmiany tego nagrania (albo nagrywanie jeszcze trwa).")
             try:
                 if action == "update":
-                    f = {k: str((fields or {}).get(k, ""))[:500 if k != "title" else 200] for k in ("title", "notes", "tags")
+                    f = {k: str((fields or {}).get(k, ""))[:500 if k != "title" else 200] for k in ("title", "description", "notes", "tags")
                          if k in (fields or {})}
                     if f:
                         b.update_session(sid, f)

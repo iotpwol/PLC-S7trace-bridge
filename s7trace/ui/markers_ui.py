@@ -79,7 +79,7 @@ def marker_tip(m: mk.Marker, state: str = "", changed=frozenset(), look: dict | 
     if not m.show_label or "show_label" in changed:
         rows.append(hl("Nazwa na wykresie: " + ("pokazywana" if m.show_label else "ukryta"), "show_label"))
     if m.description:
-        rows.append(hl(e(m.description).replace("\n", "<br>"), "description"))
+        rows.append(hl("<i>Opis:</i> " + e(m.description).replace("\n", "<br>"), "description"))
     elif "description" in changed:
         rows.append(hl("(opis usunięty)", "description"))
     if m.notes:

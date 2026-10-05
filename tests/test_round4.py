@@ -680,7 +680,7 @@ def test_successful_connection_is_remembered(app):
 
 def test_values_in_fields_are_bold_with_one_left_margin():
     qss = th.build_qss(th.DARK)
-    assert "QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QComboBox QAbstractItemView { font-weight: bold; }" in qss
+    assert "QLineEdit, QSpinBox, QDoubleSpinBox, QTimeEdit, QDateEdit, QDateTimeEdit, QComboBox, QComboBox QAbstractItemView { font-weight: bold; }" in qss
     assert qss.count("padding: 2px 4px 2px 10px") == 1                  # one margin for edit fields and drop-downs
 
 
@@ -699,17 +699,19 @@ def test_device_box_empty_until_connection_and_cleared_by_ip_change(app):
     assert titles.index("Sterownik") == titles.index("Połączenie") + 1             # right under 'Połączenie'
     tab._infoRaw.emit(DEV)
     QApplication.processEvents()
-    t = tab.lbl_dev.text()
+    t = tab.device_text()
     for label, val in (("Rodzina", "S7-1500"), ("Model", "CPU 1515-2 PN"), ("Firmware", "V2.9.4"),
                        ("Nazwa stacji", "PIEC_1"), ("Nazwa modułu", "CPU_1515")):
-        assert f"{label}:&nbsp;&nbsp;</td><td><b>{val}</b>" in t
-    assert "Numer seryjny" not in t and "S C-X1" not in t                           # only the five requested fields
+        assert f"{label}: {val}" in t
+        assert tab.dev_vals[label].property("val") is True                           # the values are bold (QSS QLabel[val="true"])
+    assert "Numer seryjny" not in t and "S C-X1" not in t                           # by default only the basic rows are shown
+    assert tab.dev_vals["Numer seryjny"].text() == "S C-X1" and not tab._row_shown("Sterownik", "Numer seryjny")
     tab.ed_ip.setText("10.1.1.1")                                                   # same address: data stays
-    assert tab.lbl_dev.text() == t
+    assert tab.device_text() == t
     tab.ed_ip.setText("10.1.1.2")                                                   # another device: empty again
     assert "Brak danych sterownika" in tab.lbl_dev.text() and tab.device is None
     tab._infoRaw.emit({"method": "s7", "info": {"family": "S7-300"}})               # new connection: updated
-    assert "S7-300" in tab.lbl_dev.text() and "Model:&nbsp;&nbsp;</td><td><b>—</b>" in tab.lbl_dev.text()
+    assert "S7-300" in tab.device_text() and "Model: —" in tab.device_text()
     tab._infoRaw.emit({"method": "other", "info": {}})
     assert "Brak danych sterownika" in tab.lbl_dev.text()
     tab.shutdown()
@@ -750,14 +752,14 @@ def test_device_data_arrives_from_simulator_after_start(app):
             QApplication.processEvents()
             time.sleep(0.05)
         assert tab.device is not None and tab.device["method"] == "s7"
-        t = tab.lbl_dev.text()
+        t = tab.device_text()
         assert "S7-300" in t and "CPU 315-2 PN/DP" in t and "V3.3.0" in t and "SNAP7-SERVER" in t
         tab.stop()
         t0 = time.time()
         while time.time() - t0 < 10 and tab.state != "stopped":
             QApplication.processEvents()
             time.sleep(0.05)
-        assert tab.lbl_dev.text() == t                                              # stays after Stop
+        assert tab.device_text() == t                                               # stays after Stop
     finally:
         tab.shutdown()
         sim.stop()
@@ -781,7 +783,7 @@ def test_loading_a_recording_fills_connection_and_device_boxes(app, tmp_path):
     assert "Brak danych sterownika" in tab.lbl_dev.text()
     tab.load_recording(meta, t_us, v, cfg)
     assert tab.ed_ip.text() == "10.9.8.7" and tab.sp_rack.value() == 0 and tab.sp_slot.value() == 1
-    t = tab.lbl_dev.text()
+    t = tab.device_text()
     assert "CPU 1515-2 PN" in t and "V2.9.4" in t and "PIEC_1" in t and tab.device is not None
     assert "S7comm" in tab.lbl_method.text()                                      # the S7 signals tell the connection method
     tab.shutdown()

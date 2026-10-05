@@ -15,7 +15,7 @@ Spis treści: 1. Jak zapisywane są dane · 2. Dostępne cele zapisu i ich poró
 ### 1.1. Model: nagrania (sesje) i zdarzenia
 
 Każde naciśnięcie **REC** (przy działającym zbieraniu) tworzy **nagranie** (w kodzie: *sesję*) z unikalnym identyfikatorem.
-Opis nagrania (metadane) zawiera: **tytuł, uwagi i tagi** (nadawane przez użytkownika, p. 7.4), **właściciela** (konto Windows) i **komputer**, z którego powstało, nazwę/kartę, adres IP, nazwę konfiguracji (`{confname}`), czas początku i końca, tryb próbek, interwał pełnego stanu, znacznik kosza oraz **listę sygnałów** (nazwa, typ, adres, kolor itd. – pełna definicja, żeby przy odczycie odtworzyć wykres).
+Opis nagrania (metadane) zawiera: **tytuł, opis, uwagi i tagi** (nadawane przez użytkownika, p. 7.4; „opis” = pole `description`, w starszych nagraniach puste), **właściciela** (konto Windows) i **komputer**, z którego powstało, nazwę/kartę, adres IP, nazwę konfiguracji (`{confname}`), czas początku i końca, tryb próbek, interwał pełnego stanu, znacznik kosza oraz **listę sygnałów** (nazwa, typ, adres, kolor itd. – pełna definicja, żeby przy odczycie odtworzyć wykres).
 
 Same dane to **zdarzenia** `(czas, numer sygnału, wartość)`:
 

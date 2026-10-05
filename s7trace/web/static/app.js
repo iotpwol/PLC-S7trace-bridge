@@ -2,6 +2,8 @@
 // S7Trace web mode: login, overview (connections / controllers / users), live chart (Server-Sent Events), accounts.
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+// one rule for the whole page (as in the program): data inside a sentence - numbers with units - is bold (core/richtext.py)
+const boldNums = (s) => esc(s).replace(/(?<![\w.,:-])((?:[\u2265\u2264<>~\u00b1]\s?)?\d+(?:[.,]\d+)?(?:\s?(?:%|ms|\u00b5s|min|kb\/s|B\/s|kB|MB|Hz|s|B)(?![\w]))?)(?![\w]|[.,]\d)/g, "<b>$1</b>");
 let me = null, view = "overview", pollTimer = null, stream = null, series = null;
 const ROLE_RANK = { viewer: 0, operator: 1, admin: 2 };
 const STATE_PL = { running: "praca", connecting: "łączenie", reconnecting: "ponawianie", stopped: "zatrzymane", error: "błąd" };
@@ -193,9 +195,14 @@ function collectSignals() {
     return o;
   });
 }
-function showDevice(d) {
-  $("e-device").innerHTML = (d.device || []).map(([a, b]) => `<tr><th>${esc(a)}</th><td>${esc(b)}</td></tr>`).join("") || '<tr><td class="muted">Brak danych sterownika – pobierz je przyciskiem poniżej albo pojawią się po pierwszym połączeniu.</td></tr>';
+function showDevice(d) {            // one row per datum (each can be hidden by a right click); values are bold
+  const rows = d.device_rows || [];
+  $("e-device").innerHTML = rows.length
+    ? rows.map(([k, v]) => `<tr data-row="${esc(k)}"><th>${esc(k)}</th><td><b>${esc(v)}</b></td></tr>`).join("") + '<tr id="e-plcrow" data-row="Czas PLC"><th>Czas PLC</th><td><b></b></td></tr>'
+    : '<tr><td class="muted">Brak danych sterownika – pobierz je przyciskiem poniżej albo pojawią się po pierwszym połączeniu.</td></tr>';
+  plcErr = d.plc_error || "";
   plcClockInit(d);
+  panelApplyHidden();
 }
 $("e-readdev").addEventListener("click", async () => {
   if (!editing?.id) { $("e-devmsg").textContent = " Najpierw zapisz połączenie."; return; }
@@ -206,7 +213,7 @@ $("e-readdev").addEventListener("click", async () => {
 });
 // the clock of the PLC in the device table: read once at the connection, then the server's clock + the difference, refreshed every second;
 // a clock a day or more off is announced and can be aligned with the offset of the time axis
-let plcClock = null;
+let plcClock = null, plcErr = "";
 function plcClockInit(d) {
   plcClock = d.plc_diff === null || d.plc_diff === undefined ? null : { diff: +d.plc_diff, base: +d.server_now, tz: +d.server_tz || 0, t0: performance.now() };
   const note = $("e-plcnote"); note.hidden = true; note.innerHTML = "";
@@ -217,11 +224,11 @@ function plcClockInit(d) {
   plcClockTick();
 }
 function plcClockTick() {
-  const tb = $("e-device"); if (!tb) return; let row = $("e-plcrow");
-  if (!plcClock) { row?.remove(); return; }
+  const row = $("e-plcrow"); if (!row) return; const b = row.querySelector("td b");
+  if (!plcClock) { b.textContent = "nie odczytano"; row.title = "Nie udało się odczytać zegara sterownika" + (plcErr ? ": " + plcErr : "."); return; }
   const ms = Math.round((plcClock.base + plcClock.diff + plcClock.tz + (performance.now() - plcClock.t0) / 1000) * 1000), t = new Date(ms), p = (n) => String(n).padStart(2, "0");
-  if (!row) { row = document.createElement("tr"); row.id = "e-plcrow"; tb.appendChild(row); }
-  row.innerHTML = `<th>Czas PLC</th><td>${t.getUTCFullYear()}-${p(t.getUTCMonth() + 1)}-${p(t.getUTCDate())}\u00a0\u00a0${p(t.getUTCHours())}:${p(t.getUTCMinutes())}:${p(t.getUTCSeconds())}</td>`;
+  b.textContent = `${t.getUTCFullYear()}-${p(t.getUTCMonth() + 1)}-${p(t.getUTCDate())}\u00a0\u00a0${p(t.getUTCHours())}:${p(t.getUTCMinutes())}:${p(t.getUTCSeconds())}`;
+  row.title = "Zegar sterownika: czytany raz przy połączeniu, dalej liczony z zegara serwera i różnicy.";
 }
 setInterval(plcClockTick, 1000);
 $("e-form").addEventListener("submit", async (e) => {
@@ -288,7 +295,7 @@ function describeChart(d) {
   const t = d.trigger, r = d.rec, canRun = !!conn?.can_run;
   $("c-trig").textContent = t.enabled ? `Trigger (${t.signal}): ${TRIG_PL[t.state] || t.state}${t.note ? " · " + t.note : ""}` : "";
   $("c-rearm").hidden = !(canRun && t.state === "hold");
-  $("c-rec").hidden = !canRun; $("c-title").hidden = !canRun || r.active || r.target === "csv";
+  $("c-rec").hidden = !canRun; $("c-title").hidden = $("c-desc").hidden = !canRun || r.active || r.target === "csv";
   $("c-rec").textContent = r.active ? "■ Stop REC" : "● REC"; $("c-rec").classList.toggle("rec-on", r.active);
   $("c-recinfo").textContent = r.active ? `REC → ${r.label}${r.by ? " (" + r.by + ")" : ""}${r.error ? " · BŁĄD: " + r.error : ""}` : (r.error ? "REC: " + r.error : "");
   if (t.state === "hold" && t.x0 !== null) {
@@ -301,7 +308,7 @@ function describeChart(d) {
 $("c-rearm").addEventListener("click", async () => { try { await api(`/api/connections/${$("c-conn").value}/trigger`, { action: "rearm" }); } catch (e) { alert(e.message); } });
 $("c-rec").addEventListener("click", async () => {
   const id = $("c-conn").value, on = lastDesc?.rec?.active;
-  try { await api(`/api/connections/${id}/rec`, on ? { action: "stop" } : { action: "start", title: $("c-title").value }); } catch (e) { alert(e.message); }
+  try { await api(`/api/connections/${id}/rec`, on ? { action: "stop" } : { action: "start", title: $("c-title").value, description: $("c-desc").value }); } catch (e) { alert(e.message); }
 });
 $("c-title").addEventListener("change", async () => { if (lastDesc?.rec?.active) try { await api(`/api/connections/${$("c-conn").value}/rec`, { action: "info", title: $("c-title").value }); } catch (e) { /* ignored */ } });
 $("c-files").addEventListener("click", async () => {
@@ -422,8 +429,8 @@ async function refreshRecs() {
 const devTip = (d) => (d?.lines || []).map((l) => l[0] + ": " + l[1]).join("\n");
 function fillRecs() {
   const q = $("rv-q").value.trim().toLowerCase(), trash = $("rv-trash").checked;
-  const rows = rv.list.filter((r) => !q || [r.title, r.tags, r.notes, r.owner, r.computer, r.name, r.ip, r.conf, ...r.signals, ...r.device.lines.map((l) => l[1])].join(" ").toLowerCase().includes(q));
-  $("t-recs").tBodies[0].innerHTML = rows.map((r) => `<tr><td><b>${esc(r.title || r.conf || r.id)}</b>${r.notes ? `<div class="muted">${esc(r.notes)}</div>` : ""}</td>
+  const rows = rv.list.filter((r) => !q || [r.title, r.description, r.tags, r.notes, r.owner, r.computer, r.name, r.ip, r.conf, ...r.signals, ...r.device.lines.map((l) => l[1])].join(" ").toLowerCase().includes(q));
+  $("t-recs").tBodies[0].innerHTML = rows.map((r) => `<tr><td><b>${esc(r.title || r.conf || r.id)}</b>${r.description ? `<div>${esc(r.description)}</div>` : ""}${r.notes ? `<div class="muted">${esc(r.notes)}</div>` : ""}</td>
     <td>${new Date(r.start_us / 1000).toLocaleString("pl-PL")}</td><td>${r.recording ? "nagrywanie…" : fmtDur(r.start_us, r.end_us)}</td><td>${esc(r.owner)}</td>
     <td class="muted">${esc(r.computer)}</td><td>${esc([r.name || r.tab, r.ip].filter(Boolean).join(" · "))}</td><td title="${esc(devTip(r.device))}">${esc(r.device.title)}${r.device.serial ? `<div class="muted">${esc(r.device.serial)}</div>` : ""}</td><td class="muted">${esc(r.signals.join(", "))}</td><td>${esc(r.tags)}</td>
     <td><button onclick="loadRec('${esc(r.id)}')">Wczytaj</button> <a href="/api/recordings/csv?source=${enc($("rv-src").value)}&id=${enc(r.id)}" download>CSV</a>
@@ -441,10 +448,10 @@ window.recAct = async (id, action) => {
   if (rv.cur === id) $("rv-view").hidden = true; refreshRecs();
 };
 let editingRec = null;
-window.editRec = (id) => { const r = rv.list.find((x) => x.id === id); editingRec = id; $("rv-title").value = r.title; $("rv-notes").value = r.notes; $("rv-tags").value = r.tags; $("rv-edit").hidden = false; $("rv-title").focus(); };
+window.editRec = (id) => { const r = rv.list.find((x) => x.id === id); editingRec = id; $("rv-title").value = r.title; $("rv-desc").value = r.description || ""; $("rv-notes").value = r.notes; $("rv-tags").value = r.tags; $("rv-edit").hidden = false; $("rv-title").focus(); };
 $("rv-cancel").addEventListener("click", () => { $("rv-edit").hidden = true; });
 $("rv-save").addEventListener("click", async () => {
-  try { await api("/api/recordings", { source: $("rv-src").value, id: editingRec, action: "update", fields: { title: $("rv-title").value, notes: $("rv-notes").value, tags: $("rv-tags").value } }); }
+  try { await api("/api/recordings", { source: $("rv-src").value, id: editingRec, action: "update", fields: { title: $("rv-title").value, description: $("rv-desc").value, notes: $("rv-notes").value, tags: $("rv-tags").value } }); }
   catch (e) { alert(e.message); } refreshRecs();
 });
 window.loadRec = async (id, from, to, quiet) => {
@@ -545,7 +552,7 @@ function renderDiag(d) {
   const keys = [["last", "Chwilowo"], ["avg10", "Śr. 10 s"], ["avg60", "Śr. 60 s"], ["avg", "Śr. całość"], ["min", "Min"], ["max", "Max"], ["std", "Odch. std."], ["p95", "P95"], ["p99", "P99"]];
   const row = (title, o, extra) => `<tr><th>${title}</th>${keys.map(([k]) => `<td>${dgF(o?.[k])}</td>`).join("")}${extra || ""}</tr>`;
   let h = `<div class="dg-rate"><b style="color:${col}">${esc(d.rating)}</b> <span class="dg-bar">${bar}</span> <span class="muted">${esc(d.name)} · ${esc(d.ip)} · ${esc(d.state)}${d.message ? " · " + esc(d.message) : ""} · metoda: ${esc(d.method)}</span></div>`;
-  h += "<ul>" + d.notes.map((n) => `<li>${esc(n)}</li>`).join("") + "</ul>";
+  h += "<ul>" + d.notes.map((n) => `<li>${boldNums(n)}</li>`).join("") + "</ul>";
   if (dgPing && dgPing.id === d.id) h += `<p>Ping ICMP sterownika (z serwera, ${dgPing.at.toLocaleTimeString("pl-PL")}): <b>${dgPing.ms === null ? "brak odpowiedzi" : dgPing.ms + " ms"}</b></p>`;
   if (L) {
     h += `<h3>Czasy [ms]</h3><table class="dg"><thead><tr><th></th>${keys.map(([, t]) => `<th>${t}</th>`).join("")}</tr></thead><tbody>${row("Czas odczytu", L.lag)}${row("Okres próbkowania", L.period)}</tbody></table>`;
@@ -627,32 +634,42 @@ start();
 
 
 // ---------------------------------------------------------------- layout of the settings panel (the counterpart of the desktop one):
-// groups fold on a title click, are moved by dragging the title up / down; order / folds / bottom tab are kept per account on the server
+// groups fold on a title click, are moved by dragging the title up / down, single elements are hidden / shown by a right click;
+// order / folds / hidden elements / bottom tab are kept per account on the server (the names of the elements = panel_cfg.WEB_ROWS)
 const PANEL_GROUPS = ["Połączenie", "Sterownik", "Zakres okna wykresu", "Trigger", "Nagrywanie REC"];
-let PANEL = { order: PANEL_GROUPS.slice(), folds: {}, hidden: {}, info_tab: 0 }, panelSave = null;
-const panelRows = (f) => [...new Set([...f.querySelectorAll("[data-row]")].map((e) => e.dataset.row))];    // names of the elements of a group
+const PANEL_ROWS = {
+  "Połączenie": ["Nazwa", "Adres IP", "Rack", "Slot", "Cykl [ms]", "Sposób połączenia", "Tryb odczytu", "Kreator"],
+  "Sterownik": ["Rodzina", "Model", "Numer katalogowy (MLFB)", "Firmware", "Numer seryjny", "Nazwa stacji", "Nazwa modułu", "Producent / copyright", "Stan CPU", "Długość PDU [B]", "Czas PLC", "Pobierz dane"],
+  "Zakres okna wykresu": ["Okno czasu [s]", "Układ wykresu", "Auto Y", "Y min", "Y maks", "Punkty", "Legenda", "Oś czasu", "Offset osi"],
+  "Trigger": ["Włączony", "Sygnał", "Warunek", "A", "B", "Histereza", "Przedtrigger [s]", "Akcja", "Nazwa pliku zapisu"],
+  "Nagrywanie REC": ["Cel zapisu", "Tryb", "Nazwa pliku CSV"],
+  "System": ["Godzina systemowa", "System operacyjny", "Obciążenie CPU", "w tym ten serwer"],
+  "Sieć": ["Czas odczytu śr.", "Czas odczytu ost.", "Pominięte cykle", "Ping"],
+};
+const PANEL_DEFAULT_HIDDEN = { "Sterownik": ["Numer katalogowy (MLFB)", "Numer seryjny", "Producent / copyright", "Stan CPU", "Długość PDU [B]"] };
+let PANEL = { order: PANEL_GROUPS.slice(), folds: {}, hidden: JSON.parse(JSON.stringify(PANEL_DEFAULT_HIDDEN)), info_tab: 0 }, panelSave = null;
 function panelNormalize(raw) {
   raw = raw && typeof raw === "object" ? raw : {};
   const order = []; for (const g of raw.order || []) if (PANEL_GROUPS.includes(g) && !order.includes(g)) order.push(g);
   for (const g of PANEL_GROUPS) if (!order.includes(g)) order.push(g);
   const folds = {}; for (const g of PANEL_GROUPS) folds[g] = !!(raw.folds && raw.folds[g]);
-  const hidden = {}; for (const g of PANEL_GROUPS) { const known = panelRows(document.querySelector(`#e-folds .fold[data-fold="${g}"]`) || document.body); const want = (raw.hidden && raw.hidden[g]) || []; hidden[g] = known.filter((k) => want.includes(k)); }
+  const hidden = {}; for (const g of Object.keys(PANEL_ROWS)) { const want = Array.isArray(raw.hidden?.[g]) ? raw.hidden[g] : (PANEL_DEFAULT_HIDDEN[g] || []); hidden[g] = PANEL_ROWS[g].filter((k) => want.includes(k)); }
   const t = Number(raw.info_tab); return { order, folds, hidden, info_tab: t === 1 ? 1 : 0 };
 }
 function panelFolds() { return [...document.querySelectorAll("#e-folds .fold")]; }
+function panelApplyHidden() {
+  panelFolds().forEach((f) => f.querySelectorAll("[data-row]").forEach((e) => e.classList.toggle("row-hidden", (PANEL.hidden[f.dataset.fold] || []).includes(e.dataset.row))));
+}
 function panelApply() {
   const box = $("e-folds"); if (!box) return;
   const by = {}; panelFolds().forEach((f) => { by[f.dataset.fold] = f; });
   PANEL.order.forEach((g) => { if (by[g]) box.appendChild(by[g]); });
-  panelFolds().forEach((f) => {
-    f.classList.toggle("folded", !!PANEL.folds[f.dataset.fold]);
-    f.querySelectorAll("[data-row]").forEach((e) => e.classList.toggle("row-hidden", (PANEL.hidden[f.dataset.fold] || []).includes(e.dataset.row)));
-  });
+  panelFolds().forEach((f) => f.classList.toggle("folded", !!PANEL.folds[f.dataset.fold]));
+  panelApplyHidden();
   sideTab(PANEL.info_tab, true);
 }
-function panelCollect() {
-  PANEL = { order: panelFolds().map((f) => f.dataset.fold), folds: Object.fromEntries(panelFolds().map((f) => [f.dataset.fold, f.classList.contains("folded")])),
-    hidden: Object.fromEntries(panelFolds().map((f) => [f.dataset.fold, panelRows(f).filter((k) => f.querySelector(`[data-row="${CSS.escape(k)}"]`).classList.contains("row-hidden"))])), info_tab: PANEL.info_tab };
+function panelCollect() {            // order and folds come from the page, the hidden elements are kept in PANEL.hidden
+  PANEL = { ...PANEL, order: panelFolds().map((f) => f.dataset.fold), folds: Object.fromEntries(panelFolds().map((f) => [f.dataset.fold, f.classList.contains("folded")])) };
 }
 function panelPersist() {
   panelCollect(); clearTimeout(panelSave);
@@ -661,7 +678,7 @@ function panelPersist() {
 async function panelLoad() { try { PANEL = panelNormalize((await api("/api/prefs")).prefs.panel); } catch (e) { /* defaults */ } panelApply(); }
 (() => {
   document.querySelectorAll("#e-folds .fold").forEach((f) => {
-    const h = f.querySelector(".fold-h"); h.classList.add("grab"); h.title = "Kliknij: zwiń / rozwiń. Przeciągnij w górę lub w dół: zmień kolejność pól.";
+    const h = f.querySelector(".fold-h"); h.classList.add("grab"); h.title = "Kliknij: zwiń / rozwiń. Przeciągnij w górę lub w dół: zmień kolejność pól. Prawy przycisk: elementy pola.";
     let down = null, drag = false;
     h.addEventListener("pointerdown", (e) => { if (e.button !== 0) return; down = { x: e.clientX, y: e.clientY }; drag = false; h.setPointerCapture(e.pointerId); });
     h.addEventListener("pointermove", (e) => {
@@ -684,9 +701,8 @@ async function panelLoad() { try { PANEL = panelNormalize((await api("/api/prefs
   });
 })();
 
-
 // right click on the name of an element hides it; right click on the title of a group lists its elements (check list) and folds it
-function ctxMenu(x, y, items) {                                       // items: [label, fn | null, checked | undefined] | "-" | ["head", text]
+function ctxMenu(x, y, items) {                                       // items: [label, fn | null, checked | undefined] | "-" | [text] (a heading)
   document.querySelectorAll(".ctx-menu").forEach((m) => m.remove());
   const m = document.createElement("div"); m.className = "ctx-menu";
   items.forEach((it) => {
@@ -701,51 +717,67 @@ function ctxMenu(x, y, items) {                                       // items: 
   const close = (e) => { if (!m.contains(e.target)) { m.remove(); removeEventListener("pointerdown", close, true); } };
   addEventListener("pointerdown", close, true);
 }
-function panelSetRow(f, key, show) {
-  f.querySelectorAll(`[data-row="${CSS.escape(key)}"]`).forEach((e) => e.classList.toggle("row-hidden", !show)); panelPersist();
+function panelSetRow(group, key, show) {
+  const h = (PANEL.hidden[group] || []).filter((k) => k !== key); if (!show) h.push(key);
+  PANEL.hidden[group] = PANEL_ROWS[group].filter((k) => h.includes(k));
+  panelApplyHidden(); sideRefresh(true); panelPersist();
 }
-function panelRowItems(f) {
-  const items = panelRows(f).map((k) => { const hid = f.querySelector(`[data-row="${CSS.escape(k)}"]`).classList.contains("row-hidden"); return [k, () => panelSetRow(f, k, hid), !hid]; });
-  const any = items.some((it) => !it[2]);
-  return [...items, "-", ["Pokaż wszystkie elementy", any ? () => panelRows(f).forEach((k) => f.querySelectorAll(`[data-row="${CSS.escape(k)}"]`).forEach((e) => e.classList.remove("row-hidden"))) || panelPersist() : null]];
+function panelRowItems(group) {
+  const hid = PANEL.hidden[group] || [];
+  const items = PANEL_ROWS[group].map((k) => [k === "Pobierz dane" ? "Pobierz dane sterownika (przycisk)" : k, () => panelSetRow(group, k, hid.includes(k)), !hid.includes(k)]);
+  return [...items, "-", ["Pokaż wszystkie elementy", hid.length ? () => { PANEL.hidden[group] = []; panelApplyHidden(); sideRefresh(true); panelPersist(); } : null]];
 }
+const panelDeviceItem = (group) => (group === "Sterownik" ? [["Pobierz dane sterownika", () => $("e-readdev").click()], "-"] : []);
 $("e-folds").addEventListener("contextmenu", (e) => {
   const f = e.target.closest(".fold"); if (!f) return;
-  const row = e.target.closest("[data-row]");
+  const g = f.dataset.fold, row = e.target.closest("[data-row]");
   if (e.target.closest(".fold-h")) {
     e.preventDefault();
-    ctxMenu(e.clientX, e.clientY, [[f.classList.contains("folded") ? "Rozwiń pole" : "Zwiń pole", () => { f.classList.toggle("folded"); panelPersist(); }], "-", [`Elementy pola „${f.dataset.fold}”`], ...panelRowItems(f)]);
-  } else if (row && (e.target.closest("label") === row || row.tagName !== "LABEL") && !e.target.closest("input,select,textarea,button")) {
+    ctxMenu(e.clientX, e.clientY, [[f.classList.contains("folded") ? "Rozwiń pole" : "Zwiń pole", () => { f.classList.toggle("folded"); panelPersist(); }], "-", ...panelDeviceItem(g), [`Elementy pola „${g}”`], ...panelRowItems(g)]);
+  } else if (row && (e.target.closest("label") === row || row.tagName !== "LABEL") && !e.target.closest("input,select,textarea")) {
     e.preventDefault();
-    ctxMenu(e.clientX, e.clientY, [[`Ukryj „${row.dataset.row}”`, () => panelSetRow(f, row.dataset.row, false)], "-", [`Elementy pola „${f.dataset.fold}”`], ...panelRowItems(f)]);
+    ctxMenu(e.clientX, e.clientY, [[`Ukryj „${row.dataset.row}”`, () => panelSetRow(g, row.dataset.row, false)], "-", ...panelDeviceItem(g), [`Elementy pola „${g}”`], ...panelRowItems(g)]);
   }
 });
 
 
 // ---------------------------------------------------------------- 'System' / 'Sieć' tabs under the chart (the counterpart of the tabs at the bottom of the program's left panel)
-let sideTimer = null, sideBusy = false, sideNet = null;
+let sideTimer = null, sideBusy = false, sideLast = null;
 function sideTab(n, silent) {
   PANEL.info_tab = n === 1 ? 1 : 0;
   document.querySelectorAll("#c-side .side-tabs button").forEach((b) => b.classList.toggle("on", Number(b.dataset.tab) === PANEL.info_tab));
   if (!silent) { panelPersist(); sideRefresh(); }
 }
 document.querySelectorAll("#c-side .side-tabs button").forEach((b) => b.addEventListener("click", () => sideTab(Number(b.dataset.tab))));
-async function sideRefresh() {
-  if (view !== "chart" || sideBusy) return; sideBusy = true;
-  const rows = (r) => "<table>" + r.map(([k, v]) => `<tr><td>${k}:</td><td><b>${esc(String(v))}</b></td></tr>`).join("") + "</table>";
+function sideRender() {                        // rows that are not hidden; each row can be hidden by a right click
+  if (!sideLast) return;
+  const group = sideLast.group, hid = PANEL.hidden[group] || [];
+  $("c-side-body").innerHTML = sideLast.rows
+    ? "<table>" + sideLast.rows.filter(([k]) => !hid.includes(k)).map(([k, v]) => `<tr data-row="${esc(k)}"><td>${esc(k)}:</td><td><b>${esc(String(v))}</b></td></tr>`).join("") + "</table>"
+    : '<i class="muted">Brak połączenia ze sterownikiem – parametry sieci pojawią się po Start.</i>';
+}
+async function sideRefresh(redrawOnly) {
+  if (view !== "chart" || (sideBusy && !redrawOnly)) return;
+  if (redrawOnly) { sideRender(); return; }
+  sideBusy = true;
   try {
     if (PANEL.info_tab === 0) {
       const d = await api("/api/sysinfo");
-      $("c-side-body").innerHTML = rows([["Godzina systemowa serwera", d.time], ["Obciążenie CPU serwera", d.cpu === null ? "—" : d.cpu.toFixed(0) + " %"], ["w tym ten serwer (S7Trace)", d.app_cpu === null || d.app_cpu === undefined ? "—" : d.app_cpu.toFixed(1) + " %"]]);
+      sideLast = { group: "System", rows: [["Godzina systemowa", d.time], ["System operacyjny", d.os || "—"], ["Obciążenie CPU", d.cpu === null ? "—" : d.cpu.toFixed(0) + " %"],
+        ["w tym ten serwer", d.app_cpu === null || d.app_cpu === undefined ? "—" : d.app_cpu.toFixed(1) + " %"]] };
     } else {
       const id = $("c-conn").value; const d = id ? await api(`/api/connections/${id}/diag?ping=1`) : null; const L = d && d.link;
-      $("c-side-body").innerHTML = L ? rows([["Czas odczytu śr.", `${dgF(L.lag?.avg)} ms (n=${L.samples})`], ["Czas odczytu ost.", `${dgF(L.lag?.last)} ms`],
-        ["Pominięte cykle", `${L.missed} (${dgF(L.missed_pct)}%)`], ["Ping (z serwera)", d.ping_ms === null || d.ping_ms === undefined ? "brak odpowiedzi" : d.ping_ms + " ms"]])
-        : '<i class="muted">Brak połączenia ze sterownikiem – parametry sieci pojawią się po Start.</i>';
+      sideLast = { group: "Sieć", rows: L ? [["Czas odczytu śr.", `${dgF(L.lag?.avg)} ms (n=${L.samples})`], ["Czas odczytu ost.", `${dgF(L.lag?.last)} ms`],
+        ["Pominięte cykle", `${L.missed} (${dgF(L.missed_pct)}%)`], ["Ping", d.ping_ms === null || d.ping_ms === undefined ? "brak odpowiedzi" : d.ping_ms + " ms"]] : null };
     }
+    sideRender();
   } catch (e) { /* the next tick tries again */ }
   sideBusy = false;
 }
+$("c-side").addEventListener("contextmenu", (e) => {
+  const g = PANEL.info_tab === 1 ? "Sieć" : "System", row = e.target.closest("tr[data-row]"); e.preventDefault();
+  ctxMenu(e.clientX, e.clientY, [...(row ? [[`Ukryj „${row.dataset.row}”`, () => panelSetRow(g, row.dataset.row, false)], "-"] : []), [`Elementy: ${g}`], ...panelRowItems(g)]);
+});
 sideTimer = setInterval(() => { if (view === "chart") sideRefresh(); }, 1500);
 
 

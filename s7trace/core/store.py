@@ -241,7 +241,7 @@ def norm_session(d: dict) -> dict:
     dl = num(out.get("deleted_us"), int)
     out["deleted_us"] = dl if dl else None                     # 0 / empty = not deleted
     out["keyframe_min"] = num(out.get("keyframe_min"), float, 0.0)
-    for k in ("name", "title", "notes", "tags", "owner", "computer", "ip", "tab", "conf", "mode"):
+    for k in ("name", "title", "description", "notes", "tags", "owner", "computer", "ip", "tab", "conf", "mode"):
         v = out.get(k)
         out[k] = "" if v is None else str(v)
     out["device"] = _device_back(out.get("device"))
@@ -476,10 +476,10 @@ def _td(rows):
 
 
 SESSION_COLS = ("id", "name", "start_us", "end_us", "ip", "tab", "conf", "mode", "signals", "fields",
-                "title", "notes", "tags", "owner", "computer", "keyframe_min", "deleted_us", "device")
+                "title", "notes", "tags", "owner", "computer", "keyframe_min", "deleted_us", "device", "description")
 EXTRA_COLS = {"title": "TEXT", "notes": "TEXT", "tags": "TEXT", "owner": "TEXT", "computer": "TEXT",
-              "keyframe_min": "REAL", "deleted_us": "INTEGER", "device": "TEXT"}
-EDITABLE = ("title", "notes", "tags", "deleted_us", "end_us", "device")
+              "keyframe_min": "REAL", "deleted_us": "INTEGER", "device": "TEXT", "description": "TEXT"}
+EDITABLE = ("title", "description", "notes", "tags", "deleted_us", "end_us", "device")
 
 
 def _meta_json(meta: dict) -> dict:
@@ -526,11 +526,11 @@ class SqliteBackend(Backend):
         self.sid = meta.get("id") or new_session_id()
         m = _meta_json(meta)
         self.db.execute("INSERT OR REPLACE INTO sessions(id,name,start_us,end_us,ip,tab,conf,mode,signals,fields,"
-                        "title,notes,tags,owner,computer,keyframe_min,deleted_us,device) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        "title,notes,tags,owner,computer,keyframe_min,deleted_us,device,description) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (self.sid, m.get("name", ""), m["start_us"], None, m.get("ip", ""), m.get("tab", ""),
                          m.get("conf", ""), m.get("mode", "changes"), m["signals"], m["fields"], m.get("title", ""),
                          m.get("notes", ""), m.get("tags", ""), m.get("owner", ""), m.get("computer", ""),
-                         m.get("keyframe_min", 0.0), None, m["device"]))
+                         m.get("keyframe_min", 0.0), None, m["device"], m.get("description", "")))
         self.db.commit()
         return self.sid
 
@@ -648,7 +648,7 @@ def session_line(measurement: str, meta: dict) -> str:
     f = [f"name={_esc_str(m.get('name', ''))}", f"start_us={int(m['start_us'])}i", f"ip={_esc_str(m.get('ip', ''))}",
          f"tab={_esc_str(m.get('tab', ''))}", f"conf={_esc_str(m.get('conf', ''))}", f"mode={_esc_str(m.get('mode', ''))}",
          f"signals={_esc_str(m['signals'])}", f"fields={_esc_str(m['fields'])}",
-         f"title={_esc_str(m.get('title', ''))}", f"notes={_esc_str(m.get('notes', ''))}", f"tags={_esc_str(m.get('tags', ''))}",
+         f"title={_esc_str(m.get('title', ''))}", f"description={_esc_str(m.get('description', ''))}", f"notes={_esc_str(m.get('notes', ''))}", f"tags={_esc_str(m.get('tags', ''))}",
          f"owner={_esc_str(m.get('owner', ''))}", f"computer={_esc_str(m.get('computer', ''))}",
          f"keyframe_min={float(m.get('keyframe_min') or 0.0)!r}", "deleted_us=0i", f"device={_esc_str(m['device'])}"]
     return (f"{_esc_meas(measurement + '_sessions')},session={_esc_key(meta['id'])} {','.join(f)} "
@@ -659,7 +659,7 @@ def session_update_line(measurement: str, session: str, start_us: int, fields: d
     """Rewrites some fields of the session point (same series and time: InfluxDB merges the fields)."""
     f = []
     for k, v in fields.items():
-        if k in ("title", "notes", "tags", "device"):
+        if k in ("title", "description", "notes", "tags", "device"):
             f.append(f"{k}={_esc_str(v or '')}")
         elif k in ("deleted_us", "end_us"):
             f.append(f"{k}={int(v or 0)}i")
@@ -1038,7 +1038,7 @@ class TimescaleBackend(Backend):
         cur.execute(f"CREATE TABLE IF NOT EXISTS {self.ts}(id text PRIMARY KEY, name text, start_us bigint,"
                     " end_us bigint, ip text, tab text, conf text, mode text, signals text, fields text)")
         for col, typ in (("title", "text"), ("notes", "text"), ("tags", "text"), ("owner", "text"), ("computer", "text"),
-                         ("keyframe_min", "double precision"), ("deleted_us", "bigint"), ("device", "text")):
+                         ("keyframe_min", "double precision"), ("deleted_us", "bigint"), ("device", "text"), ("description", "text")):
             cur.execute(f"ALTER TABLE {self.ts} ADD COLUMN IF NOT EXISTS {col} {typ}")
         cur.execute(f"CREATE TABLE IF NOT EXISTS {self.t}(time timestamptz NOT NULL, session text NOT NULL,"
                     " sig integer NOT NULL, value double precision)")
@@ -1077,11 +1077,12 @@ class TimescaleBackend(Backend):
         m = _meta_json(meta)
         cur = self.conn.cursor()
         cur.execute(f"INSERT INTO {self.ts}(id,name,start_us,end_us,ip,tab,conf,mode,signals,fields,title,notes,tags,owner,"
-                    "computer,keyframe_min,deleted_us,device) VALUES(%s,%s,%s,NULL,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL,%s)"
+                    "computer,keyframe_min,deleted_us,device,description) VALUES(%s,%s,%s,NULL,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL,%s,%s)"
                     " ON CONFLICT (id) DO NOTHING",
                     (self.sid, m.get("name", ""), m["start_us"], m.get("ip", ""), m.get("tab", ""), m.get("conf", ""),
                      m.get("mode", "changes"), m["signals"], m["fields"], m.get("title", ""), m.get("notes", ""),
-                     m.get("tags", ""), m.get("owner", ""), m.get("computer", ""), m.get("keyframe_min", 0.0), m["device"]))
+                     m.get("tags", ""), m.get("owner", ""), m.get("computer", ""), m.get("keyframe_min", 0.0), m["device"],
+                     m.get("description", "")))
         self.conn.commit()
         return self.sid
 
@@ -1360,7 +1361,8 @@ class DbRecorder:
         self.fields = unique_fields([s.name for s in signals])
         meta = {"id": new_session_id(), "name": meta_extra.get("name", ""), "start_us": to_us(start_wall, max(float(t0), 0.0)),
                 "ip": meta_extra.get("ip", ""), "tab": meta_extra.get("tab", ""), "conf": meta_extra.get("conf", ""),
-                "title": meta_extra.get("title", ""), "notes": meta_extra.get("notes", ""), "tags": meta_extra.get("tags", ""),
+                "title": meta_extra.get("title", ""), "description": meta_extra.get("description", ""), "notes": meta_extra.get("notes", ""),
+                "tags": meta_extra.get("tags", ""),
                 "owner": meta_extra.get("owner") or current_user(), "computer": meta_extra.get("computer") or platform.node(), "keyframe_min": self._key_s / 60.0,
                 "mode": cfg.mode, "signals": [s.to_dict() for s in signals], "fields": self.fields,
                 "device": _device_back(meta_extra.get("device"))}
@@ -1416,9 +1418,9 @@ class DbRecorder:
             self.dropped += 1
             self.q.put_nowait(row)
 
-    def update_info(self, title=None, notes=None, tags=None) -> None:
-        """Title / notes / tags of the recording being written (from the GUI thread; applied by the writer thread)."""
-        kw = {k: v for k, v in (("title", title), ("notes", notes), ("tags", tags)) if v is not None}
+    def update_info(self, title=None, notes=None, tags=None, description=None) -> None:
+        """Title / description / notes / tags of the recording being written (from the GUI thread; applied by the writer thread)."""
+        kw = {k: v for k, v in (("title", title), ("description", description), ("notes", notes), ("tags", tags)) if v is not None}
         if not kw:
             return
         self._meta.update(kw)                                    # also used when the connection has to be opened later
