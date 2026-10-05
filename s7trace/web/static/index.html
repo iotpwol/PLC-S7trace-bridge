@@ -269,12 +269,18 @@
 </dialog>
 <dialog id="mk-look">
   <form method="dialog">
-    <h3>Wygląd znaczników – grubość linii</h3>
-    <p class="muted">Dotyczy znaczników bez własnej grubości (w oknie znacznika: 0 = wg ustawień). Ustawienia są zapamiętywane w tej przeglądarce.</p>
+    <h3>Wygląd znaczników</h3>
+    <p class="muted">Grubość linii dotyczy znaczników bez własnej grubości (w oknie znacznika: 0 = wg ustawień). Ustawienia są zapamiętywane na koncie.</p>
     <label>Znacznik dla wszystkich przebiegów [px] <input id="mkw-width_all" type="number" step="1"></label>
     <label>Wybrane przebiegi [px] <input id="mkw-width_sel" type="number" step="1"></label>
     <label>Pozostałe przebiegi – cienka prowadnica [px] <input id="mkw-width_other" type="number" step="1"></label>
     <label>Linia podświetlona po najechaniu myszą [px] <input id="mkw-width_hover" type="number" step="1"></label>
+    <h4>Znaczniki REC</h4>
+    <label><input id="mkw-rec_show" type="checkbox"> Rysuj „Start REC (n)” i „Stop REC (n)” na wykresie</label>
+    <label>Kolor linii REC <input id="mkw-rec_color" type="color"></label>
+    <label>Grubość linii REC [px] <input id="mkw-rec_width" type="number" step="1"></label>
+    <label>Rodzaj linii REC <select id="mkw-rec_style"><option value="solid">ciągła</option><option value="dash">kreskowana</option><option value="dot">kropkowana</option><option value="dashdot">kreska-kropka</option></select></label>
+    <label>Obszar „Manual REC”: nieprzezroczystość [%] <input id="mkw-rec_opacity" type="number" step="1"></label>
     <div class="inline"><button type="button" id="mkw-default">Domyślne</button><button type="button" id="mkw-ok">OK</button><button type="button" id="mkw-cancel">Anuluj</button></div>
   </form>
 </dialog>
@@ -282,6 +288,8 @@
   <form method="dialog">
     <h3 id="mkp-h">Zapisz znaczniki</h3>
     <p id="mkp-intro"></p>
+    <div id="mkp-man" hidden><p>Obszary „Manual REC” – zaznaczone zostaną zapisane jako osobne nagrania (z bufora serwera):</p>
+      <table id="mkp-mt"><thead><tr><th>Zapisać</th><th>Obszar</th><th>Od</th><th>Do (czas trwania)</th></tr></thead><tbody></tbody></table></div>
     <div style="max-height:50vh;overflow:auto"><table id="mkp-t"><thead><tr><th>Zmiana</th><th>Znacznik</th><th>Czas</th><th>Szczegóły</th></tr></thead><tbody></tbody></table></div>
     <div class="inline"><button type="button" id="mkp-save">Zapisz znaczniki</button><button type="button" id="mkp-discard" hidden>Odrzuć zmiany</button>
       <button type="button" id="mkp-cancel">Anuluj</button><span id="mkp-error" class="error"></span></div>
@@ -291,6 +299,7 @@
 <div id="bubble" hidden></div>
 <script src="/static/chartx.js"></script>
 <script src="/static/markers.js"></script>
+<script src="/static/recmarks.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

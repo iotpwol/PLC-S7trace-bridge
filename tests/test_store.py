@@ -300,10 +300,11 @@ class FakeInflux:
                         outer.put(parse_lp(ln))
                     return self._send(204, b"")
                 if u.path == "/api/v2/delete":
-                    pred = json.loads(body)["predicate"]
-                    m = re.search(r'_measurement="([^"]+)"(?: AND session="([^"]+)")?', pred)
+                    req = json.loads(body)
+                    m = re.search(r'_measurement="([^"]+)"(?: AND session="([^"]+)")?', req["predicate"])
+                    stop = store.rfc3339_to_us(req["stop"]) * 1000                  # points older than `stop` only
                     outer.points = [p for p in outer.points
-                                    if not (p[0] == m.group(1) and (m.group(2) is None or p[1].get("session") == m.group(2)))]
+                                    if not (p[0] == m.group(1) and (m.group(2) is None or p[1].get("session") == m.group(2)) and p[3] < stop)]
                     return self._send(204, b"")
                 if u.path == "/query":
                     if "CREATE DATABASE" in q["q"]:
@@ -311,6 +312,10 @@ class FakeInflux:
                     if q["q"].startswith("DROP MEASUREMENT"):
                         name = re.search(r'"([^"]+)"', q["q"]).group(1)
                         outer.points = [p for p in outer.points if p[0] != name]
+                        return self._send(200, '{"results":[{"statement_id":0}]}')
+                    if q["q"].startswith("DELETE FROM"):                            # DELETE FROM "m" WHERE "session"='x' AND time < N
+                        m = re.search(r"FROM \"([^\"]+)\" WHERE \"session\"='([^']+)' AND time < (\d+)", q["q"])
+                        outer.points = [p for p in outer.points if not (p[0] == m.group(1) and p[1].get("session") == m.group(2) and p[3] < int(m.group(3)))]
                         return self._send(200, '{"results":[{"statement_id":0}]}')
                     if q["q"].startswith("DROP SERIES"):
                         m = re.search(r"FROM \"([^\"]+)\" WHERE \"session\"='([^']+)'", q["q"])

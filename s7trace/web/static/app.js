@@ -404,6 +404,7 @@ function drawChart(cv, ds, t0, t1, o) {
   cv._tags = [];
   if (LEGSTYLE === "labels") cxTags(g, cv, ds, lanes, colors, pad, H);                // a translucent box with the name beside every signal, right of the Y axis
   if (o.mk) mkPaint(g, cv, o.mk, cv._geo, lanes);                                    // markers (bookmarks) over the curves
+  if (o.mk && o.mk.kind === "live") recmPaint(g, cv, ds, cv._geo);                    // Start / Stop REC lines, Manual REC areas, the ghost of a moved Start REC
   g.strokeStyle = "#ff4d4d"; g.fillStyle = "#ff4d4d"; g.lineWidth = 1; g.setLineDash([5, 4]);
   for (const t of o.markers || []) { if (t < t0 || t > t1) continue; const x = X(t); g.beginPath(); g.moveTo(x, pad.t); g.lineTo(x, H - pad.b); g.stroke(); g.fillText("T", x + 3, H - pad.b - 4); }
   g.setLineDash([]); g.fillStyle = "#aaa";
@@ -508,7 +509,7 @@ function showUserFrozen(d, x0, x1) {
 $("c-live").addEventListener("click", () => { userFrozen = false; liveView = null; frozen = null; frozenKey = null; $("c-live").hidden = true; loadLiveMarks(); draw(); });
 $("c-addmark").addEventListener("click", () => { const ds = frozen || series; if (!ds.start_us || !canMark()) return alert(canMark() ? "Brak danych – uruchom połączenie." : "Rola „podgląd” nie zakłada znaczników.");
   mkAdd(MK.live, mkBlank(Math.round(ds.start_us + (ds.t.at(-1) ?? 0) * 1e6))); });
-mkAttach(MK.live); mkAttach(MK.rec); initMarkersView();
+recmAttach($("canvas")); mkAttach(MK.live); mkAttach(MK.rec); initMarkersView();
 mkSearchPanel($("c-search-box"), { names: () => series?.names || [], startUs: () => (frozen || series).start_us || 0, run: (b) => api("/api/search", { conn: $("c-conn").value, ...b }),
   pick: async (h, quiet) => { const pad = Math.max(h.duration * 0.3, 10), f = h.t0 - pad, t = h.t1 + pad, d = await api(`/api/connections/${$("c-conn").value}/series?from=${f}&to=${t}`);
     if (!d.t.length) { if (quiet) return false; return alert("Ten moment jest poza danymi, które połączenie trzyma w pamięci."); } showUserFrozen(d, f, t); },

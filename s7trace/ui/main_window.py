@@ -243,7 +243,7 @@ class MainWindow(QMainWindow):
         mk.addSeparator()
         self._act(mk, "Wyszukiwarka danych (po wartościach i godzinach)…", lambda: self._cur(lambda t: t.mk.open_search()), "Ctrl+F")
         mk.addSeparator()
-        self._act(mk, "Wygląd znaczników (grubość linii)…", self.edit_marker_look)
+        self._act(mk, "Wygląd znaczników (linie, REC)…", self.edit_marker_look)
         mk.addSeparator()
         hint = mk.addAction("Znacznik w wybranym miejscu (także różnicy poziomu): prawy przycisk myszy na wykresie")
         hint.setEnabled(False)

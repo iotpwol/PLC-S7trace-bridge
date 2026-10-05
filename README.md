@@ -52,6 +52,9 @@ Typy: BOOL, BYTE, SINT, USINT, WORD, INT, UINT, DWORD, DINT, UDINT, REAL, LREAL.
   znaczników, dymek przy najechaniu, przeciąganie myszą, ukrywanie nazwy na wykresie. Zmiany są robocze do polecenia **Zapisz znaczniki** (okno
   z wykazem nowych / zmienionych / usuwanych; przypomnienie przy zamykaniu wykresu). Znaczniki trzymane są w osobnej bazie SQLite, wyszukiwarka
   (menu **Znaczniki**, rząd przycisków „Znaczniki:” pod wykresem, Ctrl+F) znajduje sygnały po wartościach i godzinach w bieżących danych albo w nagraniu z bazy. Szczegóły: [BAZY_DANYCH.md](BAZY_DANYCH.md), rozdz. 13 (pełny opis: rodzaje, parametry, obsługa, zapis, wyszukiwarka) i [WEB.md](WEB.md), rozdz. 19.
+* **Znaczniki REC** (desktop i Web): wykres sam rysuje numerowane linie **Start REC (n)** / **Stop REC (n)** (kolor, grubość i rodzaj linii w *Znaczniki → Wygląd znaczników…*, można wyłączyć);
+  prawy przycisk na wykresie → **Manual Start REC / Manual Stop REC** zaznacza obszar już zebranych danych, który **Zapis Manual REC** (albo okno *Zapisz znaczniki*) zapisuje jako osobne nagranie;
+  **Przesuń Start REC** (pulsujący „duch”) zmienia początek nagrania w bazie: dopisuje brakujące dane z bufora albo usuwa starsze (SQLite, InfluxDB, TimescaleDB; nie CSV).
 * Zakładki = niezależne połączenia (dół okna, `+` dodaje). Kropka przy nazwie: zielona = praca, szara = stop.
 * Wykres przesuwa się w czasie rzeczywistym: najnowsze próbki po prawej, szerokość = „Okno czasu” (wpisana w sekundach albo wybrana z listy: 5 s … 24 godz.).
   Przeciągnięcie / zoom myszą wstrzymuje widok (zbieranie trwa); „Wznów” wraca do trybu na żywo.

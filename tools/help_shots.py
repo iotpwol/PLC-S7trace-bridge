@@ -113,6 +113,7 @@ def run(app, win, tab, sim, *, tmp, **helpers) -> None:
     step("chart", chart)
     step("trigger", trigger_state)
     step("markers", markers)
+    step("rec marks", rec_marks)
     step("status bar", status_bar)
     step("recordings", recordings)
     step("buttons states", button_states)
@@ -378,6 +379,63 @@ def markers():
     pump(4)
 
 
+
+
+# ------------------------------------------------------------------------------------------------ REC marks
+def rec_marks():
+    """Start / Stop REC lines (two real recordings into a SQLite file), a Manual REC area and the ghost of a Start REC being moved."""
+    tab, win = H["tab"], H["win"]
+    from PySide6.QtCore import QPoint
+    from s7trace.core import rec_marks as rmk
+    from s7trace.core.store import StoreConfig
+    from s7trace.ui.markers_ui import PendingDialog
+    ctl = tab.mk
+    ctl.draft.discard()
+    ctl._changed()
+    old_store, old_kind = tab.cfg.store, tab.cb_rkind.currentData()
+    tab.cfg.store = StoreConfig(kind="sqlite", sqlite_path=os.path.join(H["tmp"], "rec_marks.db"), mode="changes", title_ask="off")
+    tab.cb_rkind.setCurrentIndex(tab.cb_rkind.findData("sqlite"))
+    ctl.rec.new_run()
+    for _ in range(2):                                                   # two recordings: Start REC (1) .. Stop REC (1), Start REC (2) .. Stop REC (2)
+        tab.btn_rec.setChecked(True)
+        pump(14, 100)
+        tab.btn_rec.setChecked(False)
+        pump(8, 100)
+    tab.btn_rec.setChecked(True)
+    pump(10, 100)
+    x0, x1 = tab.plot.view_range()
+    last = tab.buffer.last_time()
+    a = ctl.rec.m.auto
+    ctl.rec.place(max(x0, a[0]["t0"] - 3.0))                             # a Manual REC area before the first recording
+    ctl.rec.place(max(x0, a[0]["t0"] - 3.0) + 1.6)
+    pump(10, 80)
+    rect(win, [tab.plot], "wykres_rec_znaczniki", pad=0)
+    named("menu_rec_start")
+    ctl.rec.marker_menu(rmk.pid(rmk.AUTO_START, 1), QPoint(500, 400))
+    named("menu_manual_rec")
+    ctl.rec.marker_menu(rmk.pid(rmk.MANUAL, 1), QPoint(500, 400))
+    named("menu_wykres_manual")
+    ctl.chart_menu(last - 1.0, QPoint(500, 400))
+    pd = PendingDialog([], "save", win, ctl.rec.manual_rows())
+    dlg_shot(pd, "okno_zapis_rec")
+    ctl.rec.begin_ghost(2)                                               # the pulsing twin of Start REC (2) is dragged to the left
+    tab.plot.ghost.setValue(max(tab.plot.view_range()[0] + 0.5, a[1]["t0"] - 1.3))
+    ctl.rec._ghost_moved(float(tab.plot.ghost.value()))
+    tab.plot._ghost_on = False
+    tab.plot._ghost_pulse()
+    pump(8, 80)
+    rect(win, [tab.plot], "wykres_rec_duch", pad=0)
+    named("menu_rec_duch")
+    ctl.rec._ghost_menu(QPoint(500, 400))
+    ctl.rec.cancel_ghost()
+    tab.btn_rec.setChecked(False)
+    pump(8, 100)
+    for m in list(ctl.rec.m.manual):
+        ctl.rec.remove(m["n"])
+    ctl.rec.new_run()
+    tab.cfg.store = old_store
+    tab.cb_rkind.setCurrentIndex(max(tab.cb_rkind.findData(old_kind), 0))
+    pump(6, 80)
 
 
 # ------------------------------------------------------------------------------------------------ status bar

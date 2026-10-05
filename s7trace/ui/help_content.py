@@ -146,7 +146,7 @@ programu</b> (menu, pola, okna) i opis: co to jest, do czego służy, jak się z
         ("Zapisz znaczniki… (Ctrl+Shift+S)", "Zapisuje do bazy znaczników wszystkie zmiany robocze (nowe, zmienione, usunięte) w jednej operacji."),
         ("Wyszukiwarka danych (po wartościach i godzinach)… (Ctrl+F)", "Wyszukiwarka wartości w danych wykresu albo w nagraniu z bazy."),
         ("Znacznik poziomu sygnału (kliknij na wykresie; maks. 2 poziome kursory)", "Przełącza tryb stawiania poziomych kursorów wartości (rozdział „Wykres główny”)."),
-        ("Wygląd znaczników (grubość linii)…", "Grubość linii znaczników (cztery wartości) – część motywu interfejsu."),
+        ("Wygląd znaczników (linie, REC)…", "Grubość linii znaczników (cztery wartości) oraz wygląd znaczników REC: włączenie, kolor, grubość, rodzaj linii, przezroczystość obszaru „Manual REC” – część motywu interfejsu."),
     ]) + """
 <p>Znaczniki, ich zapis roboczy i wyszukiwarka są opisane w rozdziale „Znaczniki i wyszukiwanie w danych”.</p>
 """))
@@ -472,9 +472,35 @@ Pole wyszukiwania filtruje po tytule, opisie, uwagach, autorze, grupie i kolorze
 <p>Wyszukiwarka wartości: sygnały o zadanej wartości, w przedziale, ze zmianą albo zboczem (do 3 warunków naraz – <b>wszystkie</b> muszą być spełnione w tej samej chwili; opcjonalnie minimalny czas trwania)
 w danych bieżącego wykresu albo w wybranym nagraniu z bazy. Wynik pokazuje początek, czas trwania i wartości; „Pokaż” przechodzi na wykresie do wyniku, „Dodaj znacznik…” zakłada w tym miejscu znacznik.
 Można też przejść do wpisanej daty i godziny.</p>
+<h3>Znaczniki REC: Start REC, Stop REC, Manual REC</h3>
+<p>Oprócz zwykłych znaczników wykres sam zaznacza, <b>kiedy w przebiegu włączono i wyłączono nagrywanie</b>. W jednym przebiegu (od Start do Stop połączenia) REC można włączać wiele razy,
+dlatego linie są numerowane: <b>Start REC (1)</b>, <b>Stop REC (1)</b>, <b>Start REC (2)</b>, <b>Stop REC (2)</b> i tak dalej. Początkowy kolor to kolor tła załączonego przycisku REC (pomarańczowy);
+kolor, grubość i rodzaj linii oraz samo włączenie tych znaczników ustawiasz w <b>Znaczniki → Wygląd znaczników…</b>. Znaczniki REC nie trafiają do pliku znaczników – wynikają z przebiegu nagrań
+i znikają po ponownym Start.</p>
+""" + _img("wykres_rec_znaczniki", "Linie Start / Stop REC (numerowane) i ręczny obszar „Manual REC” (z lewej, półprzezroczysty)") + """
+<h4>Manual REC – nagranie z już zebranych danych</h4>
+<p>Gdy nagrywanie włączono za późno, a potrzebny fragment jest już na wykresie: zatrzymaj wykres (<b>Pauza</b>), przesuń go w potrzebne miejsce, kliknij prawym przyciskiem i wybierz
+<b>Manual Start REC (n) tutaj</b>; potem w drugim miejscu <b>Manual Stop REC (n) tutaj</b>. Między liniami pojawia się półprzezroczysty obszar (podobny do znacznika zakresu czasu). Prawy przycisk na obszarze
+otwiera menu: <b>Zapis Manual REC (n)</b> zapisuje ten fragment danych z bufora wykresu jako <b>osobne nagranie</b> (do bazy wybranej w panelu REC albo do pliku CSV), <b>Zmień pozycję</b> pozwala przeciągać brzegi, <b>Usuń</b> kasuje obszar.
+Obszarów może być wiele naraz.</p>
+""" + _img("menu_wykres_manual", "Prawy przycisk na pustym wykresie: Manual Start REC / Manual Stop REC") + _img("menu_manual_rec", "Prawy przycisk na obszarze Manual REC") + """
+<p>Obszary czekające na zapis liczą się do przycisku <b>Zapisz znaczniki (n)</b>. Okno zapisu wylicza je w osobnej tabeli z polami wyboru – zaznaczone obszary zostaną zapisane jako nagrania
+(to samo okno pokazuje się przy zamykaniu karty).</p>
+""" + _img("okno_zapis_rec", "Okno „Zapisz znaczniki” z obszarem Manual REC do zapisania") + """
+<h4>Przesunięcie Start REC (zmiana początku nagrania)</h4>
+<p>Jeśli nagrywanie już trwa (albo się skończyło), a początek miał być wcześniej lub później: kliknij prawym przyciskiem linię <b>Start REC (n)</b> i wybierz <b>Przesuń Start REC (n)…</b>.
+Wykres się zatrzymuje, a obok linii pojawia się jej <b>pulsujący „duch”</b> (zmienia kolor na biały i z powrotem). Przeciągnij go w nowe miejsce, kliknij na nim prawym przyciskiem i wybierz <b>Zmień Start REC (n)</b>.</p>
+""" + _img("menu_rec_start", "Menu linii Start REC (n)") + _img("wykres_rec_duch", "Pulsujący duch znacznika Start REC (2) przeciągnięty w lewo") + _img("menu_rec_duch", "Menu ducha") + """
+<ul>
+<li><b>Wcześniej</b>: brakujący fragment (od nowego początku do dotychczasowego) jest <b>dopisywany do nagrania w bazie</b> z bufora wykresu – nagranie od razu jest dłuższe. Ogranicza to wielkość bufora: dalej niż sięgają zebrane dane nagrania nie da się uzupełnić.</li>
+<li><b>Później</b>: dane nagrania sprzed nowego początku są <b>usuwane z bazy</b> (program prosi o potwierdzenie – tego nie da się cofnąć); stan sygnałów w nowym początku zostaje zachowany.</li>
+<li>Działa dla <b>baz danych</b> (SQLite, InfluxDB, TimescaleDB) – także w trakcie nagrywania. Plik <b>CSV</b> jest zapisywany na bieżąco i nie da się go uzupełnić z przodu, więc dla CSV pozycja jest wyłączona
+(Manual REC do CSV działa, bo tworzy nowy plik). W TimescaleDB usuwanie z bardzo starych, skompresowanych fragmentów może wymagać nowszej wersji bazy.</li>
+</ul>
 <h3>Wygląd linii</h3>
 """ + _img("okno_wyglad_znacznikow") + """
-<p>Menu Znaczniki → Wygląd znaczników…: cztery grubości linii. Grubość 0 w znaczniku oznacza „z ustawień”. Ustawienia są częścią motywu interfejsu (zapisują się w pliku konfiguracji interfejsu).</p>
+<p>Menu Znaczniki → Wygląd znaczników…: cztery grubości linii (grubość 0 w znaczniku oznacza „z ustawień”) oraz wygląd znaczników REC: czy rysować Start / Stop REC, kolor, grubość i rodzaj linii, nieprzezroczystość obszaru Manual REC.
+Ustawienia są częścią motywu interfejsu (zapisują się w pliku konfiguracji interfejsu; w Web – na koncie).</p>
 """))
 
     # ------------------------------------------------------------------------------------------------------------ 21

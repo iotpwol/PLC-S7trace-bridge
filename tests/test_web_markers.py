@@ -247,9 +247,10 @@ def test_web_recording_starts_when_rec_is_pressed(srv):
 
 def test_marker_look_is_kept_per_account_on_the_server(srv):
     ola, ala = _user(srv, "ola"), _user(srv, "ala")
-    assert ola.get("/api/prefs")[1]["prefs"]["marker_look"] == {"width_all": 2, "width_sel": 3, "width_other": 1, "width_hover": 4}
+    base = {"width_all": 2, "width_sel": 3, "width_other": 1, "width_hover": 4}
+    assert {k: v for k, v in ola.get("/api/prefs")[1]["prefs"]["marker_look"].items() if k in base} == base
     st_, d = ola.post("/api/prefs", {"marker_look": {"width_all": 5, "width_sel": 99, "width_other": "x", "width_hover": 9}})
-    assert st_ == 200 and d["prefs"]["marker_look"] == {"width_all": 5, "width_sel": 12, "width_other": 1, "width_hover": 9}   # validated
+    assert st_ == 200 and {k: v for k, v in d["prefs"]["marker_look"].items() if k in base} == {"width_all": 5, "width_sel": 12, "width_other": 1, "width_hover": 9}   # validated
     assert ola.get("/api/prefs")[1]["prefs"]["marker_look"]["width_all"] == 5
     assert ala.get("/api/prefs")[1]["prefs"]["marker_look"]["width_all"] == 2          # another account is not affected
     assert os.path.isfile(os.path.join(srv.app.data_dir, "prefs", "u_ola.json"))

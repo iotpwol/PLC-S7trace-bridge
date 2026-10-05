@@ -492,6 +492,24 @@ class Handler(BaseHTTPRequestHandler):
                 host.rec_info_update(d)
             else:
                 return self._error(400, "Nieznana operacja REC.")
+        elif action == "rec-range":                    # 'Zapis Manual REC': a time range of the chart becomes a recording
+            if not host.can_run(user, role):
+                return self._error(403, "Brak uprawnień do tego połączenia.")
+            try:
+                where = host.rec_save_range(user, d.get("a"), d.get("b"), str(d.get("title", "")), self.client_address[0])
+            except (TypeError, ValueError) as e:
+                return self._error(400, str(e) or "Niepoprawny zakres.")
+            return self._json({"ok": True, "where": where})
+        elif action == "rec-start":                    # 'Zmień Start REC (n)': move the start of a recording
+            if not host.can_run(user, role):
+                return self._error(403, "Brak uprawnień do tego połączenia.")
+            try:
+                res = host.rec_move_start(d.get("n"), d.get("t"))
+            except (TypeError, ValueError) as e:
+                return self._error(400, str(e) or "Niepoprawne dane.")
+            except Exception as e:
+                return self._error(502, f"Nie udało się zmienić początku nagrania: {e}")
+            return self._json({"ok": True, **res})
         elif action == "files":
             if not host.can_edit(user, role):
                 return self._error(403, "Brak uprawnień do plików tego połączenia.")

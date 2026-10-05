@@ -586,7 +586,16 @@ jako względny (poza nim – jako bezwzględny). Eksport okna → CSV i import C
 - Wyszukiwanie nie przeszukuje wielu nagrań naraz (jedno wybrane nagranie albo bieżący wykres – decyzja projektowa).
 - Strona Web sprawdzona ręcznie tylko w jednej przeglądarce (Chromium).
 
-### 13.11. Mapa kodu i testów
+### 13.11. Znaczniki REC: Start / Stop REC, Manual REC, zmiana początku nagrania
+
+- **Start REC (n) / Stop REC (n)**: wykres rysuje linie w chwili włączenia i wyłączenia REC (numeracja w obrębie przebiegu połączenia; stan w pamięci: `core/rec_marks.py` `RecMarks`, nie jest zapisywany w bazie znaczników). Wygląd i włączenie: *Znaczniki → Wygląd znaczników…* (`core/marker_look.py`: `rec_show`, `rec_color`, `rec_width`, `rec_style`, `rec_opacity`).
+- **Manual REC**: obszar zaznaczony na zebranych danych (prawy przycisk na wykresie); **Zapis Manual REC (n)** zapisuje ten przedział bufora jako **nowe nagranie** (`core/rec_ops.py` `save_range_recording`: SQLite / InfluxDB / TimescaleDB albo nowy plik CSV; pierwszy wiersz = pełny stan sygnałów na początku obszaru, dalej tylko zmiany lub wszystkie próbki wg trybu REC).
+- **Zmiana początku nagrania** (`rec_ops.move_start`, `plan_move`; metody `Backend.attach` / `set_start` / `delete_before`): wcześniej = do nagrania dopisywane są wiersze z bufora (stan w nowym początku + zmiany do dotychczasowego początku), później = zapisywany jest stan w nowym początku, potem **kasowane są starsze wiersze** i zmieniany jest `start_us` nagrania.
+  W SQLite to zwykłe `INSERT` / `DELETE` / `UPDATE`; w TimescaleDB `DELETE … WHERE time < …` (w skompresowanych fragmentach wymaga TimescaleDB 2.11+); w InfluxDB 1.x `DELETE FROM … WHERE time < …`, w 2.x `/api/v2/delete`, a punkt opisu nagrania zostaje pod swoim pierwotnym czasem (zmienia się tylko pole `start_us`).
+  Podczas trwającego nagrywania zmianę wykonuje wątek zapisujący (`DbRecorder.submit`), w kolejności z zapisywanymi wierszami. **Plik CSV** nie jest zmieniany (jest zapisywany na bieżąco) – pozycja jest wyłączona. Zasięg ograniczony buforem wykresu.
+- Testy: `tests/test_rec_marks.py`, `tests/test_rec_marks_ui.py`, `tests/test_web_rec_marks.py`.
+
+### 13.12. Mapa kodu i testów
 
 | Element | Plik / symbol |
 |---|---|
@@ -597,4 +606,5 @@ jako względny (poza nim – jako bezwzględny). Eksport okna → CSV i import C
 | Obsługa na karcie, okna | `ui/markers_ui.py`: `TabMarkers`, `MarkerEditDialog`, `PendingDialog` (wykaz do zapisu), `MarkersDialog` (lista), `SearchDialog` |
 | Przypomnienie przy zamykaniu | `ui/main_window.py`: `close_tab`, `closeEvent` → `TabMarkers.confirm_close` |
 | Tryb Web | `web/markers_api.py` (`MarkerService`, `/api/markers`, `/api/search`), `web/static/markers.js`, `web/recordings.py` (`Library.search`) |
-| Testy | `tests/test_markers.py`, `tests/test_marker_draft.py`, `tests/test_markers_ui.py`, `tests/test_web_markers.py`, `tests/test_folders.py` |
+| Znaczniki REC | `core/rec_marks.py`, `core/rec_ops.py`, `ui/rec_marks_ui.py` (`TabRecMarks`), `web/static/recmarks.js`, `web/hosted.py` (`rec_save_range`, `rec_move_start`) |
+| Testy | `tests/test_markers.py`, `tests/test_marker_draft.py`, `tests/test_markers_ui.py`, `tests/test_web_markers.py`, `tests/test_folders.py`, `tests/test_rec_marks.py`, `tests/test_rec_marks_ui.py`, `tests/test_web_rec_marks.py` |

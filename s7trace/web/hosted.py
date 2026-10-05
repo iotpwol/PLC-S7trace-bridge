@@ -13,6 +13,8 @@ import numpy as np
 
 from ..core.acq_process import ProcAcquirer
 from ..core.buffer import TraceBuffer
+from ..core import rec_ops, store as store_mod
+from ..core.rec_marks import RecMarks
 from ..core import diagnostics as dg
 from ..core.config import TabConfig, load_app_config
 from ..core.csvio import CsvRecorder, write_csv
@@ -54,6 +56,7 @@ class HostedConnection:
         self.rec_info: dict = {}
         self.rec_by, self.rec_started_us, self.rec_error, self.rec_label, self.rec_target = "", 0, "", "", ""
         self._rec_lock = threading.RLock()
+        self.rec_marks = RecMarks()                           # Start / Stop REC of this run (the chart draws them; Manual REC areas live in the browser)
 
     # ---- description (shown on the overview page)
     @property
@@ -111,7 +114,8 @@ class HostedConnection:
         return {"active": rec is not None, "target": self.web.get("rec_target", "csv"), "mode": self.cfg.store.mode,
                 "label": self.rec_label, "title": self.rec_info.get("title", ""), "by": self.rec_by,
                 "started_us": self.rec_started_us, "error": err,
-                "written": getattr(rec, "written", None), "dropped": getattr(rec, "dropped", 0)}
+                "written": getattr(rec, "written", None), "dropped": getattr(rec, "dropped", 0),
+                "marks": [{"n": a["n"], "t0": a["t0"], "t1": a["t1"], "db": bool(a["sid"])} for a in self.rec_marks.auto]}   # Start / Stop REC lines
 
     # ---- control
     def method_text(self) -> str:
@@ -135,6 +139,7 @@ class HostedConnection:
             self.method = self._pick_method(run)
             self.signals = [Signal.from_dict(s.to_dict()) for s in run]
             self.buffer.reset(len(run))
+            self.rec_marks.reset()
             c = self.cfg
             self.acq = ProcAcquirer(
                 c.ip, c.rack, c.slot, c.cycle_ms, self.signals, c.mode, self.buffer,
@@ -269,6 +274,8 @@ class HostedConnection:
                 raise ValueError(f"Nie można rozpocząć nagrywania: {e}") from None
             self.recorder, self.rec_info, self.rec_by = rec, info, user
             self.rec_started_us, self.rec_error, self.rec_label, self.rec_target = int(time.time() * 1e6), "", label, target
+            n = self.rec_marks.started(self.buffer.last_time() if len(self.buffer) else 0.0, rec.session if isinstance(rec, DbRecorder) else "")
+            self.rec_marks.span(n)["target"] = target
             self.version += 1
 
     def _make_recorder(self, target: str, c: TabConfig, user: str, info: dict, address: str):
@@ -287,6 +294,81 @@ class HostedConnection:
             label = f"{target}: {rec.path}"
         return rec, label
 
+    # ---- REC marks: a Manual REC area saved as a recording, a Start REC moved
+    def _meta_for(self, user: str, address: str, title: str, notes: str = "") -> dict:
+        c = self.cfg
+        return {"name": self.name, "ip": c.ip, "tab": self.name, "conf": c.conf_name or self.name, "owner": user,
+                "computer": ("Web " + address).strip(), "device": device_summary(self.device, c.ip), "title": title, "notes": notes}
+
+    def rec_save_range(self, user: str, a: float, b: float, title: str = "", address: str = "") -> str:
+        """'Zapis Manual REC': the buffered data of [a, b] become a recording of their own in the connection's REC target.
+        Returns where it went (text)."""
+        buf = self.buffer
+        if len(buf) == 0:
+            raise ValueError("Brak danych na wykresie.")
+        a, b = max(float(a), buf.first_time()), min(float(b), buf.last_time())
+        t, v = buf.snapshot(a, b)
+        if b <= a or not ((t >= a) & (t <= b)).any():
+            raise ValueError("W zaznaczonym obszarze nie ma zebranych próbek.")
+        target, c = self.web.get("rec_target", "csv"), self.cfg
+        meta = self._meta_for(user, address, (title or "Manual REC")[:200], f"Ręcznie zaznaczony obszar wykresu: {a:.2f} – {b:.2f} s od startu")
+        try:
+            if target == "csv":
+                path = files.new_path(self.mgr.files_root if self.mgr else "", self.owner, "rec", c.rec_filename,
+                                      confname=c.conf_name or self.name, ip=c.ip, tab=self.name)
+                where, _ = rec_ops.save_range_recording(c.store, self.signals, self.start_wall, t, v, a, b, meta, "", path)
+                return os.path.basename(where)
+            scfg, base = self._store_for(target)
+            where, _ = rec_ops.save_range_recording(scfg, self.signals, self.start_wall, t, v, a, b, meta, base)
+            return f"{target}: {where}"
+        except ValueError:
+            raise
+        except Exception as e:
+            raise ValueError(f"Nie udało się zapisać: {e}") from None
+
+    def rec_move_start(self, n: int, new_t: float) -> dict:
+        """'Zmień Start REC (n)': fills the recording in from the buffer (earlier) or deletes what is older (later); databases only."""
+        span = self.rec_marks.span(int(n))
+        if span is None:
+            raise ValueError("Nie ma takiego nagrania w tym przebiegu.")
+        if not span["sid"]:
+            raise ValueError("Nagranie do pliku CSV: przesuwanie początku działa tylko dla baz danych (SQLite, InfluxDB, TimescaleDB).")
+        target = span.get("target") or self.web.get("rec_target", "csv")
+        scfg, base = self._store_for(target)
+        key_s = max(scfg.keyframe_min, 0.0) * 60.0 if scfg.mode == "changes" else 0.0
+        plan = rec_ops.plan_move(self.buffer, self.start_wall, span, float(new_t), scfg.mode, key_s, len(self.signals))
+        sid, rows, new_us = span["sid"], plan["rows"], plan["new_us"]
+        rec = self.recorder
+        if span["t1"] is None and isinstance(rec, DbRecorder) and rec.session == sid:        # running: the writer thread does it in step
+            done, res = threading.Event(), []
+
+            def job(be):
+                meta = next((x for x in be.sessions() if x["id"] == sid), None)
+                if meta is None:
+                    raise store_mod.StoreError("Nie znaleziono nagrania w bazie.")
+                rec_ops.move_start(be, meta, new_us, rows)
+
+            rec.submit(job, lambda err: (res.append(err), done.set()))
+            if not done.wait(30.0):
+                raise ValueError("Baza nie odpowiada – zmiana zostanie wykonana, gdy wróci połączenie z bazą.")
+            if res[0]:
+                raise ValueError(res[0])
+        else:
+            use = scfg
+            if scfg.kind == "sqlite":
+                use = __import__("dataclasses").replace(scfg, sqlite_path=store_mod.rotated_sqlite_path(scfg, base, self.start_wall))
+            be = store_mod.open_backend(use, base)
+            try:
+                meta = next((x for x in be.sessions() if x["id"] == sid), None)
+                if meta is None:
+                    raise ValueError("Nie znaleziono nagrania w bazie.")
+                rec_ops.move_start(be, meta, new_us, rows)
+            finally:
+                be.close()
+        self.rec_marks.set_start(int(n), plan["first"])
+        self.version += 1
+        return {"t0": plan["first"], "earlier": plan["earlier"], "clamped": plan["clamped"]}
+
     def rec_info_update(self, info: dict) -> None:
         info = {k: str(v)[:500] for k, v in (info or {}).items() if k in ("title", "description", "notes", "tags")}
         with self._rec_lock:
@@ -302,6 +384,7 @@ class HostedConnection:
         with self._rec_lock:
             rec, self.recorder = self.recorder, None
         if rec is not None:
+            self.rec_marks.stopped(self.buffer.last_time() if len(self.buffer) else 0.0)
             try:
                 rec.close()
             except Exception as e:
@@ -342,6 +425,7 @@ class HostedConnection:
                 "addresses": [s.address for s in self.signals], "tips": [signal_tip_static(s) for s in self.signals],
                 "layout": {"legend_mode": self.cfg.legend_mode, "time_axis": self.cfg.time_axis, "time_offset": self.cfg.time_offset, "y_layout": self.cfg.y_layout, "auto_y": self.cfg.auto_y, "y_min": self.cfg.y_min,
                            "y_max": self.cfg.y_max, "show_points": self.cfg.show_points},
+                "rec": [{"n": a["n"], "t0": a["t0"], "t1": a["t1"], "db": bool(a["sid"])} for a in self.rec_marks.auto],     # Start / Stop REC lines
                 "last": float(last), "state": self.state,
                 "plc_diff": (self.device or {}).get("time_diff_local"),            # PLC clock minus the server's [s] (axis "Czas PLC")
                 "tz_offset": time.localtime().tm_gmtoff,                            # the server's zone: the clock axes show the SERVER's local time

@@ -659,7 +659,9 @@ def test_marker_look_is_saved_with_the_interface_configuration(app, tmp_path, mo
     from s7trace.ui import theme as th
     from s7trace.ui.main_window import MainWindow
     monkeypatch.setattr("s7trace.ui.main_window.save_app_config", lambda *a, **k: None)
-    look = {"width_all": 5, "width_sel": 6, "width_other": 2, "width_hover": 9}
+    from s7trace.core import marker_look as ml
+    look = ml.normalize({"width_all": 5, "width_sel": 6, "width_other": 2, "width_hover": 9,
+                         "rec_show": 0, "rec_color": "#112233", "rec_width": 4, "rec_style": "dash", "rec_opacity": 40})
     w = MainWindow(config_file=str(tmp_path / "c.json"))
     w._apply_marker_look(look)
     assert w.theme["marker_look"] == look
@@ -668,6 +670,7 @@ def test_marker_look_is_saved_with_the_interface_configuration(app, tmp_path, mo
     th.save_profile(p, w.theme)                                          # "Zapisz konfigurację interfejsu"
     data = json.load(open(p, encoding="utf-8"))
     assert data["marker_width_all"] == 5 and data["marker_width_hover"] == 9
+    assert data["marker_rec_show"] == 0 and data["marker_rec_color"] == "#112233" and data["marker_rec_style"] == "dash"   # the REC marks too
     w._apply_marker_look({"width_all": 1})                               # something else in the meantime
     assert w.marker_look["width_all"] == 1
     w._load_theme_file(p)                                                # loading the file brings the marker look back

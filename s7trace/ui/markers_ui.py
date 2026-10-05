@@ -26,6 +26,8 @@ from ..core import markers as mk
 from ..core.marker_draft import MarkerDraft
 from ..core import search as sr
 from ..core.store import current_user, to_us
+from ..core import rec_marks as rmk
+from .rec_marks_ui import TabRecMarks
 from .dialog_kit import dialog_info
 
 STAMP = "yyyy-MM-dd HH:mm:ss.zzz"
@@ -323,15 +325,17 @@ class PendingDialog(QDialog):
     mode 'save' (button 'Zapisz znaczniki'): Zapisz / Anuluj; mode 'close' (the chart is being closed): Zapisz / Odrzuć / Anuluj.
     The answer is in `choice`: 'save', 'discard' or 'cancel'."""
 
-    def __init__(self, changes, mode: str, parent=None):
+    def __init__(self, changes, mode: str, parent=None, manual=None):
         super().__init__(parent)
         self.choice = "cancel"
+        manual = list(manual or [])
         self.setWindowTitle("Zapisz znaczniki" if mode == "save" else "Niezapisane znaczniki")
-        self.resize(780, 420)
+        self.resize(780, 420 if not manual else 560)
         n = {s: sum(1 for c in changes if c.state == s) for s in STATE_PL}
         lay = QVBoxLayout(self)
         intro = ("Do zapisania: " if mode == "save" else "Na tym wykresie są niezapisane znaczniki. Zapisać je przed zamknięciem? Razem: ") + \
-            f"<b>{n['new']}</b> nowych, <b>{n['edited']}</b> zmienionych, <b>{n['deleted']}</b> do usunięcia."
+            f"<b>{n['new']}</b> nowych, <b>{n['edited']}</b> zmienionych, <b>{n['deleted']}</b> do usunięcia" + \
+            (f", <b>{len(manual)}</b> obszarów Manual REC do zapisania jako nagrania." if manual else ".")
         self.lbl = QLabel(intro)
         self.lbl.setTextFormat(Qt.RichText)
         self.lbl.setWordWrap(True)
@@ -365,6 +369,25 @@ class PendingDialog(QDialog):
                 self.table.setItem(i, j, it)
         self.table.setSortingEnabled(True)
         lay.addWidget(self.table, 1)
+        self.table.setVisible(bool(changes))
+        self.mtable = None
+        self._manual = manual
+        if manual:                                       # areas put with 'Manual Start / Stop REC': each one becomes a recording
+            lay.addWidget(QLabel("Obszary „Manual REC” – zaznaczone zostaną zapisane jako osobne nagrania (z bufora wykresu):"))
+            self.mtable = QTableWidget(len(manual), 4)
+            self.mtable.setHorizontalHeaderLabels(["Zapisać", "Obszar", "Od", "Do (czas trwania)"])
+            self.mtable.setEditTriggers(QAbstractItemView.NoEditTriggers)
+            self.mtable.setSelectionMode(QAbstractItemView.NoSelection)
+            self.mtable.verticalHeader().setVisible(False)
+            standard_table(self.mtable, sort=False)
+            for i, r in enumerate(manual):
+                chk = QTableWidgetItem()
+                chk.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+                chk.setCheckState(Qt.Checked)
+                self.mtable.setItem(i, 0, chk)
+                for j, text in enumerate((f"Manual REC ({r['n']})", r["a"], f"{r['b']}  ({r['dur']:.1f} s)"), 1):
+                    self.mtable.setItem(i, j, QTableWidgetItem(text))
+            lay.addWidget(self.mtable, 1)
         b = QHBoxLayout()
         b.addStretch()
         ok = QPushButton("Zapisz znaczniki" if mode == "save" else "Zapisz")
@@ -383,6 +406,12 @@ class PendingDialog(QDialog):
     def _done(self, choice: str) -> None:
         self.choice = choice
         self.accept() if choice != "cancel" else self.reject()
+
+    def selected_manual(self) -> list[int]:
+        """Numbers of the Manual REC areas the user left ticked."""
+        if self.mtable is None:
+            return []
+        return [r["n"] for i, r in enumerate(self._manual) if self.mtable.item(i, 0).checkState() == Qt.Checked]
 
     def ask(self) -> str:
         self.exec()
@@ -409,6 +438,7 @@ class TabMarkers:
         p.markerPlaced.connect(self.placed)
         p.markerOpened.connect(self.opened)
         p.markerEdit.connect(self.edit)                  # double click on a marker opens its edit window
+        self.rec = TabRecMarks(tab)                      # Start / Stop REC lines, Manual REC areas, moving a Start REC
 
     # ---- basics
     @property
@@ -431,7 +461,8 @@ class TabMarkers:
         return self._draft
 
     def pending(self) -> int:
-        return self._draft.count() if self._draft is not None else 0
+        """What 'Zapisz znaczniki' would write: the draft + the Manual REC areas that are not saved as recordings yet."""
+        return (self._draft.count() if self._draft is not None else 0) + len(self.rec.unsaved())
 
     def key(self) -> str:
         info = getattr(self.tab, "loaded", None)
@@ -461,7 +492,8 @@ class TabMarkers:
         if st is None or dr is None:
             return
         x0, x1 = self.tab.plot.view_range()
-        sig = (round(x0, 3), round(x1, 3), st.version, st.data_version(), dr.version, self.tab.start_wall, self.show_all, self.key())
+        sig = (round(x0, 3), round(x1, 3), st.version, st.data_version(), dr.version, self.tab.start_wall, self.show_all, self.key(),
+               self.rec.m.version)
         if sig == self._sig and not force:
             return
         self._sig = sig
@@ -482,7 +514,7 @@ class TabMarkers:
                           "color": m.color, "width": m.line_width, "style": m.line_style, "opacity": m.opacity,
                           "priority": m.priority, "title": ("* " + label) if (label and state) else label,
                           "tip": marker_tip(m, state, dr.changed_fields(m.id), self.tab.plot.mlook), "signals": list(m.signals)})
-        self.tab.plot.set_markers(items)
+        self.tab.plot.set_markers(items + self.rec.items())              # + the REC marks (pseudo ids, not in the draft)
         if self.hi_group:                                                # the group chosen with 'Podświetl grupę'
             self.tab.plot.set_marker_highlight({m.id for m in found if m.group_name == self.hi_group})
 
@@ -553,6 +585,8 @@ class TabMarkers:
         return m
 
     def edit(self, mid: int) -> None:
+        if rmk.is_rec(mid):
+            return
         dr = self.draft
         m = dr.get(mid) if dr else None
         if m is None:
@@ -586,6 +620,9 @@ class TabMarkers:
 
     def moved(self, mid: int, x0: float, x1: float) -> None:
         """A marker was dragged on the chart (a range: its edges or the whole area)."""
+        if rmk.is_rec(mid):
+            self.rec.moved(mid, x0, x1)
+            return
         dr = self.draft
         m = dr.get(mid) if dr else None
         if m is None:
@@ -631,10 +668,15 @@ class TabMarkers:
         dr = self.draft
         if dr is None:
             return False
-        if not dr.dirty():
+        if not dr.dirty() and not self.rec.unsaved():
             QMessageBox.information(self.tab, "S7Trace", "Nie ma niezapisanych znaczników.")
             return True
-        return self._commit(PendingDialog(dr.changes(), "save", self.tab).ask() == "save")
+        dlg = PendingDialog(dr.changes(), "save", self.tab, self.rec.manual_rows())
+        if dlg.ask() != "save":
+            return False
+        ok = self._commit(True) if dr.dirty() else True
+        self.rec.save_selected(dlg.selected_manual())
+        return ok
 
     def _commit(self, go: bool) -> bool:
         dr = self.draft
@@ -654,13 +696,18 @@ class TabMarkers:
     def confirm_close(self) -> bool:
         """Called before the tab (or the program) is closed: reminds about unsaved markers and lists them. False = stay."""
         dr = self._draft
-        if dr is None or not dr.dirty():
+        manual = self.rec.unsaved()
+        if (dr is None or not dr.dirty()) and not manual:
             return True
-        choice = PendingDialog(dr.changes(), "close", self.tab).ask()
+        dlg = PendingDialog(dr.changes() if dr is not None else [], "close", self.tab, self.rec.manual_rows())
+        choice = dlg.ask()
         if choice == "save":
-            return self._commit(True)
+            ok = self._commit(True) if dr is not None and dr.dirty() else True
+            self.rec.save_selected(dlg.selected_manual(), wait=True)             # the tab is going away: write before it does
+            return ok
         if choice == "discard":
-            dr.discard()
+            if dr is not None:
+                dr.discard()
             self._changed()
             return True
         return False
@@ -741,6 +788,9 @@ class TabMarkers:
                 self.tab.status_msg = "Następny znacznik grupy leży poza danymi tej karty."
 
     def opened(self, mid: int) -> None:
+        if rmk.is_rec(mid):
+            self.rec.opened(mid)
+            return
         dr = self.draft
         m = dr.get(mid) if dr else None
         if m:
@@ -782,6 +832,7 @@ class TabMarkers:
         a = m.addAction("Dodaj znacznik różnicy poziomu…", lambda: self.add_at_us(self.to_wall(t), end_us=self.to_wall(t + w),
                                                                                  signals=[sig], kind="delta"))
         a.setEnabled(bool(sig))
+        self.rec.chart_menu(m, t)
         if self.hi_group:
             m.addAction(f"Wyłącz podświetlenie grupy „{self.hi_group}”", lambda: self.highlight_group(""))
         m.addSeparator()
@@ -811,6 +862,9 @@ class TabMarkers:
         self.sync(True)
 
     def marker_menu(self, mid: int, pos) -> None:
+        if rmk.is_rec(mid):
+            self.rec.marker_menu(mid, pos)
+            return
         m = QMenu(self.tab)
         dr = self.draft
         mk_ = dr.get(mid) if dr else None

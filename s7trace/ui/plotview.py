@@ -7,7 +7,7 @@ from typing import Callable
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtCore import QObject, QPointF, QRectF, Qt, Signal as QtSignal
+from PySide6.QtCore import QObject, QPointF, QRectF, Qt, QTimer, Signal as QtSignal
 from PySide6.QtGui import QColor, QCursor, QFontMetricsF, QPen
 from PySide6.QtWidgets import QApplication, QLabel, QSplitter, QToolTip, QVBoxLayout, QWidget
 
@@ -172,6 +172,8 @@ class PlotView(QWidget):
     markerPlaced = QtSignal(int, float)         # 'Zmień pozycję': the chart was clicked: (marker id, time [s])
     markerOpened = QtSignal(int)                # left click on a marker line: (marker id) -> the tab shows its description
     markerEdit = QtSignal(int)                  # double click on a marker: (marker id) -> the edit window
+    ghostMoved = QtSignal(float)                # the ghost of a Start REC was dropped at this time [s]
+    ghostMenu = QtSignal(object)                # right click on the ghost (global QPoint)
 
     def __init__(self, buffer: TraceBuffer, parent=None):
         super().__init__(parent)
@@ -202,6 +204,11 @@ class PlotView(QWidget):
         self._tip_id: int | None = None                   # marker whose bubble is shown
         self.place_marker: int | None = None              # waiting for a click that gives the new place of this marker
         self._mset = False
+        self.ghost: pg.InfiniteLine | None = None         # the twin of a Start REC that is being moved (pulses)
+        self._ghost_on = False
+        self._ghost_timer = QTimer(self)
+        self._ghost_timer.setInterval(380)
+        self._ghost_timer.timeout.connect(self._ghost_pulse)
         self.h_mode = False
         self.ctx_y = 0.0
         self.mmovable: set[int] = set()                   # markers unlocked for dragging (right click -> Zmień pozycję znacznika)
@@ -763,7 +770,7 @@ class PlotView(QWidget):
             for it in items:
                 mid = it["id"]
                 cur = self.mitems.get(mid)
-                look = (it["kind"], it["color"], it["width"], it["style"], it["opacity"], it["title"], tuple(it["signals"]))
+                look = (it["kind"], it["color"], it["width"], it["style"], it["opacity"], it["title"], tuple(it["signals"]), it.get("title2", ""))
                 if cur is not None and cur["look"] != look:
                     self._marker_remove(mid)
                     cur = None
@@ -832,6 +839,10 @@ class PlotView(QWidget):
                 ln.sigClicked.connect(lambda l, ev, i=mid: self._marker_clicked(i, ev))
                 ln.setHoverPen(self._hover_pen(it))
             label = pg.InfLineLabel(main.lines[0], text, position=0.985, color=col, rotateAxis=(1, 0), anchors=[(1, 1), (1, 1)])
+            if it.get("title2"):                                     # a named second edge (Manual Stop REC)
+                t2 = it["title2"]
+                pg.InfLineLabel(main.lines[1], (t2[:28] + "…") if len(t2) > 29 else t2, position=0.985, color=col, rotateAxis=(1, 0),
+                                anchors=[(1, 1), (1, 1)])
             self.plot.addItem(main, ignoreBounds=True)
         else:
             main = pg.InfiniteLine(pos=it["x0"], angle=90, movable=mid in self.mmovable, pen=self._marker_pen(it),
@@ -1037,6 +1048,48 @@ class PlotView(QWidget):
                 self.markerEdit.emit(mid)
             else:
                 self.markerOpened.emit(mid)
+
+    # ---- the ghost of a moved 'Start REC'
+    def set_ghost(self, t: float | None, color: str = "#ff8c1a", width: int = 2, text: str = "") -> None:
+        """A draggable twin line at time `t` that pulses (colour <-> white); None removes it. The user drops it somewhere else and
+        chooses 'Zmień Start REC' from its menu."""
+        if t is None:
+            if self.ghost is not None:
+                self.plot.removeItem(self.ghost)
+                self.ghost = None
+            self._ghost_timer.stop()
+            return
+        self._ghost_color, self._ghost_width = color, width
+        if self.ghost is None:
+            g = pg.InfiniteLine(pos=t, angle=90, movable=True, pen=pg.mkPen(color, width=width + 1, style=Qt.DashLine),
+                                hoverPen=pg.mkPen("#ffffff", width=width + 2), label=text,
+                                labelOpts={"color": color, "position": 0.8, "rotateAxis": (1, 0), "anchors": [(1, 1), (1, 1)]})
+            g.setZValue(12)
+            g.sigPositionChangeFinished.connect(lambda l: self.ghostMoved.emit(float(l.value())))
+            g.sigClicked.connect(self._ghost_clicked)
+            self.plot.addItem(g, ignoreBounds=True)
+            self.ghost = g
+        else:
+            self.ghost.setValue(t)
+            if self.ghost.label is not None:
+                self.ghost.label.setText(text)
+        self._ghost_on = False
+        self._ghost_pulse()
+        self._ghost_timer.start()
+
+    def _ghost_pulse(self) -> None:
+        if self.ghost is None:
+            return
+        self._ghost_on = not self._ghost_on
+        col = QColor("#ffffff" if self._ghost_on else self._ghost_color)
+        self.ghost.setPen(pg.mkPen(col, width=self._ghost_width + 1, style=Qt.DashLine))
+        if self.ghost.label is not None:
+            self.ghost.label.setColor(col)
+
+    def _ghost_clicked(self, line, ev) -> None:
+        if ev.button() == Qt.RightButton:
+            ev.accept()
+            self.ghostMenu.emit(ev.screenPos().toPoint())
 
     def clear_markers(self) -> None:
         self.set_markers([])

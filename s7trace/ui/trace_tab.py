@@ -118,6 +118,7 @@ class TraceTab(QWidget):
     legendHideRequested = QtSignal()   # 'Ukryj legendę' in the legend's context menu (the setting is shared by all tabs)
     _dbProbe = QtSignal(str, str)      # (recording id, cause or "") - result of the connection test run when REC starts
     _infoRaw = QtSignal(object)        # device data from the acquisition process (worker thread)
+    _recOpDone = QtSignal(str, int, str, str)   # (what, number, result text, error text) - a Manual REC saved / a Start REC moved (worker threads)
     _devRead = QtSignal(str, str, object)   # (address, error text or "", device data) - result of 'Pobierz dane sterownika'
 
     def __init__(self, cfg: TabConfig, symbols: callable, ui_state: dict | None = None,
@@ -1166,6 +1167,7 @@ class TraceTab(QWidget):
             return
         self._warn_if_scanned_elsewhere(c.ip)
         self.buffer.reset(len(run))
+        self.mk.rec.new_run()                            # the Start / Stop REC lines and Manual REC areas belong to the previous run
         self._run_signals = [Signal.from_dict(s.to_dict()) for s in run]
         self.plot.set_signals(run)
         self.plot.clear_trigger_marks()
@@ -1711,6 +1713,7 @@ class TraceTab(QWidget):
 
     def _show_loaded(self, sigs, t, v, message: str, info: dict | None = None) -> None:
         self.loaded = info                                   # what the tab shows (tooltip of the tab); None = a live tab
+        self.mk.rec.new_run()
         self.apply_time_axis()
         self.cfg.signals = sigs
         self._run_signals = [Signal.from_dict(s.to_dict()) for s in sigs]
@@ -1951,8 +1954,12 @@ class TraceTab(QWidget):
         if self.acq is not None and self.state != "stopped":
             self.acq.update_signals(self._run_signals)
         if self.recorder:                                  # new header = new REC file (same title, no new question)
-            self._close_recorder()
-            self._open_recorder(ask=False)
+            self.mk.rec.m.hold = True                      # ... but the same recording as far as the Start / Stop REC marks go
+            try:
+                self._close_recorder()
+                self._open_recorder(ask=False)
+            finally:
+                self.mk.rec.m.hold = False
 
     # ================================================================ REC
     def _on_rec(self, on: bool):
@@ -2028,6 +2035,7 @@ class TraceTab(QWidget):
                 if ask and mode == "during":                   # recording runs; the window opens beside it
                     self._show_info_dialog(info, c.conf_name)
             self.status_msg = f"REC → {path}"
+            self.mk.rec.rec_started()                      # 'Start REC (n)' on the chart
         except Exception as e:
             self.recorder = None
             self.btn_rec.setChecked(False)
@@ -2101,6 +2109,7 @@ class TraceTab(QWidget):
                 self.recorder.update_info(**d.values())
         if self.recorder:
             self.status_msg = f"REC zakończony: {self.recorder.path}"
+            self.mk.rec.rec_stopped()                      # 'Stop REC (n)' on the chart
             self.recorder.close()
             self.recorder = None
 

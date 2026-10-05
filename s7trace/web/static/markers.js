@@ -7,10 +7,17 @@ const MK_PRIO_PL = ["Niski", "Normalny", "Wysoki", "Krytyczny"];
 const MK_PALETTE = ["#ff9f1c", "#ff4d4d", "#3fc380", "#4aa3ff", "#b07cff", "#ffd24a", "#2ec4b6", "#ffffff"];
 // Line widths (Znaczniki -> Wygląd znaczników): saved on the server per account (/api/prefs), like the desktop program keeps them in
 // its interface configuration.
-const MK_LOOK_DEF = { width_all: 2, width_sel: 3, width_other: 1, width_hover: 4 };
-const MK_LOOK_LIM = { width_all: [1, 12], width_sel: [1, 12], width_other: [1, 12], width_hover: [1, 16] };
+// + the look of the REC marks (Start REC / Stop REC lines, Manual REC areas): on / off, colour, width, line style, opacity of the area
+const MK_LOOK_DEF = { width_all: 2, width_sel: 3, width_other: 1, width_hover: 4, rec_show: 1, rec_width: 2, rec_opacity: 24, rec_color: "#ff8c1a", rec_style: "solid" };
+const MK_LOOK_LIM = { width_all: [1, 12], width_sel: [1, 12], width_other: [1, 12], width_hover: [1, 16], rec_show: [0, 1], rec_width: [1, 12], rec_opacity: [0, 100] };
 let MKLOOK = { ...MK_LOOK_DEF };
-const mkLookFrom = (raw) => { const o = { ...MK_LOOK_DEF }; for (const k of Object.keys(MK_LOOK_DEF)) if (Number.isFinite(+raw?.[k])) o[k] = Math.min(Math.max(Math.round(+raw[k]), MK_LOOK_LIM[k][0]), MK_LOOK_LIM[k][1]); return o; };
+const mkLookFrom = (raw) => {
+  const o = { ...MK_LOOK_DEF };
+  for (const k of Object.keys(MK_LOOK_LIM)) if (Number.isFinite(+raw?.[k]) && raw[k] !== null && raw[k] !== "") o[k] = Math.min(Math.max(Math.round(+raw[k]), MK_LOOK_LIM[k][0]), MK_LOOK_LIM[k][1]);
+  if (/^#[0-9a-f]{6}$/i.test(raw?.rec_color || "")) o.rec_color = raw.rec_color.toLowerCase();
+  if (MK_STYLES[raw?.rec_style]) o.rec_style = raw.rec_style;
+  return o;
+};
 // after logging in: the account's settings come from the server (the same look in every browser)
 async function mkLoadPrefs() { try { MKLOOK = mkLookFrom((await api("/api/prefs")).prefs.marker_look); for (const c of Object.values(MK)) if (c) c.redraw(); } catch (e) { /* defaults */ } }
 // A marker with its own width (> 0) keeps it; 0 = from the settings. case: all / sel / other / hover
@@ -50,7 +57,8 @@ const MKD_FIELDS = ["kind", "at_us", "end_us", "signals", "group_name", "line_wi
 const MKD_LABEL = { title: "tytuł", description: "opis", notes: "uwagi", color: "kolor", priority: "priorytet", kind: "rodzaj", at_us: "czas", end_us: "czas", signals: "przebiegi",
   group_name: "grupa", line_width: "grubość linii", line_style: "rodzaj linii", opacity: "przezroczystość", show_label: "nazwa na wykresie" };
 const MKD = { added: new Map(), edited: new Map(), deleted: new Map(), orig: new Map(), seq: 0 };
-const mkdCount = () => MKD.added.size + MKD.edited.size + MKD.deleted.size;
+const mkdDraftCount = () => MKD.added.size + MKD.edited.size + MKD.deleted.size;
+const mkdCount = () => mkdDraftCount() + (typeof recmUnsavedCount === "function" ? recmUnsavedCount() : 0);   // + the Manual REC areas that wait to be saved as recordings
 const mkdState = (id) => MKD.added.has(id) ? "new" : MKD.deleted.has(id) ? "deleted" : MKD.edited.has(id) ? "edited" : "";
 const mkdChanged = (a, b) => MKD_FIELDS.filter((f) => JSON.stringify(a[f]) !== JSON.stringify(b[f]));
 const MKD_PL = { new: "nowy", edited: "zmieniony", deleted: "do usunięcia" };
@@ -110,12 +118,23 @@ function mkPendingDialog(mode) {   // mode "save": Zapisz / Anuluj; "close": Zap
     $("mkp-h").textContent = mode === "save" ? "Zapisz znaczniki" : "Niezapisane znaczniki";
     $("mkp-intro").innerHTML = (mode === "save" ? "Do zapisania: " : "Są niezapisane znaczniki. Zapisać je, zanim opuścisz wykres? Razem: ") +
       `<b>${n("new")}</b> nowych, <b>${n("edited")}</b> zmienionych, <b>${n("deleted")}</b> do usunięcia.`;
+    const man = typeof recmPendingList === "function" ? recmPendingList() : [];
+    $("mkp-intro").innerHTML = $("mkp-intro").innerHTML.replace(/\.$/, "") + (man.length ? `, <b>${man.length}</b> obszarów Manual REC do zapisania jako nagrania.` : ".");
+    $("mkp-man").hidden = !man.length;
+    $("mkp-mt").tBodies[0].innerHTML = man.map((r, i) => `<tr><td><input type="checkbox" data-i="${i}" checked></td><td>Manual REC (${r.n})</td><td>${r.a}</td><td>${r.b} (${r.dur} s)</td></tr>`).join("");
+    $("mkp-t").parentElement.hidden = !ch.length;
     $("mkp-t").tBodies[0].innerHTML = ch.map((c) => `<tr class="mkp-${c.state}"><td>${MKD_PL[c.state]}</td><td><span style="color:${esc(c.m.color)}">■</span> ${c.state === "deleted" ? "<s>" : ""}${esc(c.m.title || "(bez tytułu)")}${c.state === "deleted" ? "</s>" : ""}</td>
       <td>${mkStamp(c.m.at_us)}${mkSpan(c.m) ? " → " + mkStamp(c.m.end_us) : ""}</td><td>${esc(c.text)}</td></tr>`).join("");
     $("mkp-error").textContent = ""; $("mkp-discard").hidden = mode !== "close"; $("mkp-cancel").textContent = mode === "save" ? "Anuluj" : "Wróć do wykresu";
     const done = (v) => { dlg.close(); resolve(v); };
-    $("mkp-save").onclick = async () => { $("mkp-error").textContent = ""; try { await mkdCommit(); done("save"); } catch (err) { $("mkp-error").textContent = "Nie zapisano (nic nie zostało zmienione): " + err.message; } };
-    $("mkp-discard").onclick = () => { mkdDiscard(); done("discard"); };
+    $("mkp-save").onclick = async () => {
+      $("mkp-error").textContent = "";
+      const chosen = [...$("mkp-mt").querySelectorAll("input:checked")].map((c) => man[+c.dataset.i].n);
+      try { if (mkdDraftCount()) await mkdCommit(); } catch (err) { $("mkp-error").textContent = "Nie zapisano (nic nie zostało zmienione): " + err.message; return; }
+      done("save");
+      for (const n of chosen) await recmSave(n);                                    // each ticked area becomes a recording of its own
+    };
+    $("mkp-discard").onclick = () => { mkdDiscard(); if (typeof recmDiscard === "function") recmDiscard(); done("discard"); };
     $("mkp-cancel").onclick = () => done("cancel");
     dlg.oncancel = () => resolve("cancel");
     dlg.showModal();
@@ -139,12 +158,13 @@ function mkMenu(x, y, items) {
   box.hidden = false; box.style.left = Math.min(x, innerWidth - 260) + "px"; box.style.top = Math.min(y, innerHeight - box.offsetHeight - 8) + "px";
 }
 function mkLookOpen() {
-  const dlg = $("mk-look"), keys = Object.keys(MK_LOOK_DEF), orig = { ...MKLOOK };
-  for (const k of keys) { const el = $("mkw-" + k); el.min = MK_LOOK_LIM[k][0]; el.max = MK_LOOK_LIM[k][1]; el.value = MKLOOK[k]; }
-  const apply = () => { for (const k of keys) { const v = Math.round(+$("mkw-" + k).value); if (Number.isFinite(v)) MKLOOK[k] = Math.min(Math.max(v, MK_LOOK_LIM[k][0]), MK_LOOK_LIM[k][1]); }
+  const dlg = $("mk-look"), keys = Object.keys(MK_LOOK_DEF), orig = { ...MKLOOK }, el = (k) => $("mkw-" + k);
+  const put = (src) => { for (const k of keys) { const e = el(k); if (k in MK_LOOK_LIM) { e.min = MK_LOOK_LIM[k][0]; e.max = MK_LOOK_LIM[k][1]; } if (e.type === "checkbox") e.checked = !!+src[k]; else e.value = src[k]; } };
+  put(MKLOOK);
+  const apply = () => { MKLOOK = mkLookFrom(Object.fromEntries(keys.map((k) => [k, el(k).type === "checkbox" ? (el(k).checked ? 1 : 0) : el(k).value])));
     for (const c of Object.values(MK)) if (c) c.redraw(); };
-  for (const k of keys) $("mkw-" + k).oninput = apply;
-  $("mkw-default").onclick = () => { for (const k of keys) $("mkw-" + k).value = MK_LOOK_DEF[k]; apply(); };
+  for (const k of keys) el(k).oninput = el(k).onchange = apply;
+  $("mkw-default").onclick = () => { put(MK_LOOK_DEF); apply(); };
   $("mkw-cancel").onclick = () => { MKLOOK = { ...orig }; for (const c of Object.values(MK)) if (c) c.redraw(); dlg.close(); };
   $("mkw-ok").onclick = async () => { dlg.close(); try { MKLOOK = mkLookFrom((await api("/api/prefs", { marker_look: MKLOOK })).prefs.marker_look); } catch (e) { alert("Nie udało się zapisać ustawień na koncie: " + e.message); } };
   dlg.oncancel = () => { MKLOOK = { ...orig }; for (const c of Object.values(MK)) if (c) c.redraw(); };
@@ -315,7 +335,9 @@ function mkAttach(ctx) {
     if (ctx.drag) { mkBubble(""); return; }
     const h = ctx.marks.length ? mkHit(ctx, e) : null;
     cv.style.cursor = ctx.place ? "crosshair" : h && ctx.canEdit(h.it.m) && ctx.unlocked.has(h.it.m.id) ? (h.part === "body" ? "move" : "col-resize") : "";
-    mkBubble(h ? mkTip(h.it.m) : "", e.clientX, e.clientY);
+    const rh = ctx.kind === "live" && typeof recmHit === "function" ? recmHit(cv, e) : null;                        // a Start / Stop REC line, a Manual REC area
+    if (rh) cv.style.cursor = rh.kind === "ghost" || (rh.kind === "manual" && RECM.unlocked.has(rh.n)) ? (rh.part === "body" ? "move" : "col-resize") : "";
+    mkBubble(rh ? recmTip(rh, ctx.ds()) : h ? mkTip(h.it.m) : "", e.clientX, e.clientY);
     const nh = h && h.part !== "body" ? { id: h.it.m.id, part: h.part } : null;           // a hovered line is drawn thicker
     if ((nh && nh.id) !== (ctx.hover && ctx.hover.id) || (nh && nh.part) !== (ctx.hover && ctx.hover.part)) { ctx.hover = nh; ctx.redraw(); }
   });
@@ -345,12 +367,13 @@ function mkAttach(ctx) {
       { label: "Dodaj znacznik (punkt) tutaj…", fn: () => mkAdd(ctx, mkBlank(at)) },
       { label: "Dodaj znacznik zakresu czasu tutaj…", fn: () => mkAdd(ctx, mkBlank(at, { kind: "range", end_us: Math.round(at + w * 1e6) })) },
       ...(sig ? [{ label: "Dodaj znacznik różnicy poziomu…", fn: () => mkAdd(ctx, mkBlank(at, { kind: "delta", end_us: Math.round(at + w * 1e6), signals: [sig] })) }] : []),
+      ...(ctx.kind === "live" && typeof recmChartItems === "function" ? recmChartItems(t) : []),
       ...(ctx.hi.size ? ["-", { label: "Wyłącz podświetlenie grupy", fn: () => { ctx.hi = new Set(); ctx.hiGroup = ""; ctx.redraw(); } }] : []),
       "-", { label: mkdCount() ? `Zapisz znaczniki (${mkdCount()})…` : "Zapisz znaczniki (brak zmian)", fn: () => mkSave() },
       { label: "Lista znaczników…", fn: () => mkOpenList(ctx) },
       { label: "Szukaj w danych…", fn: () => mkOpenSearch(ctx) },
       ...(ctx.kind === "live" ? [{ label: (ctx.showAll ? "✓ " : "") + "Pokaż też znaczniki z innych połączeń", fn: () => { ctx.showAll = !ctx.showAll; ctx.reload(); } }] : []),
-      { label: "Wygląd znaczników (grubość linii)…", fn: mkLookOpen }]);
+      { label: "Wygląd znaczników (linie, REC)…", fn: mkLookOpen }]);
   });
 }
 async function mkAdd(ctx, m) {   // the marker joins the draft (see above); nothing is sent to the server yet

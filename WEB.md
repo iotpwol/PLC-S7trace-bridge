@@ -515,7 +515,22 @@ pierwsze 500). „Pokaż” ustawia wykres na wynik (na żywo: zamrożony widok 
 trwał) z listą przebiegów z warunków. W nagraniu serwer przeszukuje bazę kawałkami (przy zbyt dużym kawałku dzieli go na pół), a przy limicie czasu zwraca wynik
 częściowy z adnotacją. Na górze panelu jest też **„Przejdź do daty i godziny”** (jak w programie okienkowym): na żywo pokazuje ten moment w danych zapamiętanych przez połączenie, w nagraniu – część nagrania wokół niego; poza danymi pojawia się komunikat.
 
-### 19.6. Co zostało sprawdzone / czego nie
+### 19.6. Znaczniki REC: Start REC, Stop REC, Manual REC, zmiana początku nagrania
+
+To samo, co w programie okienkowym (rozdział „Znaczniki REC” Pomocy), na wykresie **Podgląd na żywo**:
+
+- **Start REC (n) / Stop REC (n)** – linie rysowane przez stronę w chwili włączenia i wyłączenia REC na serwerze (numer rośnie przy każdym kolejnym REC w przebiegu połączenia; nowy Start zaczyna od 1). Serwer podaje je w opisie połączenia
+  (`rec.marks`: `n`, `t0`, `t1`, `db`) i w serii (`series.rec`). Nie są znacznikami zapisywanymi w bazie znaczników. Wygląd: **Wygląd znaczników…** – włączenie, kolor (początkowo kolor tła przycisku REC), grubość, rodzaj linii, nieprzezroczystość obszaru Manual REC;
+  ustawienia są na koncie (`/api/prefs`, klucz `marker_look`: `rec_show`, `rec_color`, `rec_width`, `rec_style`, `rec_opacity`).
+- **Manual REC** – prawy przycisk na pustym wykresie: „Manual Start REC (n) tutaj”, potem „Manual Stop REC (n) tutaj”; między liniami półprzezroczysty obszar. Obszary żyją w stronie (jak znaczniki robocze) do chwili zapisu: prawy przycisk na obszarze → **„Zapis Manual REC (n)”**
+  albo przycisk **Zapisz znaczniki (n)** (okno wylicza obszary z polami wyboru). Zapis = `POST /api/connections/<id>/rec-range` (`{a, b, title}`): serwer zapisuje ten przedział **swojego bufora** jako nowe nagranie w celu zapisu połączenia (plik CSV konta albo baza: SQLite konta / cel administratora).
+  Obszary mają menu „Zmień pozycję” (przeciąganie brzegów) i „Usuń”.
+- **Zmiana początku nagrania** – prawy przycisk na „Start REC (n)” → **„Przesuń Start REC (n)…”**: widok się zatrzymuje, a obok linii pojawia się pulsujący „duch”; po przeciągnięciu: prawy przycisk → **„Zmień Start REC (n)”** (`POST /api/connections/<id>/rec-start`, `{n, t}`).
+  Wcześniej = brakujący fragment jest dopisywany do nagrania z bufora serwera; później = starsze dane są usuwane z bazy (po potwierdzeniu). Działa dla baz (SQLite, InfluxDB, TimescaleDB), także w trakcie nagrywania; dla plików CSV pozycja jest wyłączona.
+  Ograniczenie: dane tylko tak daleko wstecz, jak sięga bufor serwera (to samo, co widać na wykresie).
+- Testy: `tests/test_web_rec_marks.py` (serie, zapis zakresu, przesuwanie startu w trakcie nagrywania i po nim, CSV, prawa), `tests/test_rec_marks.py` (rdzeń: SQLite, InfluxDB 1/2 z atrapą serwera, TimescaleDB z atrapą psycopg). Strona sprawdzona ręcznie w wbudowanej przeglądarce (Chromium) na serwerze demonstracyjnym.
+
+### 19.7. Co zostało sprawdzone / czego nie
 
 - Testy automatyczne: `tests/test_markers.py`, `tests/test_marker_draft.py`, `tests/test_markers_ui.py` (offscreen), `tests/test_web_markers.py` (prawdziwy serwer HTTP:
   widoczność, role, zakresy, grupy, style, walidacja, paczka `batch` – atomowość i prawa, wyszukiwarka w połączeniu i w nagraniu).

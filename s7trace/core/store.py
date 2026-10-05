@@ -468,6 +468,21 @@ class Backend:
         """{session id: number of stored entries}; backends that cannot tell cheaply return {}."""
         return {}
 
+    # -- moving the start of a recording (chart: 'Zmień Start REC'); see rec_ops.move_start
+    sid = ""
+
+    def attach(self, meta: dict) -> None:
+        """Work on an EXISTING recording (write rows into it, delete from it) without creating a session."""
+        self.sid = meta["id"]
+
+    def set_start(self, session_id: str, start_us: int) -> None:
+        """The recording now starts at `start_us` (the description; the samples are written / deleted separately)."""
+        raise NotImplementedError
+
+    def delete_before(self, session_id: str, t_us: int) -> None:
+        """Deletes the samples of the recording that are older than `t_us`."""
+        raise NotImplementedError
+
 
 def _td(rows):
     """(time, {signal: value}, is_keyframe) of every row; a row is (t, d) or (t, d, True) for a keyframe."""
@@ -553,6 +568,14 @@ class SqliteBackend(Backend):
 
     def stats(self):
         return dict(self.db.execute("SELECT session, COUNT(*) FROM samples GROUP BY session").fetchall())
+
+    def set_start(self, session_id, start_us):
+        self.db.execute("UPDATE sessions SET start_us=? WHERE id=?", (int(start_us), session_id))
+        self.db.commit()
+
+    def delete_before(self, session_id, t_us):
+        self.db.execute("DELETE FROM samples WHERE session=? AND ts_us<?", (session_id, int(t_us)))
+        self.db.commit()
 
     def write(self, rows):
         data = [(self.sid, i, t, None if (v != v) else float(v)) for t, d, _k in _td(rows) for i, v in d.items()]
@@ -661,7 +684,7 @@ def session_update_line(measurement: str, session: str, start_us: int, fields: d
     for k, v in fields.items():
         if k in ("title", "description", "notes", "tags", "device"):
             f.append(f"{k}={_esc_str(v or '')}")
-        elif k in ("deleted_us", "end_us"):
+        elif k in ("deleted_us", "end_us", "start_us"):
             f.append(f"{k}={int(v or 0)}i")
     return f"{_esc_meas(measurement + '_sessions')},session={_esc_key(session)} {','.join(f)} {int(start_us) * 1000}"
 
@@ -750,7 +773,27 @@ class InfluxBackend(Backend):
             raise StoreError("Nie znaleziono nagrania w bazie.")
         sets = _editable(fields)
         if sets:
-            self._write_lp([session_update_line(self.meas, session_id, meta["start_us"], sets)])
+            self._write_lp([session_update_line(self.meas, session_id, meta.get("point_us") or meta["start_us"], sets)])
+
+    def attach(self, meta):
+        self.sid = meta["id"]
+        self.fields = meta.get("fields") or unique_fields([s.get("name", "") for s in meta.get("signals", [])])
+        self._start_us = int(meta.get("point_us") or meta["start_us"])     # the session point keeps its original time
+
+    def set_start(self, session_id, start_us):
+        meta = next((x for x in self.sessions() if x["id"] == session_id), None)
+        if meta is None:
+            raise StoreError("Nie znaleziono nagrania w bazie.")
+        self._write_lp([session_update_line(self.meas, session_id, meta.get("point_us") or meta["start_us"], {"start_us": int(start_us)})])
+
+    def delete_before(self, session_id, t_us):
+        c, sid = self.cfg, session_id.replace("'", "").replace('"', "")
+        if self.v == 1:
+            self._http("POST", "/query", {"db": c.database, "q": f'DELETE FROM "{self.meas}" WHERE "session"=\'{sid}\' AND time < {int(t_us) * 1000}'})
+        else:
+            body = json.dumps({"start": "1970-01-01T00:00:00Z", "stop": us_to_rfc3339(int(t_us)),
+                               "predicate": f'_measurement="{self.meas}" AND session="{sid}"'}).encode()
+            self._http("POST", "/api/v2/delete", {"org": c.org, "bucket": c.bucket}, body, {"Content-Type": "application/json"})
 
     def delete_session(self, session_id):
         c, sid = self.cfg, session_id.replace("'", "").replace('"', "")
@@ -781,7 +824,7 @@ class InfluxBackend(Backend):
                           ' |> pivot(rowKey: ["_time", "session"], columnKey: ["_field"], valueColumn: "_value")')
         out = []
         for r in self._rows(res):
-            out.append(norm_session(_meta_back({**r, "id": r.get("session")})))
+            out.append(norm_session(_meta_back({**r, "id": r.get("session"), "point_us": r.get("time")})))   # point_us: when the point was written
         out.sort(key=lambda s: -s["start_us"])
         return out
 
@@ -1109,6 +1152,21 @@ class TimescaleBackend(Backend):
         cur.execute(f"SELECT session, count(*) FROM {self.t} GROUP BY session")
         return {k: int(v) for k, v in cur.fetchall()}
 
+    def set_start(self, session_id, start_us):
+        cur = self.conn.cursor()
+        cur.execute(f"UPDATE {self.ts} SET start_us=%s WHERE id=%s", (int(start_us), session_id))
+        self.conn.commit()
+
+    def delete_before(self, session_id, t_us):
+        cur = self.conn.cursor()
+        try:
+            cur.execute(f"DELETE FROM {self.t} WHERE session=%s AND time < %s", (session_id, us_to_rfc3339(int(t_us))))
+            self.conn.commit()
+        except Exception as e:
+            self.conn.rollback()
+            raise StoreError(f"TimescaleDB: nie można usunąć danych ({str(e).strip()[:200]}). Dane w skompresowanych "
+                             "fragmentach wymagają nowszej wersji TimescaleDB (2.11+).") from None
+
     def write(self, rows):
         data = [(us_to_rfc3339(t), self.sid, i, None if v != v else float(v)) for t, d, _k in _td(rows) for i, v in d.items()]
         cur = self.conn.cursor()
@@ -1340,6 +1398,19 @@ def remove_spool(path: str) -> None:
     Spool(path, 0).close(delete=True)
 
 
+def make_session_meta(cfg: StoreConfig, signals, start_wall: datetime, meta_extra: dict, t0: float = 0.0, key_s: float | None = None) -> dict:
+    """The description of a new recording (what `Backend.begin` stores). `t0` = seconds since `start_wall` the recording starts at."""
+    key_s = (max(cfg.keyframe_min, 0.0) * 60.0 if cfg.mode == "changes" else 0.0) if key_s is None else key_s
+    fields = unique_fields([s.name for s in signals])
+    return {"id": new_session_id(), "name": meta_extra.get("name", ""), "start_us": to_us(start_wall, max(float(t0), 0.0)),
+            "ip": meta_extra.get("ip", ""), "tab": meta_extra.get("tab", ""), "conf": meta_extra.get("conf", ""),
+            "title": meta_extra.get("title", ""), "description": meta_extra.get("description", ""), "notes": meta_extra.get("notes", ""),
+            "tags": meta_extra.get("tags", ""),
+            "owner": meta_extra.get("owner") or current_user(), "computer": meta_extra.get("computer") or platform.node(), "keyframe_min": key_s / 60.0,
+            "mode": cfg.mode, "signals": [s.to_dict() for s in signals], "fields": fields,
+            "device": _device_back(meta_extra.get("device"))}
+
+
 class DbRecorder:
     """The recorder of a database target: same interface as CsvRecorder (write / close / path), but the work is
     done by a thread: batches every ~0.5 s, retries while the server is away, bounded memory."""
@@ -1359,14 +1430,10 @@ class DbRecorder:
         self._key_s = max(cfg.keyframe_min, 0.0) * 60.0 if cfg.mode == "changes" else 0.0
         self._next_key = self._key_s
         self.fields = unique_fields([s.name for s in signals])
-        meta = {"id": new_session_id(), "name": meta_extra.get("name", ""), "start_us": to_us(start_wall, max(float(t0), 0.0)),
-                "ip": meta_extra.get("ip", ""), "tab": meta_extra.get("tab", ""), "conf": meta_extra.get("conf", ""),
-                "title": meta_extra.get("title", ""), "description": meta_extra.get("description", ""), "notes": meta_extra.get("notes", ""),
-                "tags": meta_extra.get("tags", ""),
-                "owner": meta_extra.get("owner") or current_user(), "computer": meta_extra.get("computer") or platform.node(), "keyframe_min": self._key_s / 60.0,
-                "mode": cfg.mode, "signals": [s.to_dict() for s in signals], "fields": self.fields,
-                "device": _device_back(meta_extra.get("device"))}
+        meta = make_session_meta(cfg, signals, start_wall, meta_extra, t0, self._key_s)
         self._begun = False
+        self._jobs: list = []                                    # (callable(backend), done(err)) run by the writer thread
+        self._jobs_lock = threading.Lock()
         self._info: dict = {}
         self._info_dirty = False
         self._meta, self._base_dir, self.session = meta, base_dir, meta["id"]
@@ -1446,7 +1513,31 @@ class DbRecorder:
             except sqlite3.Error:
                 pass
 
+    def submit(self, job, done=None) -> None:
+        """Runs `job(backend)` in the writer thread, in step with the rows it writes (e.g. moving the start of this recording). It waits
+        until the connection to the database exists; `done(error_text)` is called from the writer thread ('' = success)."""
+        with self._jobs_lock:
+            self._jobs.append((job, done))
+
+    def _run_jobs(self) -> None:
+        if not self._jobs or not self._begun or self.backend is None:
+            return
+        with self._jobs_lock:
+            jobs, self._jobs = self._jobs, []
+        for job, done in jobs:
+            try:
+                job(self.backend)
+                err = ""
+            except Exception as e:
+                err = str(e) or type(e).__name__
+            if done is not None:
+                try:
+                    done(err)
+                except Exception:
+                    pass
+
     def _apply_info(self) -> None:
+        self._run_jobs()
         if self._info_dirty and self._begun and self.backend is not None:
             try:
                 self.backend.update_session(self.session, dict(self._info))
