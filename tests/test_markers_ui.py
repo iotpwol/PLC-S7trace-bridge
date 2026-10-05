@@ -5,7 +5,7 @@ from datetime import datetime
 import numpy as np
 import pytest
 from PySide6.QtCore import QPointF, Qt
-from PySide6.QtWidgets import QApplication, QInputDialog, QMessageBox, QToolTip
+from PySide6.QtWidgets import QApplication, QFormLayout, QInputDialog, QMenu, QMessageBox, QToolTip
 
 from s7trace.core import markers as mk
 from s7trace.core import store
@@ -726,17 +726,112 @@ def test_left_panel_groups_fold_and_unfold(app):
     full = g.height()
     r = g._label_rect()
     ev = QMouseEvent(QEvent.MouseButtonPress, QPointF(r.center()), Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
-    g.mousePressEvent(ev)                                           # a click on the title folds the group (animated)
+    g.mousePressEvent(ev)                                           # a click on the title folds the group (animated), on release
+    g.mouseReleaseEvent(QMouseEvent(QEvent.MouseButtonRelease, QPointF(r.center()), Qt.LeftButton, Qt.NoButton, Qt.NoModifier))
     assert g.folded() is True
     g.set_folded(True, animate=False)
     assert g.height() < full / 2 and not g._body.isVisible() and g._t == 0.0
     tab._layout_moved()
-    assert tab.ui_state["folds"]["Trigger"] is True and tab.ui_state["folds"]["Połączenie"] is False
+    st = tab.panel_state()
+    assert st["folds"]["Trigger"] is True and st["folds"]["Połączenie"] is False
     g.set_folded(False, animate=False)
     assert g._body.isVisible() and g.maximumHeight() > 10000 and g._t == 1.0
-    tab.ui_state["folds"] = {"Sterownik": True}
-    tab.apply_layout()
+    tab.apply_panel({"folds": {"Sterownik": True}})
     assert tab.folds["Sterownik"].folded() and not tab.folds["Trigger"].folded()
+    tab.shutdown()
+
+
+def test_left_panel_drag_reorder_and_interface_profile(app, tmp_path):
+    from s7trace.core import panel_cfg
+    from s7trace.ui import theme as th
+    tab = TraceTab(TabConfig(), lambda: [])
+    tab.resize(1200, 900)
+    tab.show()
+    default = list(panel_cfg.GROUPS)
+    assert tab._group_order() == default
+    g = tab.folds["Trigger"]
+    top = tab.folds["Połączenie"]
+    tab._reorder_group(g, top.mapToGlobal(top.rect().center()).y() - 5)        # dragged above the first group
+    assert tab._group_order()[0] == "Trigger" and sorted(tab._group_order()) == sorted(default)
+    seen = []
+    tab.layoutChanged.connect(lambda: seen.append(1))
+    tab._layout_moved()
+    st = tab.panel_state()
+    assert st["order"][0] == "Trigger" and seen
+    # the order is a part of the interface configuration: normalised, saved in the profile file and loaded back
+    theme = th.normalize({"panel": st})
+    assert theme["panel"]["order"][0] == "Trigger"
+    f = tmp_path / "iface.json"
+    th.save_profile(str(f), theme)
+    back = th.load_profile(str(f))
+    assert back["panel"]["order"] == st["order"]
+    tab.apply_panel(panel_cfg.DEFAULTS)                                       # another configuration puts the groups back
+    assert tab._group_order() == default
+    tab.apply_panel(back["panel"])
+    assert tab._group_order() == st["order"]
+    tab.shutdown()
+
+
+def test_left_panel_rows_hide_via_menus_and_profile(app, tmp_path):
+    from s7trace.core import panel_cfg
+    from s7trace.ui import theme as th
+    tab = TraceTab(TabConfig(), lambda: [])
+    tab.resize(1200, 900)
+    tab.show()
+    for g in panel_cfg.GROUPS:                                                # the names the menus use = panel_cfg.ROWS
+        assert tuple(tab._row_keys[g]) == panel_cfg.ROWS[g]
+    assert tab.ed_ip.isVisible() and tab.sp_cycle.isVisible()
+    tab._toggle_row("Połączenie", "IP", False)                               # right click on the name "IP" -> Ukryj
+    assert not tab.ed_ip.isVisible() and tab.sp_cycle.isVisible()
+    assert tab.panel_state()["hidden"]["Połączenie"] == ["IP"]
+    m = QMenu()
+    tab._rows_menu(m, "Połączenie")                                           # menu of the group title: check list + show all
+    acts = {a.text(): a for a in m.actions() if a.text()}
+    assert acts["IP"].isCheckable() and not acts["IP"].isChecked() and acts["Cykle [ms]"].isChecked() and acts["Pokaż wszystkie elementy"].isEnabled()
+    acts["IP"].trigger()
+    assert tab.ed_ip.isVisible() and tab.panel_state()["hidden"]["Połączenie"] == []
+    # the right click on the label / on the group title reaches the menus
+    seen = []
+    tab._row_menu = lambda t, k, pos: seen.append((t, k))
+    lab = tab._forms["Połączenie"].itemAt(0, QFormLayout.LabelRole).widget()
+    from PySide6.QtGui import QContextMenuEvent
+    from PySide6.QtCore import QPoint
+    QApplication.sendEvent(lab, QContextMenuEvent(QContextMenuEvent.Mouse, QPoint(3, 3), QPoint(3, 3)))
+    assert seen == [("Połączenie", "IP")]
+    # saved in the interface configuration file and loaded back (unknown names are dropped)
+    st = {**tab.panel_state(), "hidden": {"Trigger": ["Folder", "Nie ma takiego"], "Połączenie": ["Metoda"]}}
+    theme = th.normalize({"panel": st})
+    assert theme["panel"]["hidden"]["Trigger"] == ["Folder"] and theme["panel"]["hidden"]["Połączenie"] == ["Metoda"]
+    f = tmp_path / "iface.json"
+    th.save_profile(str(f), theme)
+    back = th.load_profile(str(f))
+    tab.apply_panel(back["panel"])
+    assert not tab.lbl_method.isVisible() and tab.ed_ip.isVisible()
+    tab.apply_panel(panel_cfg.DEFAULTS)
+    assert tab.lbl_method.isVisible()
+    tab.shutdown()
+
+
+def test_panel_cfg_normalize():
+    from s7trace.core import panel_cfg
+    n = panel_cfg.normalize({"order": ["Trigger", "x", "Trigger"], "folds": {"Trigger": 1}, "info_tab": 7})
+    assert n["order"][0] == "Trigger" and sorted(n["order"]) == sorted(panel_cfg.GROUPS)
+    assert n["folds"]["Trigger"] is True and n["folds"]["Połączenie"] is False and n["info_tab"] == 0
+    assert panel_cfg.normalize(None) == panel_cfg.DEFAULTS
+
+
+def test_side_tabs_system_and_network(app):
+    from s7trace.core import sysinfo
+    tab = TraceTab(TabConfig(), lambda: [])
+    tab.show()
+    assert [tab.info_tabs.tabText(i) for i in range(tab.info_tabs.count())] == ["System", "Sieć"]
+    tab._update_side()
+    assert "Godzina systemowa" in tab.lbl_sys.text() and "Obciążenie CPU" in tab.lbl_sys.text()
+    assert "Brak połączenia" in tab.lbl_net.text()
+    tab._update_status()
+    assert "PLC comm lag" not in tab.lbl_status.text()
+    v = sysinfo.cpu_percent()
+    assert v is None or 0.0 <= v <= 100.0
     tab.shutdown()
 
 
@@ -877,13 +972,13 @@ def test_time_axis_clock_modes_and_offset(tab):
     assert ax.mode == "app" and ov.mode == "app" and abs(ax.shift - t0) < 1e-6 and tab.cfg.time_axis == "app"
     v = ax.tickValues(0, 10, 800)[0]
     assert ax.tickStrings(v[1][:2], 1, v[0]) == ["10:00:00", "10:00:02"]                    # whole seconds on round clock values
-    assert ax.tickStrings([0.0], 1, 1.0) == ["10:00:00"] and ax.tickStrings([0.25], 1, 0.05) == ["10:00:00'250"]
+    assert ax.tickStrings([0.0], 1, 1.0) == ["10:00:00"] and ax.tickStrings([0.25], 1, 0.05) == ["10:00:00.250"]
     assert ax.tickStrings([0.0], 1, 60.0) == ["10:00"]                                      # only as much as the zoom needs
     tab.sp_toff.setValue(1.5)                                                               # the axis is corrected by +1.5 s
-    assert abs(ax.shift - (t0 + 1.5)) < 1e-6 and ax.tickStrings([0.0], 1, 0.5) == ["10:00:01'500"]
+    assert abs(ax.shift - (t0 + 1.5)) < 1e-6 and ax.tickStrings([0.0], 1, 0.5) == ["10:00:01.500"]
     tab.device = {"method": "s7", "info": {"family": "S7-1500"}, "time_diff_local": 2.0}
     tab.cb_taxis.setCurrentIndex(tab.cb_taxis.findData("plc"))                              # controller clock = computer + difference
-    assert abs(ax.shift - (t0 + 2.0 + 1.5)) < 1e-6 and ax.tickStrings([0.0], 1, 0.5) == ["10:00:03'500"]
+    assert abs(ax.shift - (t0 + 2.0 + 1.5)) < 1e-6 and ax.tickStrings([0.0], 1, 0.5) == ["10:00:03.500"]
     tab.cb_taxis.setCurrentIndex(tab.cb_taxis.findData("rel"))
     assert ax.mode == "rel" and ax.shift == 1.5 and ax.tickStrings([10.0], 1, 0.5) == ["11.5s"]
     c = tab.to_config()
@@ -912,3 +1007,119 @@ def test_help_bubble_under_the_cursor_is_not_described_again(tab, monkeypatch):
         hm._poll()
     assert not shown                                                         # nothing new is shown while the cursor is on the bubble
     QToolTip.hideText()
+
+
+# ---------------------------------------------------------- offset = date (days) + HH:MM:SS.mmm; the PLC clock in the 'Sterownik' box
+def test_offset_helpers_and_editor_roundtrip(tab):
+    from s7trace.core.types import TIME_OFFSET_MAX, fmt_offset, offset_join, offset_split
+    assert offset_split(0) == (False, 0, 0) and offset_split(90061.5) == (False, 1, 3_661_500)
+    assert offset_split(-90061.5) == (True, 1, 3_661_500) and offset_join(True, 1, 3_661_500) == -90061.5
+    assert offset_split(-0.0004) == (False, 0, 0)                                   # a sign without a value is no offset
+    assert offset_split(1e12)[1] == 3650 and TIME_OFFSET_MAX == 3650 * 86400.0       # clamped to 10 years
+    assert fmt_offset(-(3 * 86400 + 7200)) == "-3 d 02:00:00.000"
+    ed = tab.sp_toff
+    for v in (0.0, 1.5, -2.25, 86400.0 * 400 + 3723.004, -86400.0 * 3650):
+        ed.setValue(v)
+        assert abs(ed.value() - v) < 1e-6, v
+    ed.setValue(-90061.5)                                                           # the two fields + the sign button
+    assert ed.btn_sign.isChecked() and ed.sp_days.value() == 1 and ed.ed_time.time().toString("HH:mm:ss.zzz") == "01:01:01.500"
+    got = []
+    ed.valueChanged.connect(got.append)
+    ed.sp_days.setValue(2)
+    assert got and abs(got[-1] - -(2 * 86400 + 3661.5)) < 1e-6
+    ed.setValue(0.0)
+    tab.sp_toff.setValue(5 * 86400 + 1.5)                                           # the tab takes it into the axis and the config
+    ax = tab.plot.plot.getAxis("bottom")
+    assert tab.to_config().time_offset == 5 * 86400 + 1.5 and ax.shift == 5 * 86400 + 1.5          # (relative axis: shift = offset)
+
+
+def test_sterownik_box_shows_the_plc_clock_and_suggests_an_offset(tab):
+    from datetime import datetime, timedelta
+    dev = {"method": "s7", "info": {"family": "S7-300", "model": "CPU 315-2 PN/DP", "firmware": "V3.2.10", "plc_name": "Proofer",
+                                    "module_name": "CPU 315-2 PN/DP"}, "time_diff_local": 3 * 86400.0 + 7200.0}
+    tab._infoRaw.emit(dev)
+    QApplication.processEvents()
+    plc = datetime.now() + timedelta(seconds=dev["time_diff_local"])
+    t = tab.lbl_dev.text()
+    assert "Czas PLC:" in t and f"{plc:%Y-%m-%d}&nbsp;&nbsp;{plc:%H:%M}" in t                  # date and time separated by two spaces
+    assert t.index("Nazwa modułu") < t.index("Czas PLC")                                        # the sixth line
+    assert "+3 d 02:00:00.000" in tab.lbl_status.text() and "Offset osi" in tab.lbl_status.text()  # a day or more: announced
+    before = tab.lbl_dev.text()
+    tab._tick_plc_time()                                                                        # refreshed from the computer's clock
+    assert "Czas PLC:" in tab.lbl_dev.text() and tab.plc_timer.interval() == 1000 and tab.plc_timer.isActive()
+    tab.sp_toff.setValue(-dev["time_diff_local"])                                               # 'Wyrównaj do komputera'
+    tab.cb_taxis.setCurrentIndex(tab.cb_taxis.findData("plc"))
+    ax = tab.plot.plot.getAxis("bottom")
+    assert abs(ax.shift - tab.start_wall.timestamp()) < 1e-6                                    # PLC axis = the computer's clock again
+    tab.status_msg = "Gotowy."
+    tab._update_status()
+    tab._infoRaw.emit({**dev, "time_diff_local": 2.0})
+    assert "Czas PLC" in tab.lbl_dev.text() and "różni się" not in tab.lbl_status.text()         # a small difference is not announced
+    tab.device = None
+    tab._show_device()
+    assert "Czas PLC" not in tab.lbl_dev.text()
+
+
+# ------------------------------------------------------------------ 'Pobierz dane sterownika' + the load of this program
+def test_read_device_button_reads_only_controller_data(app):
+    import time as _t
+    from s7trace.sim import Simulator
+    sim = Simulator(11177)
+    sim.start()
+    _t.sleep(0.5)
+    try:
+        tab = TraceTab(TabConfig(), lambda: [])
+        tab.show()
+        tab.ed_ip.setText("127.0.0.1:11177")
+        assert tab.btn_dev.isEnabled() and tab.state == "stopped" and tab.device is None
+        assert "Brak danych sterownika" in tab.lbl_dev.text()
+        tab.read_device_now()                                               # no Start, no signals, no chart
+        assert tab._dev_busy and not tab.btn_dev.isEnabled() and tab.btn_dev.text() == "Pobieranie…"
+        end = _t.time() + 15
+        while tab._dev_busy and _t.time() < end:
+            app.processEvents()
+            _t.sleep(0.05)
+        assert not tab._dev_busy and tab.btn_dev.isEnabled() and tab.btn_dev.text() == "Pobierz dane sterownika"
+        assert tab.state == "stopped" and tab.acq is None
+        assert tab.device is not None and tab.device["method"] == "s7"
+        assert "Nie udało się" not in tab.lbl_dev.text()
+        tab.shutdown()
+    finally:
+        sim.stop()
+
+
+def test_read_device_button_reports_failure_and_wrong_method(app, monkeypatch):
+    tab = TraceTab(TabConfig(), lambda: [])
+    tab.show()
+    from s7trace.core import detect
+    monkeypatch.setattr(detect, "read_device_s7", lambda *a: (_ for _ in ()).throw(RuntimeError("brak odpowiedzi")))
+    tab.ed_ip.setText("127.0.0.1:11999")
+    tab.read_device_now()
+    import time as _t
+    end = _t.time() + 10
+    while tab._dev_busy and _t.time() < end:
+        app.processEvents()
+        _t.sleep(0.05)
+    assert "Nie udało się pobrać danych sterownika: brak odpowiedzi" in tab.lbl_dev.text() and tab.device is None
+    tab.cb_ctype = getattr(tab, "cb_ctype", None)
+    tab.cfg.conn_type = "opcua"
+    tab._collect = lambda: type("C", (), {"conn_type": "opcua", "ip": "127.0.0.1"})()
+    tab.read_device_now()
+    assert "tylko dla połączenia S7comm" in tab.lbl_dev.text() and not tab._dev_busy
+    tab.shutdown()
+
+
+def test_system_tab_shows_the_load_of_this_program(app):
+    import time as _t
+    from s7trace.core import sysinfo
+    sysinfo.app_cpu_percent()
+    end = _t.time() + 1.2
+    while _t.time() < end:                                                    # burn a little CPU so that the interval has a load
+        sum(i * i for i in range(20000))
+    v = sysinfo.app_cpu_percent()
+    assert v is not None and 0.0 <= v <= 100.0
+    tab = TraceTab(TabConfig(), lambda: [])
+    tab.show()
+    tab._update_side()
+    assert "w tym ta aplikacja" in tab.lbl_sys.text()
+    tab.shutdown()

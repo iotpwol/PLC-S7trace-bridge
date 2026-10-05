@@ -151,7 +151,8 @@ class InterfaceDialog(QDialog):
 
     def _load(self, preset: dict, keep_font: bool = True) -> None:
         font = {k: self.theme[k] for k in ("font_family", "font_size", "rec_blink_hz", "bar_always", "status_lines")}
-        self.theme = th.normalize(preset)
+        keep = {k: self.theme[k] for k in ("panel", "marker_look") if k in self.theme and k not in preset}
+        self.theme = th.normalize({**preset, **keep})
         if keep_font:
             self.theme.update(font)
         self._sync_widgets()
@@ -182,6 +183,7 @@ class InterfaceDialog(QDialog):
             QMessageBox.warning(self, "Interfejs", f"Nie można wczytać konfiguracji: {e}")
             return
         t.setdefault("marker_look", self.theme["marker_look"])      # a file of an older version has none: keep the current one
+        t.setdefault("panel", self.theme["panel"])
         self.theme = t
         self._sync_widgets()
         self._apply(self.theme)

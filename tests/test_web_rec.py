@@ -365,16 +365,18 @@ def test_http_help_version_and_legend_data(srv, sim):
     try:
         assert ola.get(f"/api/connections/{cid}/config")[1]["legend_mode"] == "address"
         cfg = ola.get(f"/api/connections/{cid}/config")[1]
+        assert "plc_diff" in cfg and cfg["server_now"] > 1.7e9 and isinstance(cfg["server_tz"], int)
         assert cfg["time_axis"] == "plc" and cfg["time_offset"] == 1.5                       # the time axis of the connection (editor)
         assert ola.post("/api/connections", {"name": "X", "ip": "127.0.0.1", "time_axis": "zegar"})[0] == 400
-        assert ola.post("/api/connections", {"name": "X", "ip": "127.0.0.1", "time_offset": 99999})[0] == 400
+        assert ola.post("/api/connections", {"name": "X", "ip": "127.0.0.1", "time_offset": 1e9})[0] == 400                    # more than 10 years
+        assert ola.post("/api/connections", {"name": "X", "ip": "127.0.0.1", "time_offset": -86400 * 400.5})[0] == 200   # days are fine now
         assert ola.get(f"/api/connections/{cid}/config")[1]["device"] == []
         assert ola.post(f"/api/connections/{cid}/start")[0] == 200
         assert _wait(lambda: ola.get(f"/api/connections/{cid}")[1]["state"] == "running")
         time.sleep(0.5)
         s = ola.get(f"/api/connections/{cid}/series?seconds=5")[1]
         assert s["addresses"] == ["DB1.DBX100.0"] and s["layout"]["legend_mode"] == "address"
-        assert s["layout"]["time_axis"] == "plc" and s["layout"]["time_offset"] == 1.5 and "plc_diff" in s and s["start_us"] > 0
+        assert s["layout"]["time_axis"] == "plc" and s["layout"]["time_offset"] == 1.5 and "plc_diff" in s and s["start_us"] > 0 and isinstance(s["tz_offset"], int)
         assert "Adres: DB1.DBX100.0" in s["tips"][0] and "Opis: pierwszy" in s["tips"][0] and "Aktualna wartość" not in s["tips"][0]
         assert any(a == "Model CPU" for a, _ in ola.get(f"/api/connections/{cid}/config")[1]["device"])
     finally:

@@ -12,6 +12,7 @@ import os
 import secrets
 import threading
 import time
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -19,8 +20,9 @@ from .auth import KIND_LABEL, ROLE_LABEL, AuthError, UserStore, role_allows
 from ..core import diagnostics as dg
 from ..core import store as st
 from ..core.config import TabConfig
+from ..core.detect import read_device_s7
 from .. import version
-from ..core import help_texts
+from ..core import help_texts, sysinfo
 from . import editing
 from . import files
 from . import sso
@@ -177,6 +179,14 @@ class Handler(BaseHTTPRequestHandler):
                                   "first_run": self.app.users.count() == 0, "sso": self.app.sso})
             if path == "/api/help":
                 return self._json({"help": help_texts.HELP})
+            if path == "/api/sysinfo":                                    # the 'System' tab under the chart: the server computer
+                if self._session("viewer") is not None:
+                    now = datetime.now()
+                    cpu = sysinfo.cpu_percent()
+                    app = sysinfo.app_cpu_percent()                         # this server (+ its acquisition processes)
+                    self._json({"time": now.strftime("%Y-%m-%d  %H:%M:%S"), "cpu": None if cpu is None else round(cpu, 1),
+                                "app_cpu": None if app is None else round(app, 1)})
+                return
             if path == "/api/version":
                 return self._json({"author": version.AUTHOR, "version": version.VERSION, "date": version.DATE})
             if path == "/api/sso":
@@ -262,9 +272,7 @@ class Handler(BaseHTTPRequestHandler):
         if what == "config":
             if not host.can_edit(s["username"], s["role"]):
                 return self._error(403, "Brak uprawnień do edycji tego połączenia.")
-            return self._json({**editing.view(host.cfg, host.web, self.app.targets.names()), "state": host.state,
-                               "recording": host.recorder is not None,
-                               "device": st.device_lines(st.device_summary(host.device, host.cfg.ip))})
+            return self._json(self._config_payload(host))
         if what == "series":
             span = (float(q["from"]), float(q["to"])) if "from" in q and "to" in q else None
             return self._json(host.series(float(q.get("seconds", 60)), since=float(q["since"]) if "since" in q else None,
@@ -402,6 +410,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._error(400, str(e))
         self._json(host.describe(s["username"], s["role"]))
 
+    def _config_payload(self, host) -> dict:
+        return {**editing.view(host.cfg, host.web, self.app.targets.names()), "state": host.state,
+                "recording": host.recorder is not None,
+                "device": st.device_lines(st.device_summary(host.device, host.cfg.ip)),
+                "plc_diff": (host.device or {}).get("time_diff_local"),      # PLC clock - server clock [s], read at the connection
+                "server_now": time.time(), "server_tz": time.localtime().tm_gmtoff}
+
     def _connection_post(self, parts: list[str], d: dict):
         s = self._session("operator")
         if s is None:
@@ -430,6 +445,19 @@ class Handler(BaseHTTPRequestHandler):
             if "trigger" in changed:
                 host.reload_trigger()
             host.version += 1
+        elif action == "read-device":                  # 'Pobierz dane sterownika': only the controller data + its clock, no acquisition
+            if not host.can_run(user, role):
+                return self._error(403, "Brak uprawnień do tego połączenia.")
+            if host.state != "stopped":
+                return self._error(400, "Połączenie pracuje – dane sterownika odświeżają się przy każdym połączeniu.")
+            if host.cfg.conn_type not in ("auto", "s7"):
+                return self._error(400, "Dane sterownika można pobrać tylko dla połączenia S7comm.")
+            try:
+                dev = read_device_s7(host.cfg.ip, host.cfg.rack, host.cfg.slot)
+            except Exception as e:
+                return self._error(502, f"Nie udało się pobrać danych sterownika: {e}")
+            host._on_info(dev)
+            return self._json(self._config_payload(host))
         elif action == "trigger":
             if not host.can_run(user, role):
                 return self._error(403, "Brak uprawnień do tego połączenia.")

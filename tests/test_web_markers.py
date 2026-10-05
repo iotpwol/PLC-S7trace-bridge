@@ -255,6 +255,28 @@ def test_marker_look_is_kept_per_account_on_the_server(srv):
     assert os.path.isfile(os.path.join(srv.app.data_dir, "prefs", "u_ola.json"))
 
 
+def test_panel_layout_is_kept_per_account_and_sysinfo_answers(srv):
+    from s7trace.core import panel_cfg
+    ola, ala = _user(srv, "ola"), _user(srv, "ala")
+    assert ola.get("/api/prefs")[1]["prefs"]["panel"] == panel_cfg.DEFAULTS
+    st_, d = ola.post("/api/prefs", {"panel": {"order": ["Trigger", "nope", "Sterownik"], "folds": {"Trigger": True}, "info_tab": 1}})
+    p = d["prefs"]["panel"]
+    assert st_ == 200 and p["order"][:2] == ["Trigger", "Sterownik"] and sorted(p["order"]) == sorted(panel_cfg.GROUPS)
+    assert p["folds"]["Trigger"] is True and p["info_tab"] == 1
+    assert ola.get("/api/prefs")[1]["prefs"]["panel"] == p and d["prefs"]["marker_look"]["width_all"] == 2   # marker look untouched
+    assert ala.get("/api/prefs")[1]["prefs"]["panel"] == panel_cfg.DEFAULTS
+    st_, si = ola.get("/api/sysinfo")
+    assert st_ == 200 and "  " in si["time"] and (si["cpu"] is None or 0 <= si["cpu"] <= 100)
+    html = open(os.path.join(os.path.dirname(__import__("s7trace.web.server", fromlist=["x"]).__file__), "static", "index.html"), encoding="utf-8").read()
+    assert 'id="e-folds"' in html and 'id="c-side"' in html and html.count('class="fold" data-fold=') == 5
+    import re
+    for m in re.finditer(r'<div class="fold" data-fold="([^"]+)">(.*?)(?=<div class="fold" data-fold=|</div>\s*<h3>Sygnały|<p class="muted">Znaczniki w nazwach)', html, re.S):
+        assert set(re.findall(r'data-row="([^"]+)"', m.group(2))) == set(panel_cfg.WEB_ROWS[m.group(1)]), m.group(1)   # names the menus use
+    st_, d = ola.post("/api/prefs", {"panel": {"hidden": {"Połączenie": ["Rack", "IP", "Slot"], "Trigger": ["Warunek"]}}})
+    assert d["prefs"]["panel"]["hidden"]["Połączenie"] == ["Rack", "Slot"] and d["prefs"]["panel"]["hidden"]["Trigger"] == ["Warunek"]   # known names only
+    assert ala.get("/api/prefs")[1]["prefs"]["panel"]["hidden"]["Trigger"] == []
+
+
 def test_delta_marker_needs_one_signal_via_the_api(srv):
     ola = _user(srv, "ola")
     h = _host(srv, owner="ola")
@@ -269,3 +291,31 @@ def test_delta_marker_needs_one_signal_via_the_api(srv):
     assert ola.post("/api/markers", {"action": "update", "id": mid, "signals": ["B"]})[1]["marker"]["signals"] == ["B"]
     code, d = ola.post("/api/markers", {"action": "batch", "adds": [{"tmp": -1, "kind": "delta", "at_us": BASE, "end_us": BASE + 5, "signals": ["A", "B"]}]})
     assert code == 400                                                                       # a batch is written as a whole or not at all
+
+
+def test_read_device_only_and_server_load(srv):
+    import time as _t
+    from s7trace.sim import Simulator
+    sim = Simulator(11188)
+    sim.start()
+    _t.sleep(0.5)
+    ola = _user(srv, "ola")
+    try:
+        h = _host(srv, owner="ola")
+        h.cfg.ip = "127.0.0.1:11188"
+        assert h.device is None
+        st_, d = ola.post(f"/api/connections/{h.id}/read-device", {})
+        assert st_ == 200 and h.state == "stopped" and h.device is not None and h.device["method"] == "s7"      # no acquisition started
+        assert "device" in d and d["state"] == "stopped"
+        h.cfg.ip = "127.0.0.1:11189"                                                                      # nothing listens there
+        st_, d = ola.post(f"/api/connections/{h.id}/read-device", {})
+        assert st_ == 502 and "Nie udało się pobrać danych sterownika" in d["error"]
+        h.cfg.conn_type = "opcua"
+        st_, d = ola.post(f"/api/connections/{h.id}/read-device", {})
+        assert st_ == 400
+    finally:
+        sim.stop()
+    si = ola.get("/api/sysinfo")[1]
+    assert "app_cpu" in si
+    html = open(os.path.join(os.path.dirname(__import__("s7trace.web.server", fromlist=["x"]).__file__), "static", "index.html"), encoding="utf-8").read()
+    assert 'id="e-readdev"' in html

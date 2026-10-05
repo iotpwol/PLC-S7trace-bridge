@@ -94,13 +94,11 @@ class Acquirer(threading.Thread):
 
     def _identify(self, client) -> dict | None:
         """Device data (model, firmware, station name ...) read over the connection that was just opened."""
-        from .detect import DetectResult, identify_s7
+        from .detect import DetectResult, device_data, identify_s7
         res = DetectResult(host=self.host)
         res.rack, res.slot = self.rack, self.slot
         identify_s7(client, res)
-        return {"method": "s7", "info": res.info, "plc_time": res.plc_time, "plc_time_utc": res.plc_time_utc,
-                "time_diff_local": res.time_diff_local, "time_diff_utc": res.time_diff_utc,
-                "rack": self.rack, "slot": self.slot}
+        return device_data(res, self.rack, self.slot)
 
     def _announce(self, client) -> None:
         if self.on_info is None:

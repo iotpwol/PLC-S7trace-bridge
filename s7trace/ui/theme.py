@@ -8,7 +8,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont, QGuiApplication, QPalette
 from PySide6.QtWidgets import QApplication
 
-from ..core import marker_look
+from ..core import marker_look, panel_cfg
 from ..core.config import app_dir
 
 # key -> (label shown in the 'Interfejs' dialog, default dark colour)
@@ -113,6 +113,8 @@ def normalize(theme: dict | None) -> dict:
             pass
     # the look of the marker lines belongs to the interface configuration (saved in a profile file, switched with it)
     out["marker_look"] = marker_look.normalize((theme or {}).get("marker_look"))
+    # and so does the layout of the left panel (order of the groups, folded groups, the bottom tab)
+    out["panel"] = panel_cfg.normalize((theme or {}).get("panel"))
     return out
 
 
@@ -137,9 +139,9 @@ def save_profile(path: str, theme: dict) -> None:
                "status_lines": t["status_lines"]}
     ordered.update({k: t[k] for k in COLOR_KEYS})
     ordered.update({"marker_" + k: v for k, v in t["marker_look"].items()})          # one flat parameter per line
+    ordered.update({"panel_" + k: v for k, v in t["panel"].items()})
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(ordered, f, ensure_ascii=False, indent=2)       # indent -> each parameter on its own line
-        f.write("\n")
+        f.write("{\n" + ",\n".join(f"  {json.dumps(k)}: {json.dumps(v, ensure_ascii=False)}" for k, v in ordered.items()) + "\n}\n")   # one parameter per line
 
 
 def load_profile(path: str) -> dict:
@@ -148,9 +150,12 @@ def load_profile(path: str) -> dict:
     if not isinstance(data, dict):
         raise ValueError("plik nie zawiera konfiguracji interfejsu")
     look = {k[len("marker_"):]: v for k, v in data.items() if k.startswith("marker_")}
-    t = normalize({**data, "marker_look": look})
+    panel = {k[len("panel_"):]: v for k, v in data.items() if k.startswith("panel_")}
+    t = normalize({**data, "marker_look": look, "panel": panel})
     if not look:                                     # a file of an older version: leave the current marker look as it is
         t.pop("marker_look")
+    if not panel:                                    # (and the layout of the left panel)
+        t.pop("panel")
     return t
 
 

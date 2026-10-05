@@ -337,6 +337,7 @@ class HostedConnection:
                            "y_max": self.cfg.y_max, "show_points": self.cfg.show_points},
                 "last": float(last), "state": self.state,
                 "plc_diff": (self.device or {}).get("time_diff_local"),            # PLC clock minus the server's [s] (axis "Czas PLC")
+                "tz_offset": time.localtime().tm_gmtoff,                            # the server's zone: the clock axes show the SERVER's local time
                 "start_us": int(self.start_wall.timestamp() * 1e6)}
 
 

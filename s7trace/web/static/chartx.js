@@ -1,7 +1,7 @@
 "use strict";
 // Chart tools shared by the live chart and the recording view (the counterparts of the desktop program):
 //  - "Znacznik poziomu sygnału" = cursors H1/H2 (value in the lane under the line, ΔY),
-//  - the time axis of the chart: seconds from the start (as before) or a clock HH:MM:SS'mmm of the server / the PLC with a +- offset,
+//  - the time axis of the chart: seconds from the start (as before) or a clock HH:MM:SS.mmm of the server / the PLC with a +- offset,
 //  - zoom with Ctrl + mouse wheel, pan by dragging, Shift + drag = zoom to the selected range,
 //  - overview strip of the whole data with the shown range (drag it, click to centre, drag an edge to resize),
 //  - "Punkty" (sample points) and the chart layout (lanes by Share / offset Y + gain) for this viewer.
@@ -78,23 +78,38 @@ function cxAttach(cv, cfg) {
 }
 
 // ---- time axis: the clock of the server ("app") or of the PLC ("plc") + the offset; null = seconds from the start (labels drawn by app.js)
+// Offset of the clock axis = sign + days (the date part) + HH:MM:SS.mmm; kept in three inputs, read / written in seconds (helpers shared with the editor in app.js)
+const CX_OFF_MAX = 3650 * 86400;
+function cxOffGet(sEl, dEl, tEl) {   // null = nothing typed ("per connection"), NaN = not a valid time
+  const d = dEl.value.trim(), t = tEl.value.trim(); if (d === "" && t === "") return null;
+  const m = t === "" ? [0, 0, 0, 0, 0] : /^(\d{1,2}):(\d{2})(?::(\d{2})(?:[.,](\d{1,3}))?)?$/.exec(t); if (!m || (d !== "" && !(+d >= 0))) return NaN;
+  const ms = (+m[1] * 3600 + +m[2] * 60 + +(m[3] || 0)) * 1000 + +((m[4] || "0").padEnd(3, "0")), v = Math.round(+d || 0) * 86400 + ms / 1000;
+  return Math.max(-CX_OFF_MAX, Math.min(CX_OFF_MAX, sEl.value === "-1" ? -v : v));
+}
+function cxOffSet(sEl, dEl, tEl, sec) {
+  const v = Math.max(-CX_OFF_MAX, Math.min(CX_OFF_MAX, +sec || 0)), a = Math.abs(v), tot = Math.round(a * 1000), days = Math.floor(tot / 86400000), ms = tot % 86400000, p = (n, l = 2) => String(n).padStart(l, "0");
+  sEl.value = v < 0 && tot > 0 ? "-1" : "1"; dEl.value = days; tEl.value = `${p(Math.floor(ms / 3600000))}:${p(Math.floor(ms / 60000) % 60)}:${p(Math.floor(ms / 1000) % 60)}.${p(ms % 1000, 3)}`;
+}
+const cxOffFmt = (sec) => { const v = Math.round(Math.abs(sec) * 1000), d = Math.floor(v / 86400000), ms = v % 86400000, p = (n, l = 2) => String(n).padStart(l, "0");
+  return `${sec < 0 && v ? "-" : "+"}${d} d ${p(Math.floor(ms / 3600000))}:${p(Math.floor(ms / 60000) % 60)}:${p(Math.floor(ms / 1000) % 60)}.${p(ms % 1000, 3)}`; };
 const CX_NICE = [0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200, 86400];
 function cxClock(cv, ds) {
   const st = cv._cx || {}, d = (ds && ds.layout) || {}, mode = st.taxis || d.time_axis || "rel";
   if (mode === "rel" || !ds || !ds.start_us) return null;
   const off = st.toff !== null && st.toff !== undefined ? st.toff : (+d.time_offset || 0), diff = ds.plc_diff ?? ds.device?.time_diff;
-  return { mode, shift: ds.start_us / 1e6 + (mode === "plc" ? +diff || 0 : 0) + off, noPlc: mode === "plc" && (diff === null || diff === undefined) };
+  return { mode, shift: ds.start_us / 1e6 + (mode === "plc" ? +diff || 0 : 0) + off, noPlc: mode === "plc" && (diff === null || diff === undefined),
+           tz: ds.tz_offset === null || ds.tz_offset === undefined ? null : -ds.tz_offset };   // the server's zone (a recording: the browser's)
 }
 function cxAxis(g, geo, clock) {   // ticks on whole clock seconds / minutes; only as many parts of the time as the zoom needs
   const { t0, t1, pad, W, H } = geo, span = t1 - t0, wpx = W - pad.l - pad.r; if (!(span > 0)) return;
-  const sp = CX_NICE.find((n) => span / n <= Math.max(wpx / 120, 1)) || 86400, tz = new Date((clock.shift + t0) * 1000).getTimezoneOffset() * 60;
+  const sp = CX_NICE.find((n) => span / n <= Math.max(wpx / 120, 1)) || 86400, tz = clock.tz ?? new Date((clock.shift + t0) * 1000).getTimezoneOffset() * 60;
   const first = Math.ceil((t0 + clock.shift - tz) / sp), last = Math.min(Math.floor((t1 + clock.shift - tz) / sp), first + 400), p = (n, l = 2) => String(n).padStart(l, "0");
   g.save(); g.font = "11px sans-serif"; g.fillStyle = "#aaa"; g.strokeStyle = "#777"; g.textAlign = "center"; g.lineWidth = 1;
   for (let k = first; k <= last; k++) {
     const x = pad.l + (k * sp - clock.shift + tz - t0) / span * wpx, d = new Date(Math.round(k * sp * 1000));        // (the local clock read with the UTC getters)
     const hm = `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`;
     g.beginPath(); g.moveTo(x, H - pad.b); g.lineTo(x, H - pad.b + 4); g.stroke();
-    g.fillText(sp >= 60 ? hm : sp >= 1 ? `${hm}:${p(d.getUTCSeconds())}` : `${hm}:${p(d.getUTCSeconds())}'${p(d.getUTCMilliseconds(), 3)}`, x, H - pad.b + 16);
+    g.fillText(sp >= 60 ? hm : sp >= 1 ? `${hm}:${p(d.getUTCSeconds())}` : `${hm}:${p(d.getUTCSeconds())}.${p(d.getUTCMilliseconds(), 3)}`, x, H - pad.b + 16);
   }
   if (clock.noPlc) { g.fillStyle = "#e0a030"; g.fillText("brak czasu PLC – pokazano czas serwera", pad.l + wpx / 2, H - 4); }
   g.restore();
@@ -142,13 +157,17 @@ function cxToolbar(box, cv) {
     <label title="Pokazuje punkty próbek na krzywych"><input type="checkbox" data-x="pts"> Punkty</label>
     <label>Układ <select data-x="lay"><option value="">wg połączenia</option><option value="lanes">Pasma wg Share</option><option value="offset">Offset Y + wzmocnienie</option></select></label>
     <label>Legenda <select data-x="leg"><option value="">wg połączenia</option><option value="name">Nazwa</option><option value="address">Adres / węzeł OPC</option></select></label>
-    <label title="Opisy osi czasu: sekundy od startu albo zegar HH:MM:SS'mmm – serwera (aplikacji) lub sterownika PLC">Oś czasu <select data-x="tax"><option value="">wg połączenia</option><option value="rel">Względna</option><option value="app">Czas aplikacji</option><option value="plc">Czas PLC</option></select></label>
-    <label title="Korekta czasu na osi zegarowej [s] (puste = wg połączenia)">Offset [s] <input type="number" step="0.001" min="-86400" max="86400" data-x="toff" style="width:7em" placeholder="wg połączenia"></label>
+    <label title="Opisy osi czasu: sekundy od startu albo zegar HH:MM:SS.mmm – serwera (aplikacji) lub sterownika PLC">Oś czasu <select data-x="tax"><option value="">wg połączenia</option><option value="rel">Względna</option><option value="app">Czas aplikacji</option><option value="plc">Czas PLC</option></select></label>
+    <span title="Korekta czasu na osi zegarowej: znak, data (pełne doby) i godzina HH:MM:SS.mmm (puste = wg połączenia)">Offset
+      <select data-x="toff-s"><option value="1">+</option><option value="-1">-</option></select>
+      <input type="number" min="0" max="3650" step="1" data-x="toff-d" style="width:5em" placeholder="dni"> d
+      <input type="text" data-x="toff-t" style="width:8.5em" placeholder="HH:MM:SS.mmm"></span>
     <span class="muted">Ctrl + kółko – przybliżanie, przeciąganie – przesuwanie, Shift + przeciąganie – zakres.</span>`;
   const q = (k) => box.querySelector(`[data-x=${k}]`), sync = () => { q("h").classList.toggle("on", st.hOn); };
   q("h").onclick = () => { st.hOn = !st.hOn; if (!st.hOn) st.h = []; sync(); cv.style.cursor = st.hOn ? "crosshair" : ""; st.cfg.redraw(); };
   q("tax").onchange = () => { st.taxis = q("tax").value; st.cfg.redraw(); };
-  q("toff").oninput = () => { st.toff = q("toff").value === "" || !Number.isFinite(+q("toff").value) ? null : Math.max(-86400, Math.min(86400, +q("toff").value)); st.cfg.redraw(); };
+  const offIn = () => { const v = cxOffGet(q("toff-s"), q("toff-d"), q("toff-t")); st.toff = v === null || Number.isNaN(v) ? null : v; q("toff-t").style.outline = Number.isNaN(v) ? "2px solid #c33" : ""; st.cfg.redraw(); };
+  for (const k of ["toff-s", "toff-d", "toff-t"]) q(k).oninput = offIn;
   q("pts").onchange = () => { st.points = q("pts").checked; st.cfg.redraw(); };
   q("lay").onchange = () => { st.layout = q("lay").value; st.cfg.redraw(); };
   q("leg").onchange = () => { st.legend = q("leg").value; st.cfg.redraw(); };

@@ -18,7 +18,8 @@ def _e(what: str, why: str, how: str = "", rng: str = "") -> str:
 _RAW: dict[str, str] = {
     # ---- group boxes of the left panel
     "Połączenie": _e("Ustawienia połączenia ze sterownikiem.", "Wskazuje, z którym sterownikiem i jak program się łączy.", "Wpisz adres IP, rack i slot, cykl odczytu.", "Klik w tytuł zwija / rozwija pole."),
-    "Sterownik": _e("Dane odczytane ze sterownika po połączeniu (rodzina, model, firmware, nazwa stacji…).", "Pozwala sprawdzić, z jakim urządzeniem pracujesz.", "Wypełniają się same po pierwszym połączeniu; pełna tabela: Diagnostyka → Informacje o sterowniku."),
+    "Sterownik": _e("Dane odczytane ze sterownika po połączeniu (rodzina, model, firmware, nazwa stacji…).", "Pozwala sprawdzić, z jakim urządzeniem pracujesz.", "Wypełniają się same po pierwszym połączeniu albo po naciśnięciu „Pobierz dane sterownika”; pełna tabela: Diagnostyka → Informacje o sterowniku."),
+    "Pobierz dane sterownika": _e("Jednorazowo łączy się ze sterownikiem i czyta tylko jego dane oraz zegar (czas PLC).", "Pozwala poznać sterownik i sprawdzić jego zegar bez uruchamiania odczytu sygnałów i wykresu.", "Połączenie musi być zatrzymane, metoda S7comm; używa adresu, racka i slotu z pola Połączenie."),
     "Zakres okna wykresu": _e("Ustawienia widocznego okna czasu i osi Y.", "Decydują, ile czasu widać na wykresie i jak są skalowane krzywe.", "Wybierz okno czasu i układ osi Y."),
     "Trigger": _e("Wyzwalacz: warunek na jednym sygnale.", "Zatrzymuje wykres albo zapisuje plik, gdy sygnał spełni warunek.", "Włącz trigger, wybierz sygnał, tryb i wartości progowe."),
     "Nagrywanie REC": _e("Ustawienia nagrywania przebiegu do pliku lub bazy.", "Określają gdzie i jak zapisywane są próbki po naciśnięciu REC.", "Wybierz cel zapisu, folder i nazwę pliku oraz tryb próbek."),
@@ -48,8 +49,8 @@ _RAW: dict[str, str] = {
     "Y maks": _e("Górna granica osi Y.", "Ręczna skala w układzie offset.", "Aktywne po wyłączeniu Auto Y."),
     "Punkty": _e("Przełącznik punktów próbek.", "Pokazuje punkty na krzywych (przy dużej liczbie próbek są pomijane).", "Zaznacz, aby włączyć."),
     "Znacznik poziomu sygnału": _e("Poziome kursory wartości.", "Pomiar wartości sygnału w pasie pod linią i różnicy wartości (ΔY).", "Włącz i klikaj na wykresie – maksymalnie 2 kursory, można je przeciągać."),
-    "Oś czasu": _e("Opisy osi czasu wykresu.", "Sekundy od startu albo zegar HH:MM:SS'mmm: czas aplikacji (komputera) lub czas PLC (zegar sterownika).", "Wybierz z listy; zakres opisu zależy od powiększenia."),
-    "Offset osi [s]": _e("Korekta czasu pokazywanego na osi.", "Zgranie zegarów przy diagnostyce sygnałów; nie zmienia danych ani znaczników.", "Liczba sekund z ułamkiem, -86400 … 86400; dodatnia = późniejszy czas."),
+    "Oś czasu": _e("Opisy osi czasu wykresu.", "Sekundy od startu albo zegar HH:MM:SS.mmm: czas aplikacji (komputera) lub czas PLC (zegar sterownika).", "Wybierz z listy; zakres opisu zależy od powiększenia."),
+    "Offset osi": _e("Korekta czasu pokazywanego na osi.", "Zgranie zegarów przy diagnostyce albo gdy w sterowniku nie ustawiono daty / godziny; nie zmienia danych ani znaczników.", "Dwa pola: data (pełne doby, 0–3650) i godzina HH:MM:SS.mmm, plus znak (+ późniejszy czas). Prawy przycisk: wyrównanie do zegara komputera."),
     "Różnica sygnału": _e("Rodzaj znacznika: różnica wartości jednego sygnału.", "Pokazuje poziom sygnału w dwóch momentach i różnicę wartości.", "Ustaw „Od” i „Do” oraz wybierz dokładnie jeden przebieg."),
     "Zmień pozycję znacznika": _e("Odblokowanie przeciągania znacznika.", "Zablokowany znacznik nie przeszkadza w przesuwaniu wykresu.", "Zaznacz w menu znacznika, przeciągnij; odznacz, aby zablokować."),
     "Kursory V": _e("Kursory pionowe (czas).", "Pomiar czasu, Δt i częstotliwości oraz wartości sygnałów.", "Włącz i klikaj na wykresie (maks. 2)."),

@@ -218,9 +218,9 @@ Podwójne kliknięcie legendy otwiera okno „Sygnały…”. Po najechaniu kurs
 <li><b>Znacznik poziomu sygnału</b> (menu Znaczniki): po włączeniu kliknięcie na wykresie stawia poziomy kursor (maks. 2, przesuwalny);
 w ramce wyświetlana jest wartość sygnału w pasie pod linią i różnica ΔY. <b>Różnica sygnału</b> (prawy przycisk → „Dodaj znacznik różnicy poziomu…”)
 pokazuje różnicę wartości jednego sygnału między dwoma momentami.</li>
-<li><b>Oś czasu</b> (panel Zakres okna wykresu): sekundy od startu albo zegar <tt>HH:MM:SS'mmm</tt> – <b>czas aplikacji</b> (komputera) lub <b>czas PLC</b>
+<li><b>Oś czasu</b> (panel Zakres okna wykresu): sekundy od startu albo zegar <tt>HH:MM:SS.mmm</tt> – <b>czas aplikacji</b> (komputera) lub <b>czas PLC</b>
 (zegar sterownika = zegar komputera + różnica odczytana przy połączeniu); pokazywane są tylko te części czasu, które wynikają z powiększenia.
-<b>Offset osi [s]</b> koryguje pokazywany czas w lewo / w prawo (przy diagnostyce sygnałów) – nie zmienia danych ani znaczników.</li>
+<b>Offset osi</b> (znak, data = pełne doby, godzina HH:MM:SS.mmm) koryguje pokazywany czas w lewo / w prawo – przy diagnostyce sygnałów albo gdy w sterowniku nie ustawiono daty; nie zmienia danych ani znaczników. Gdy zegar PLC różni się od komputera o dobę lub więcej, program to zgłasza w pasku statusu, a prawy przycisk na polu offsetu wyrównuje oś do zegara komputera. Pole „Sterownik” pokazuje w szóstej linii <b>Czas PLC</b> (data i godzina; czas czytany raz przy połączeniu, potem liczony z zegara komputera i odświeżany co sekundę).</li>
 <li>Pionowa czerwona linia <b>TRIG</b> oznacza chwilę wyzwolenia triggera.</li>
 </ul>
 """))
@@ -305,12 +305,15 @@ aby zmienić okno czasu.</li>
     s.append(("14. Pasek statusu", """
 <h2>Pasek statusu</h2>
 """ + _img("zal15", 640) + _table([
-        ("PLC comm lag Avg", "Średni czas odczytu ze sterownika [ms] z ostatnich 50 cykli (n = liczba próbek w średniej)."),
-        ("Last", "Czas ostatniego odczytu [ms]."),
-        ("GUI lag", "Czas rysowania wykresu [ms] – gdy jest duży, ogranicz okno czasu lub liczbę sygnałów albo zmniejsz odświeżanie w Ustawienia → Renderowanie wykresu."),
-        ("Missed", "Liczba cykli pominiętych, bo odczyt trwał dłużej niż ustawiony okres, i ich odsetek."),
+        ("Zakładki „System” i „Sieć” (dół panelu ustawień)", "Parametry, które były w pasku statusu, są teraz w dwóch zakładkach na dole lewego panelu. System: godzina systemowa, obciążenie CPU komputera i GUI lag – czas rysowania wykresu [ms] (gdy jest duży, ogranicz okno czasu lub liczbę sygnałów albo zmniejsz odświeżanie w Ustawienia → Renderowanie wykresu). Sieć: PLC comm lag Avg (średni czas odczytu z ostatnich 50 cykli, n = liczba próbek), Last (ostatni odczyt), Missed (cykle pominięte, bo odczyt trwał dłużej niż okres, i ich odsetek) oraz ping i utrata pakietów."),
         ("Komunikat", "Bieżący stan: łączenie, utrata połączenia, ścieżka pliku REC / triggera, wynik eksportu."),
     ], ("Pole", "Znaczenie")) + """
+<p>Pasek zawiera już tylko status nagrywania i komunikaty; liczby łącza i systemu są w zakładkach „System” / „Sieć” na dole lewego panelu.
+Pola panelu (Połączenie, Sterownik, Zakres okna wykresu, Trigger, Nagrywanie REC) <b>przeciągasz myszą za nazwę pola w górę lub w dół</b>, aby zmienić kolejność (kliknięcie
+nazwy zwija / rozwija pole). <b>Prawy przycisk myszy na nazwie elementu</b> (np. „IP”, „Cykle [ms]”) pozwala go <b>ukryć</b>; <b>prawy przycisk na nazwie pola</b> (np. „Połączenie”)
+otwiera menu pola: zwiń / rozwiń oraz lista wszystkich jego elementów z haczykami (ukrywanie i odkrywanie) i „Pokaż wszystkie elementy”. Kolejność pól, zwinięte pola, ukryte elementy i aktywna zakładka dolna
+wchodzą do <b>konfiguracji interfejsu</b> – zapisują się w pliku konfiguracji aplikacji i w pliku konfiguracji interfejsu (Widok → Interfejs → Zapisz / Wczytaj).</p>
+<p>Pole <b>Sterownik</b> ma na dole przycisk <b>Pobierz dane sterownika</b>: jednorazowo łączy się ze sterownikiem i czyta tylko jego dane (model, firmware, nazwy) oraz zegar – bez uruchamiania odczytu sygnałów i wykresu (połączenie musi być zatrzymane, metoda S7comm). Zakładka „System” pokazuje też, ile procesora zajmuje sama aplikacja („w tym ta aplikacja”: program razem z procesami odczytu, jako % całego komputera).</p>
 <p>Tekst, który się nie mieści, <b>chwyć myszą i przeciągnij</b> w lewo / prawo (albo kółkiem myszy): w skrajnych położeniach koniec tekstu
 dochodzi do prawej krawędzi paska, a początek do lewej – tekst nie ucieka poza pasek. W <b>Widok → Interfejs</b> ustawisz
 <b>maksymalną liczbę linii</b> paska (pasek ma wysokość tylko tylu linii, ile potrzebuje tekst; przy większej liczbie linii tekst przeciąga się w górę /

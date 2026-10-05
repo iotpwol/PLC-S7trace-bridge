@@ -54,58 +54,63 @@
     <h2 id="e-title">Połączenie</h2>
     <p class="muted" id="e-note"></p>
     <form id="e-form">
+      <div id="e-folds">
       <div class="fold" data-fold="Połączenie"><h3 class="fold-h">Połączenie<span class="tri"></span></h3><div class="fold-body"><div>
         <div class="grid">
-          <label>Nazwa <input id="e-name" maxlength="64"></label>
-          <label>Adres IP (ew. :port) <input id="e-ip" maxlength="100" required></label>
-          <label>Rack <input id="e-rack" type="number" min="0" max="7"></label>
-          <label>Slot <input id="e-slot" type="number" min="0" max="31"></label>
-          <label>Cykl [ms] <input id="e-cycle" type="number" min="5" max="60000"></label>
-          <label>Sposób połączenia <select id="e-type"></select></label>
-          <label>Tryb odczytu <select id="e-mode"></select></label>
+          <label data-row="Nazwa">Nazwa <input id="e-name" maxlength="64"></label>
+          <label data-row="Adres IP">Adres IP (ew. :port) <input id="e-ip" maxlength="100" required></label>
+          <label data-row="Rack">Rack <input id="e-rack" type="number" min="0" max="7"></label>
+          <label data-row="Slot">Slot <input id="e-slot" type="number" min="0" max="31"></label>
+          <label data-row="Cykl [ms]">Cykl [ms] <input id="e-cycle" type="number" min="5" max="60000"></label>
+          <label data-row="Sposób połączenia">Sposób połączenia <select id="e-type"></select></label>
+          <label data-row="Tryb odczytu">Tryb odczytu <select id="e-mode"></select></label>
         </div>
-        <div class="inline" style="margin:8px 0"><button type="button" id="e-detect">Kreator: rozpoznaj sterownik</button>
+        <div class="inline" data-row="Kreator" style="margin:8px 0"><button type="button" id="e-detect">Kreator: rozpoznaj sterownik</button>
           <button type="button" id="e-apply" hidden>Zastosuj zalecenia</button><span id="e-detmsg" class="muted"></span></div>
         <pre id="e-report" hidden></pre>
       </div></div></div>
       <div class="fold" data-fold="Sterownik"><h3 class="fold-h">Sterownik<span class="tri"></span></h3><div class="fold-body"><div>
-        <table class="dg"><tbody id="e-device"></tbody></table>
+        <table class="dg" data-row="Dane sterownika"><tbody id="e-device"></tbody></table>
+        <div id="e-plcnote" class="muted" data-row="Dane sterownika" hidden></div>
+        <div class="inline" data-row="Pobierz dane" style="margin-top:6px"><button type="button" id="e-readdev" title="Jednorazowo łączy się ze sterownikiem (z zapisanej konfiguracji) i czyta tylko jego dane oraz zegar – bez odczytu sygnałów i wykresu. Dostępne dla zatrzymanego połączenia S7comm.">Pobierz dane sterownika</button><span id="e-devmsg" class="muted"></span></div>
       </div></div></div>
       <div class="fold" data-fold="Zakres okna wykresu"><h3 class="fold-h">Zakres okna wykresu<span class="tri"></span></h3><div class="fold-body"><div>
         <div class="grid">
-          <label>Okno czasu [s] <input id="e-window" type="number" min="1" max="86400"></label>
-          <label>Układ wykresu <select id="e-ylayout"><option value="lanes">Pasma wg Share</option><option value="offset">Offset Y + wzmocnienie</option></select></label>
-          <label><input id="e-autoy" type="checkbox"> Auto Y (układ offset)</label>
-          <label>Y min <input id="e-ymin" type="number" step="any"></label><label>Y maks <input id="e-ymax" type="number" step="any"></label>
-          <label><input id="e-points" type="checkbox"> Punkty próbek na wykresie</label>
-          <label>Legenda pokazuje <select id="e-legend"><option value="name">Nazwę sygnału</option><option value="address">Adres / węzeł OPC</option></select></label>
-          <label>Oś czasu <select id="e-taxis"><option value="rel">Względna (od startu)</option><option value="app">Czas aplikacji (zegar serwera)</option><option value="plc">Czas PLC (zegar sterownika)</option></select></label>
-          <label>Offset osi [s] <input id="e-toff" type="number" step="0.001" min="-86400" max="86400"></label>
+          <label data-row="Okno czasu [s]">Okno czasu [s] <input id="e-window" type="number" min="1" max="86400"></label>
+          <label data-row="Układ wykresu">Układ wykresu <select id="e-ylayout"><option value="lanes">Pasma wg Share</option><option value="offset">Offset Y + wzmocnienie</option></select></label>
+          <label data-row="Auto Y"><input id="e-autoy" type="checkbox"> Auto Y (układ offset)</label>
+          <label data-row="Y min">Y min <input id="e-ymin" type="number" step="any"></label><label data-row="Y maks">Y maks <input id="e-ymax" type="number" step="any"></label>
+          <label data-row="Punkty"><input id="e-points" type="checkbox"> Punkty próbek na wykresie</label>
+          <label data-row="Legenda">Legenda pokazuje <select id="e-legend"><option value="name">Nazwę sygnału</option><option value="address">Adres / węzeł OPC</option></select></label>
+          <label data-row="Oś czasu">Oś czasu <select id="e-taxis"><option value="rel">Względna (od startu)</option><option value="app">Czas aplikacji (zegar serwera)</option><option value="plc">Czas PLC (zegar sterownika)</option></select></label>
+          <label data-row="Offset osi">Offset osi (znak, data, godzina) <select id="e-toff-s"><option value="1">+</option><option value="-1">-</option></select>
+            <input id="e-toff-d" type="number" min="0" max="3650" step="1" style="width:5em"> d <input id="e-toff-t" type="text" style="width:8.5em" placeholder="HH:MM:SS.mmm"></label>
         </div>
       </div></div></div>
-      <h3>Sygnały</h3>
-      <table id="e-sig"><thead><tr><th>Nazwa</th><th>Źródło</th><th>Typ</th><th>DB</th><th>Bajt</th><th>Bit</th><th>Węzeł / zmienna</th>
-        <th>Share</th><th>Kolor</th><th>Pobieraj</th><th>Wykres</th><th>Opis</th><th></th></tr></thead><tbody></tbody></table>
       <div class="fold" data-fold="Trigger"><h3 class="fold-h">Trigger<span class="tri"></span></h3><div class="fold-body"><div>
       <div class="grid" id="e-trig">
-        <label>Włączony <input id="t-enabled" type="checkbox"></label>
-        <label>Sygnał <select id="t-signal"></select></label>
-        <label>Warunek <select id="t-mode"></select></label>
-        <label>A <input id="t-a" type="number" step="any"></label>
-        <label>B (dla „between”) <input id="t-b" type="number" step="any"></label>
-        <label>Histereza <input id="t-h" type="number" step="any" min="0"></label>
-        <label>Przedtrigger [s] <input id="t-pre" type="number" step="any" min="0"></label>
-        <label>Akcja <select id="t-action"></select></label>
-        <label>Nazwa pliku zapisu <input id="t-file" maxlength="120"></label>
+        <label data-row="Włączony">Włączony <input id="t-enabled" type="checkbox"></label>
+        <label data-row="Sygnał">Sygnał <select id="t-signal"></select></label>
+        <label data-row="Warunek">Warunek <select id="t-mode"></select></label>
+        <label data-row="A">A <input id="t-a" type="number" step="any"></label>
+        <label data-row="B">B (dla „between”) <input id="t-b" type="number" step="any"></label>
+        <label data-row="Histereza">Histereza <input id="t-h" type="number" step="any" min="0"></label>
+        <label data-row="Przedtrigger [s]">Przedtrigger [s] <input id="t-pre" type="number" step="any" min="0"></label>
+        <label data-row="Akcja">Akcja <select id="t-action"></select></label>
+        <label data-row="Nazwa pliku zapisu">Nazwa pliku zapisu <input id="t-file" maxlength="120"></label>
       </div>
       </div></div></div>
       <div class="fold" data-fold="Nagrywanie REC"><h3 class="fold-h">Nagrywanie REC<span class="tri"></span></h3><div class="fold-body"><div>
       <div class="grid" id="e-rec">
-        <label>Cel zapisu <select id="r-target"></select></label>
-        <label>Tryb <select id="r-mode"><option value="changes">tylko zmiany</option><option value="all">wszystkie próbki</option></select></label>
-        <label>Nazwa pliku CSV <input id="r-file" maxlength="120"></label>
+        <label data-row="Cel zapisu">Cel zapisu <select id="r-target"></select></label>
+        <label data-row="Tryb">Tryb <select id="r-mode"><option value="changes">tylko zmiany</option><option value="all">wszystkie próbki</option></select></label>
+        <label data-row="Nazwa pliku CSV">Nazwa pliku CSV <input id="r-file" maxlength="120"></label>
       </div>
       </div></div></div>
+      </div>
+      <h3>Sygnały</h3>
+      <table id="e-sig"><thead><tr><th>Nazwa</th><th>Źródło</th><th>Typ</th><th>DB</th><th>Bajt</th><th>Bit</th><th>Węzeł / zmienna</th>
+        <th>Share</th><th>Kolor</th><th>Pobieraj</th><th>Wykres</th><th>Opis</th><th></th></tr></thead><tbody></tbody></table>
       <p class="muted">Znaczniki w nazwach plików: {confname} {ip} {tab} {date} {time}. Pliki CSV trafiają do folderu konta na serwerze
         (lista i pobieranie: „Podgląd na żywo” → Pliki); „sqlite” to plik konta, pozostałe cele konfiguruje administrator.</p>
       <div class="inline" style="margin-top:8px"><button type="button" id="e-add">+ Sygnał</button>
@@ -130,6 +135,10 @@
     <canvas id="canvas" width="1200" height="520"></canvas>
     <canvas id="ov-live" class="ov" width="1200" height="56" title="Przegląd: cały zapamiętany przebieg. Przeciągnij ramkę, aby przesunąć okno; kliknij, aby je wycentrować."></canvas>
     <div id="c-legend" class="legend"></div>
+    <div id="c-side" class="side">
+      <div class="side-tabs"><button type="button" data-tab="0" class="on">System</button><button type="button" data-tab="1">Sieć</button></div>
+      <div id="c-side-body" class="side-body"></div>
+    </div>
   </section>
   <section id="recs" hidden>
     <h2>Przegląd nagrań</h2>

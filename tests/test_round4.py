@@ -693,7 +693,7 @@ DEV = {"method": "s7", "info": {"family": "S7-1500", "model": "CPU 1515-2 PN", "
 
 def test_device_box_empty_until_connection_and_cleared_by_ip_change(app):
     tab = TraceTab(TabConfig(ip="10.1.1.1"), lambda: [])
-    assert "Brak połączenia ze sterownikiem" in tab.lbl_dev.text() and tab.device is None
+    assert "Brak danych sterownika" in tab.lbl_dev.text() and tab.device is None
     from PySide6.QtWidgets import QGroupBox
     titles = [g.title() for g in tab.findChildren(QGroupBox)]
     assert titles.index("Sterownik") == titles.index("Połączenie") + 1             # right under 'Połączenie'
@@ -707,7 +707,7 @@ def test_device_box_empty_until_connection_and_cleared_by_ip_change(app):
     tab.ed_ip.setText("10.1.1.1")                                                   # same address: data stays
     assert tab.lbl_dev.text() == t
     tab.ed_ip.setText("10.1.1.2")                                                   # another device: empty again
-    assert "Brak połączenia ze sterownikiem" in tab.lbl_dev.text() and tab.device is None
+    assert "Brak danych sterownika" in tab.lbl_dev.text() and tab.device is None
     tab._infoRaw.emit({"method": "s7", "info": {"family": "S7-300"}})               # new connection: updated
     assert "S7-300" in tab.lbl_dev.text() and "Model:&nbsp;&nbsp;</td><td><b>—</b>" in tab.lbl_dev.text()
     tab._infoRaw.emit({"method": "other", "info": {}})
@@ -778,7 +778,7 @@ def test_loading_a_recording_fills_connection_and_device_boxes(app, tmp_path):
     meta, t_us, v = b.read(b.sessions()[0]["id"])
     b.close()
     tab = TraceTab(TabConfig(ip="192.168.0.1"), lambda: [])                       # a fresh tab: default address, empty device box
-    assert "Brak połączenia ze sterownikiem" in tab.lbl_dev.text()
+    assert "Brak danych sterownika" in tab.lbl_dev.text()
     tab.load_recording(meta, t_us, v, cfg)
     assert tab.ed_ip.text() == "10.9.8.7" and tab.sp_rack.value() == 0 and tab.sp_slot.value() == 1
     t = tab.lbl_dev.text()

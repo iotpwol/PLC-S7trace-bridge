@@ -30,7 +30,7 @@ NICE_SPACING = [0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 1
 
 
 class TimeAxis(pg.AxisItem):
-    """Bottom axis. mode 'rel': seconds from the start (the label is x + shift); 'app' / 'plc': a clock HH:MM:SS'mmm where `shift`
+    """Bottom axis. mode 'rel': seconds from the start (the label is x + shift); 'app' / 'plc': a clock HH:MM:SS.mmm where `shift`
     is the epoch time of x = 0 on that clock; the ticks then fall on whole clock seconds / minutes and only as many parts
     of the time are written as the zoom needs (see core.types.axis_shift)."""
 
@@ -68,7 +68,7 @@ class TimeAxis(pg.AxisItem):
                 elif spacing and spacing >= 1:
                     out.append(f"{lt.tm_hour:02d}:{lt.tm_min:02d}:{lt.tm_sec:02d}")
                 else:
-                    out.append(f"{lt.tm_hour:02d}:{lt.tm_min:02d}:{lt.tm_sec:02d}'{ms % 1000:03d}")
+                    out.append(f"{lt.tm_hour:02d}:{lt.tm_min:02d}:{lt.tm_sec:02d}.{ms % 1000:03d}")
             return out
         if self.shift:
             values = [v + self.shift for v in values]

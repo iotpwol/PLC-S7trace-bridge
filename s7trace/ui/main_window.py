@@ -9,7 +9,7 @@ from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QInputDialog, QMainWindow, QMenu,
                                QMessageBox, QStackedWidget, QTabBar, QToolButton, QToolTip, QWidget)
 
-from ..core import marker_look, render_cfg, sessions, web_agent
+from ..core import marker_look, panel_cfg, render_cfg, sessions, web_agent
 from ..core import symbols as sym
 from ..core.config import TabConfig, app_dir, load_app_config, save_app_config, symbols_path
 from ..core.naming import suggest_config_name
@@ -94,7 +94,13 @@ class MainWindow(QMainWindow):
         theme0 = self.ui.get("theme") if isinstance(self.ui.get("theme"), dict) else None
         if theme0 is not None and "marker_look" not in theme0 and isinstance(old_look, dict):
             theme0 = {**theme0, "marker_look": old_look}
+        if isinstance(theme0, dict) and "panel" not in theme0 and (isinstance(self.ui.get("folds"), dict) or "info_tab" in self.ui):
+            theme0 = {**theme0, "panel": {"folds": self.ui.get("folds"), "info_tab": self.ui.get("info_tab", 0)}}   # before: kept in ui
         self.theme = th.normalize(theme0)
+        if theme0 is None:
+            self.theme["panel"] = panel_cfg.normalize({"folds": self.ui.get("folds"), "info_tab": self.ui.get("info_tab", 0)})
+        self.ui.pop("folds", None)
+        self.ui.pop("info_tab", None)
         self.web_cfg = web_agent.normalize(self.ui.get("web_server"))         # Ustawienia -> Serwer Web
         self.render_cfg = render_cfg.normalize(self.ui.get("render"))      # Ustawienia -> Renderowanie wykresu
         self.marker_look = self.theme["marker_look"]       # Znaczniki -> Wygląd znaczników (part of the interface configuration)
@@ -344,7 +350,11 @@ class MainWindow(QMainWindow):
             self._apply_render(dlg.result_cfg())
 
     def _apply_theme(self, theme: dict) -> None:
+        old_panel = self.theme.get("panel")
         self.theme = th.apply_theme(QApplication.instance(), theme)
+        if self.theme["panel"] != old_panel:                     # another configuration (or its preview): the panels follow it
+            for i in range(self.tabs.count()):
+                self.tabs.widget(i).apply_panel(self.theme["panel"])
         if self.theme["marker_look"] != self.marker_look:      # a configuration (or the preview of one) with another marker look
             self._apply_marker_look(self.theme["marker_look"])
         for i in range(self.tabs.count()):
@@ -383,6 +393,8 @@ class MainWindow(QMainWindow):
         self._relayout_tabs()
 
     def _apply_layouts(self, source: TraceTab | None = None) -> None:
+        if source is not None:                                  # the panel layout (order / folds / bottom tab) is a part of the theme
+            self.theme = {**self.theme, "panel": source.panel_state()}
         for i in range(self.tabs.count()):
             if self.tabs.widget(i) is not source:
                 self.tabs.widget(i).apply_layout()
@@ -403,6 +415,8 @@ class MainWindow(QMainWindow):
     def _commit_theme(self, theme: dict) -> None:
         if "marker_look" not in theme:                          # e.g. a configuration file of an older version
             theme = {**theme, "marker_look": self.marker_look}
+        if "panel" not in theme:
+            theme = {**theme, "panel": self.theme["panel"]}
         self.ui["theme"] = th.normalize(theme)
         self._apply_theme(self.ui["theme"])
 
@@ -467,6 +481,7 @@ class MainWindow(QMainWindow):
     def new_tab(self, cfg: TabConfig | None = None) -> TraceTab:
         tab = TraceTab(cfg or TabConfig(), lambda: self.symbols, self.ui)
         tab.other_tabs = self._other_tabs(tab)
+        tab.panel_src = lambda: self.theme["panel"]
         tab.new_tab_cb = self.new_tab
         i = self.tabs.addTab(tab, tab.title())
         tab.stateChanged.connect(lambda s, t=tab: self._tab_state(t, s))

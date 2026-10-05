@@ -14,9 +14,9 @@ from PySide6.QtCore import QEvent, QTimer, Qt, Signal as QtSignal
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
                                QGroupBox, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMenu, QMessageBox,
-                               QPushButton, QScrollArea, QSizePolicy, QSpinBox, QSplitter, QVBoxLayout, QWidget)
+                               QPushButton, QScrollArea, QSizePolicy, QSpinBox, QSplitter, QTabWidget, QVBoxLayout, QWidget)
 
-from ..core import render_cfg
+from ..core import panel_cfg, render_cfg, sysinfo
 from ..core import trigger as trg
 from ..core.trigger import DEFAULT_REC_NAME
 from ..core.acq_process import ProcAcquirer
@@ -28,7 +28,7 @@ from ..core.csvio import CsvRecorder, csv_start_wall, read_csv, write_csv
 from ..core.planner import MODES
 from ..core.symbols import Symbol
 from ..core.netaddr import ACCEPTABLE, ipv4_state
-from ..core.types import LEGEND_MODES, TIME_AXES, TIME_OFFSET_MAX, Signal, axis_shift, signal_tip
+from ..core.types import LEGEND_MODES, TIME_AXES, Signal, axis_shift, fmt_offset, signal_tip
 from ..core.drivers import CONN_LABEL, SOURCE_OF, family_of
 from .diag_dialog import DiagDialog
 from .duration_combo import DurationCombo
@@ -39,6 +39,7 @@ from ..core import ip_history, sessions
 from ..core.store import KIND_LABEL, KINDS, MODE_LABEL, DbRecorder, StoreConfig, device_summary, test_connection
 from ..core.store import MODES as STORE_MODES            # (planner.MODES = communication modes)
 from .fold_group import FoldGroup
+from .offset_edit import OffsetEdit
 from .fold_splitter import DEFAULT_BAR, FoldSplitter
 from .pan_label import PanLabel
 from .ip_edit import IpCombo
@@ -72,6 +73,7 @@ class ClickLabel(QLabel):
 
 DEVICE_ROWS = (("Rodzina", "family"), ("Model", "model"), ("Firmware", "firmware"), ("Nazwa stacji", "plc_name"),
                ("Nazwa modułu", "module_name"))
+PLC_TIME_LABEL = "Czas PLC"
 
 
 class _Names(dict):
@@ -118,6 +120,7 @@ class TraceTab(QWidget):
     legendHideRequested = QtSignal()   # 'Ukryj legendę' in the legend's context menu (the setting is shared by all tabs)
     _dbProbe = QtSignal(str, str)      # (recording id, cause or "") - result of the connection test run when REC starts
     _infoRaw = QtSignal(object)        # device data from the acquisition process (worker thread)
+    _devRead = QtSignal(str, str, object)   # (address, error text or "", device data) - result of 'Pobierz dane sterownika'
 
     def __init__(self, cfg: TabConfig, symbols: callable, ui_state: dict | None = None,
                  other_tabs: callable = None, parent=None):
@@ -149,10 +152,12 @@ class TraceTab(QWidget):
         self.device: dict | None = None            # PLC data read at the last connection (valid for _device_ip only)
         self._device_ip = ""
         self._rec_dot, self._rec_idle, self._rec_phase = "#ff2020", "#c0c0c0", True
+        self._dev_busy = False                     # 'Pobierz dane sterownika' is running
         self._build()
         self._load_cfg()
         self._stateRaw.connect(self._on_state)
         self._infoRaw.connect(self._on_info)
+        self._devRead.connect(self._on_device_read)
         self._dbProbe.connect(self._on_db_probe)
         self._probe_box = None
         self.loaded: dict | None = None                        # a recording from a database shown in this tab
@@ -166,6 +171,10 @@ class TraceTab(QWidget):
         self.timer.setInterval(int(1000 / self._render["fps"]))
         self.timer.timeout.connect(self._tick)
         self.timer.start()
+        self.plc_timer = QTimer(self)                # the PLC clock in the 'Sterownik' box, once a second
+        self.plc_timer.setInterval(1000)
+        self.plc_timer.timeout.connect(self._tick_side)
+        self.plc_timer.start()
         self.blink = QTimer(self)                    # REC dot
         self.blink.timeout.connect(self._blink_tick)
         self.apply_ctl_theme({"rec_dot": self._rec_dot, "rec_blink_hz": 0.5})
@@ -182,8 +191,14 @@ class TraceTab(QWidget):
         left = QWidget()
         lv = QVBoxLayout(left)
         lv.setContentsMargins(14, 10, 8, 6)
+        self._left_lv = lv
+        self.panel_src = lambda: panel_cfg.normalize(self.ui_state.get("panel"))     # the main window points it at the theme
 
         self.folds: dict[str, FoldGroup] = {}
+        self._forms: dict[str, QFormLayout] = {}
+        self._hidden: dict[str, list[str]] = {g: [] for g in panel_cfg.GROUPS}      # hidden elements of the groups (part of the panel layout)
+        self._row_keys: dict[str, list[str]] = {}
+        self._row_ctx: dict[QWidget, tuple[str, str]] = {}                           # label / spanning widget -> (group, row name)
 
         def group(title):
             g = FoldGroup(title)                     # a click on the title folds the group (state saved with the layout)
@@ -193,7 +208,11 @@ class TraceTab(QWidget):
             f.setContentsMargins(8, 10, 8, 8)
             g.set_body(body)
             g.foldedChanged.connect(self._layout_moved)
+            g.dragMoved.connect(lambda gy, grp=g: self._reorder_group(grp, gy))      # drag by the title = move the group
+            g.dragFinished.connect(self._layout_moved)
+            g.contextRequested.connect(lambda pos, name=title: self._group_menu(name, pos))     # right click on the title = menu of the group
             self.folds[title] = g
+            self._forms[title] = f
             lv.addWidget(g)
             return f
 
@@ -230,10 +249,15 @@ class TraceTab(QWidget):
         self.lbl_dev = ClickLabel()
         self.lbl_dev.setTextFormat(Qt.RichText)
         self.lbl_dev.setWordWrap(True)
-        self.lbl_dev.setMinimumHeight(self.lbl_dev.fontMetrics().lineSpacing() * len(DEVICE_ROWS) + 8)
+        self.lbl_dev.setMinimumHeight(self.lbl_dev.fontMetrics().lineSpacing() * (len(DEVICE_ROWS) + 1) + 8)
         self.lbl_dev.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         self.lbl_dev.clicked.connect(self.open_device_info)
         f.addRow(self.lbl_dev)
+        self.btn_dev = QPushButton("Pobierz dane sterownika")
+        self.btn_dev.setToolTip("Jednorazowo łączy się ze sterownikiem i czyta tylko jego dane (model, firmware, nazwy, czas PLC) – bez uruchamiania "
+                                "odczytu sygnałów i wykresu. Dostępne, gdy połączenie jest zatrzymane (S7comm).")
+        self.btn_dev.clicked.connect(self.read_device_now)
+        f.addRow(self.btn_dev)
         self._show_device()
 
         f = group("Zakres okna wykresu")
@@ -256,20 +280,21 @@ class TraceTab(QWidget):
         self.cb_taxis.setMinimumContentsLength(8)
         self.cb_taxis.setMinimumWidth(70)
         self._taxis_tip = (
-            "Opisy osi czasu: sekundy od startu albo zegar HH:MM:SS'mmm – komputera (aplikacji) lub sterownika PLC (zegar PLC = zegar "
+            "Opisy osi czasu: sekundy od startu albo zegar HH:MM:SS.mmm – komputera (aplikacji) lub sterownika PLC (zegar PLC = zegar "
             "komputera + różnica odczytana przy połączeniu). Zakres opisu zależy od powiększenia.")
         self.cb_taxis.setToolTip(self._taxis_tip)
-        self.sp_toff = _spin(-TIME_OFFSET_MAX, TIME_OFFSET_MAX, 0.0, dec=3)
-        self.sp_toff.setSingleStep(0.1)
-        self.sp_toff.setSuffix(" s")
-        self.sp_toff.setToolTip("Korekta czasu pokazywanego na osi (wartość dodatnia = późniejszy czas): do zgrania zegarów przy diagnostyce. "
-                                "Nie zmienia danych ani znaczników.")
+        self.sp_toff = OffsetEdit()                 # sign + days (the date part) + HH:MM:SS.mmm; value() in seconds
+        self._offset_tip = ("Korekta czasu pokazywanego na osi: data (pełne doby) i godzina HH:MM:SS.mmm; znak + = późniejszy czas. "
+                            "Do zgrania zegarów przy diagnostyce albo gdy w sterowniku nie ustawiono daty / godziny. "
+                            "Nie zmienia danych ani znaczników. Prawy przycisk: wyrównanie do zegara komputera.")
+        self.sp_toff.setToolTip(self._offset_tip)
+        self.sp_toff.contextRequested.connect(self._offset_menu)
         self.chk_auto = QCheckBox("Auto Y")
         self.sp_ymin = _spin(-1e9, 1e9, 0, dec=3)
         self.sp_ymax = _spin(-1e9, 1e9, 10, dec=3)
         f.addRow("Okno czasu [s]:", self.sp_window)
         f.addRow("Oś czasu:", self.cb_taxis)
-        f.addRow("Offset osi [s]:", self.sp_toff)
+        f.addRow("Offset osi:", self.sp_toff)
         f.addRow("Układ osi Y:", self.cb_ylayout)
         f.addRow(self.chk_auto)
         f.addRow("Y min:", self.sp_ymin)
@@ -336,11 +361,32 @@ class TraceTab(QWidget):
         f.addRow("Próbki:", self.cb_rmode)
         f.addRow("Folder:", rr)
         f.addRow("Nazwa pliku:", self.ed_rname)
+        self._index_rows()
         lv.addStretch()
         scroll = QScrollArea()
         scroll.setWidget(left)
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.NoFrame)
+        self._left_scroll = scroll
+        left_box = QWidget()                           # the settings (scroll) over two tabs that stay at the bottom: System / Sieć
+        lb = QVBoxLayout(left_box)
+        lb.setContentsMargins(0, 0, 0, 0)
+        lb.setSpacing(2)
+        lb.addWidget(scroll, 1)
+        self.info_tabs = QTabWidget()
+        self.lbl_sys = QLabel()
+        self.lbl_net = QLabel()
+        for lbl in (self.lbl_sys, self.lbl_net):
+            lbl.setTextFormat(Qt.RichText)
+            lbl.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+            lbl.setContentsMargins(8, 6, 8, 6)
+        self.info_tabs.addTab(self.lbl_sys, "System")
+        self.info_tabs.addTab(self.lbl_net, "Sieć")
+        self.info_tabs.setToolTip("System: godzina i obciążenie komputera, na którym działa program. Sieć: parametry połączenia ze sterownikiem "
+                                  "(czas odczytu, pominięte cykle, ping).")
+        self.info_tabs.setFixedHeight(self.fontMetrics().lineSpacing() * 4 + 52)
+        lb.addWidget(self.info_tabs)
+        self.info_tabs.currentChanged.connect(self._layout_moved)
         self._left_min = 230                           # kept up to date by _fit_left_min (content width, screen permitting)
 
         # ---- right side
@@ -391,7 +437,7 @@ class TraceTab(QWidget):
         right.addWidget(self.lbl_status)
 
         self.split_h = FoldSplitter(Qt.Horizontal, 0, 290)   # drag the bar to resize; button / double click folds the panel
-        self.split_h.addWidget(scroll)
+        self.split_h.addWidget(left_box)
         self.split_h.addWidget(right_w)
         self.split_h.setStretchFactor(0, 0)
         self.split_h.setStretchFactor(1, 1)
@@ -481,10 +527,11 @@ class TraceTab(QWidget):
             self.btn_rec.setIcon(self._icon_on if self._rec_phase else self._icon_off)
 
     def _layout_moved(self, *_) -> None:
+        if getattr(self, "_panel_busy", False):                      # the panel is being set from a configuration: no echo
+            return
         self._want_left = None                                       # the user's own drag wins over a pending restore
         self.ui_state["left_collapsed"] = self.split_h.collapsed
         self.ui_state["overview_collapsed"] = self.plot.split.collapsed
-        self.ui_state["folds"] = {k: g.folded() for k, g in self.folds.items()}
         # a folded pane keeps the size it had when it was last visible
         self.ui_state["left_width"] = self.split_h.saved if self.split_h.collapsed else self.split_h.sizes()[0]
         self.ui_state["overview_h"] = (self.plot.split.saved if self.plot.split.collapsed
@@ -537,12 +584,127 @@ class TraceTab(QWidget):
         self.cfg.legend_pos = [float(fx), float(fy)]
         self.plot.set_legend_pos(fx, fy)
 
+    # ---- elements of the groups: right click on a name hides the row, right click on a group title lists them all
+    def _index_rows(self) -> None:
+        """Names the rows of every group (the label without the colon; a row without a label is named after its content) and catches
+        right clicks on them."""
+        alone = {id(self.lbl_dev): "Dane sterownika", id(self.btn_dev): "Pobierz dane", id(self.chk_auto): "Auto Y", id(self.chk_trig): "Włącz trigger"}
+        for title, f in self._forms.items():
+            keys = []
+            for r in range(f.rowCount()):
+                lab = f.itemAt(r, QFormLayout.LabelRole)
+                if lab is not None and lab.widget() is not None:
+                    key, w = lab.widget().text().rstrip(":").strip(), lab.widget()
+                else:
+                    span = f.itemAt(r, QFormLayout.SpanningRole)
+                    w = span.widget() if span is not None else None
+                    key = alone.get(id(w), "") if w is not None else ""
+                keys.append(key)
+                if w is not None and key:
+                    self._row_ctx[w] = (title, key)
+                    w.installEventFilter(self)
+            self._row_keys[title] = keys
+
+    def eventFilter(self, obj, ev):
+        if ev.type() == QEvent.ContextMenu and obj in self._row_ctx:
+            title, key = self._row_ctx[obj]
+            self._row_menu(title, key, ev.globalPos())
+            return True
+        return super().eventFilter(obj, ev)
+
+    def _set_hidden(self, hidden: dict) -> None:
+        self._hidden = {g: list(hidden.get(g, [])) for g in panel_cfg.GROUPS}
+        for title, f in self._forms.items():
+            for r, key in enumerate(self._row_keys.get(title, [])):
+                f.setRowVisible(r, key not in self._hidden[title])
+        self._fit_left_min()
+
+    def _toggle_row(self, title: str, key: str, show: bool) -> None:
+        if show:
+            h = [k for k in self._hidden[title] if k != key]
+        else:
+            h = [k for k in self._row_keys[title] if k in self._hidden[title] or k == key]
+        self._set_hidden({**self._hidden, title: h})
+        self._layout_moved()
+
+    def _rows_menu(self, m: QMenu, title: str) -> None:
+        """Check list of the elements of a group (checked = visible)."""
+        for key in dict.fromkeys(k for k in self._row_keys.get(title, []) if k):
+            a = m.addAction(key)
+            a.setCheckable(True)
+            a.setChecked(key not in self._hidden[title])
+            a.triggered.connect(lambda checked, k=key: self._toggle_row(title, k, checked))
+        m.addSeparator()
+        a = m.addAction("Pokaż wszystkie elementy")
+        a.setEnabled(bool(self._hidden[title]))
+        a.triggered.connect(lambda: (self._set_hidden({**self._hidden, title: []}), self._layout_moved()))
+
+    def _group_menu(self, title: str, pos) -> None:
+        """Right click on the title of a group: its folding and which elements are shown."""
+        m = QMenu(self)
+        g = self.folds[title]
+        m.addAction("Rozwiń pole" if g.folded() else "Zwiń pole", lambda: g.set_folded(not g.folded()))
+        m.addSeparator()
+        head = m.addAction(f"Elementy pola „{title}”")
+        head.setEnabled(False)
+        self._rows_menu(m, title)
+        m.exec(pos)
+
+    def _row_menu(self, title: str, key: str, pos) -> None:
+        """Right click on the name of an element: hide it (it comes back from the menu of the group title)."""
+        m = QMenu(self)
+        m.addAction(f"Ukryj „{key}”", lambda: self._toggle_row(title, key, False))
+        sub = m.addMenu(f"Elementy pola „{title}”")
+        self._rows_menu(sub, title)
+        m.exec(pos)
+
+    def _group_order(self) -> list[str]:
+        lv = self._left_lv
+        return [lv.itemAt(i).widget().title() for i in range(lv.count()) if isinstance(lv.itemAt(i).widget(), FoldGroup)]
+
+    def panel_state(self) -> dict:
+        """Order of the groups, folded groups and the bottom tab: the layout of the left panel (a part of the interface configuration)."""
+        return {"order": self._group_order(), "folds": {k: g.folded() for k, g in self.folds.items()},
+                "hidden": {k: list(v) for k, v in self._hidden.items()}, "info_tab": self.info_tabs.currentIndex()}
+
+    def apply_panel(self, p: dict) -> None:
+        p = panel_cfg.normalize(p)
+        self._panel_busy = True
+        try:
+            self._apply_panel(p)
+        finally:
+            self._panel_busy = False
+
+    def _apply_panel(self, p: dict) -> None:
+        lv = self._left_lv
+        if self._group_order() != p["order"]:
+            first = next(i for i in range(lv.count()) if isinstance(lv.itemAt(i).widget(), FoldGroup))
+            for n, title in enumerate(p["order"]):
+                g = self.folds[title]
+                lv.removeWidget(g)
+                lv.insertWidget(first + n, g)
+        for k, g in self.folds.items():
+            g.set_folded(bool(p["folds"].get(k, False)), animate=False)
+        if p["hidden"] != self._hidden:
+            self._set_hidden(p["hidden"])
+        if p["info_tab"] != self.info_tabs.currentIndex():
+            self.info_tabs.setCurrentIndex(p["info_tab"])
+
+    def _reorder_group(self, g: FoldGroup, gy: int) -> None:
+        """The group is being dragged by its title: it takes the place under the mouse (live, the others make room)."""
+        lv = self._left_lv
+        groups = [lv.itemAt(i).widget() for i in range(lv.count()) if isinstance(lv.itemAt(i).widget(), FoldGroup)]
+        others = [h for h in groups if h is not g]
+        idx = sum(1 for h in others if h.mapToGlobal(h.rect().center()).y() < gy)
+        if groups.index(g) != idx:
+            first = next(i for i in range(lv.count()) if isinstance(lv.itemAt(i).widget(), FoldGroup))
+            lv.removeWidget(g)
+            lv.insertWidget(first + idx, g)
+
     def apply_layout(self) -> None:
         """Splitter sizes + legend position from the shared UI settings (applied once the widget has a size)."""
         st = self.ui_state
-        if isinstance(st.get("folds"), dict):
-            for k, g in self.folds.items():
-                g.set_folded(bool(st["folds"].get(k, False)), animate=False)
+        self.apply_panel(self.panel_src())
         if isinstance(st.get("left_width"), int):
             self._want_left = st["left_width"]
             self.split_h.saved = st["left_width"]
@@ -560,7 +722,7 @@ class TraceTab(QWidget):
         """The settings panel is never narrower than what its widgets need (fonts / scaling change that), unless that
         would take more than half of the tab - then the panel scrolls sideways instead."""
         try:
-            sc = self.split_h.widget(0)
+            sc = self._left_scroll
         except RuntimeError:                                   # the tab is already gone (a queued call)
             return
         need = sc.widget().minimumSizeHint().width() + sc.verticalScrollBar().sizeHint().width() + 2 * sc.frameWidth() + 2
@@ -949,8 +1111,47 @@ class TraceTab(QWidget):
         self.device, self._device_ip = d, self.ed_ip.text()
         self._show_device()
         self.apply_time_axis()                                     # the PLC clock follows the newest difference
+        if self.plc_diff() is not None:
+            self._suggest_offset(self.plc_diff())
         if isinstance(self.recorder, DbRecorder):                  # the recording carries the data of the PLC it was made on
             self.recorder.update_device(device_summary(d, self._device_ip))
+
+    def read_device_now(self) -> None:
+        """'Pobierz dane sterownika': one short S7 connection that reads only the controller data and its clock (no acquisition)."""
+        if self.state != "stopped" or self._dev_busy:
+            return
+        c = self._collect()
+        if c.conn_type not in ("auto", "s7"):
+            self.lbl_dev.setText("<i>Dane sterownika można pobrać tylko dla połączenia S7comm (metoda: automatyczna lub S7comm).</i>")
+            return
+        if ipv4_state(c.ip) != ACCEPTABLE:
+            self.lbl_dev.setText("<i>Niepoprawny adres IP – nie można pobrać danych sterownika.</i>")
+            return
+        self._dev_busy = True
+        self.btn_dev.setText("Pobieranie…")
+        self._set_buttons()
+        self.lbl_dev.setText(f"<i>Łączenie z {html.escape(c.ip)} i odczyt danych sterownika…</i>")
+        ip, rack, slot = c.ip, c.rack, c.slot
+
+        def work():
+            from ..core.detect import read_device_s7
+            try:
+                self._devRead.emit(ip, "", read_device_s7(ip, rack, slot))
+            except Exception as e:
+                self._devRead.emit(ip, str(e) or type(e).__name__, None)
+        threading.Thread(target=work, daemon=True, name="ReadDevice").start()
+
+    def _on_device_read(self, ip: str, err: str, d) -> None:
+        self._dev_busy = False
+        self.btn_dev.setText("Pobierz dane sterownika")
+        self._set_buttons()
+        if ip != self.ed_ip.text():                              # the address was changed meanwhile: the answer is stale
+            self._show_device()
+            return
+        if d:
+            self._on_info(d)
+        else:
+            self.lbl_dev.setText(f"<i>Nie udało się pobrać danych sterownika: {html.escape(err)}</i>")
 
     def _ip_changed_device(self, *_) -> None:
         if self.device is not None and self.ed_ip.text() != self._device_ip:      # another device: the data is stale
@@ -961,9 +1162,9 @@ class TraceTab(QWidget):
     def _show_device(self) -> None:
         d = self.device
         if d is None:
-            self.lbl_dev.setText("<i>Brak połączenia ze sterownikiem – dane zostaną pobrane po pierwszym połączeniu.</i>")
+            self.lbl_dev.setText("<i>Brak danych sterownika – pobierz je przyciskiem poniżej albo zostaną pobrane po pierwszym połączeniu.</i>")
             self.lbl_dev.setCursor(Qt.ArrowCursor)
-            self.lbl_dev.setToolTip("Dane sterownika pojawią się po pierwszym połączeniu.")
+            self.lbl_dev.setToolTip("Dane sterownika pojawią się po pierwszym połączeniu albo po naciśnięciu „Pobierz dane sterownika”.")
             return
         info = d.get("info") or {}
         if d.get("method") == "other" or not info:
@@ -971,9 +1172,51 @@ class TraceTab(QWidget):
         else:
             rows = "".join(f"<tr><td>{label}:&nbsp;&nbsp;</td><td><b>{html.escape(str(info.get(key) or '—'))}</b></td></tr>"
                            for label, key in DEVICE_ROWS)       # a table: all values start in one vertical line
+            plc = self.plc_time()
+            if plc is not None:                                 # the sixth line: the clock of the controller (date and time)
+                rows += f"<tr><td>{PLC_TIME_LABEL}:&nbsp;&nbsp;</td><td><b>{plc.strftime('%Y-%m-%d')}&nbsp;&nbsp;{plc.strftime('%H:%M:%S')}</b></td></tr>"
             self.lbl_dev.setText(f'<table cellspacing="0" cellpadding="0">{rows}</table>')
         self.lbl_dev.setCursor(Qt.PointingHandCursor)
         self.lbl_dev.setToolTip("Kliknij, aby zobaczyć pełne informacje o sterowniku (zakładka „Sterownik i czas”).")
+
+    def plc_diff(self) -> float | None:
+        """PLC clock minus the computer's [s], measured once at the connection; None = unknown."""
+        v = (self.device or {}).get("time_diff_local")
+        return float(v) if isinstance(v, (int, float)) else None
+
+    def plc_time(self):
+        """The clock of the controller now (live tab: the computer's clock + the difference, so it needs no new read) or, for a
+        recording opened from a database, at the start of the recording. None = unknown."""
+        diff = self.plc_diff()
+        if diff is None:
+            return None
+        base = datetime.now() if getattr(self, "loaded", None) is None else self.start_wall
+        return base + timedelta(seconds=diff)
+
+    def _tick_side(self) -> None:
+        self._tick_plc_time()
+        self._update_side()
+
+    def _tick_plc_time(self) -> None:
+        if self.device is not None and self.plc_diff() is not None and getattr(self, "loaded", None) is None and self.isVisible():
+            self._show_device()
+
+    def _offset_menu(self, pos) -> None:
+        m = QMenu(self)
+        diff = self.plc_diff()
+        a = m.addAction("Wyrównaj czas PLC do czasu komputera (offset = -różnica)")
+        a.setEnabled(diff is not None)
+        a.triggered.connect(lambda: self.sp_toff.setValue(-(diff or 0.0)))
+        m.addAction("Wyzeruj offset", lambda: self.sp_toff.setValue(0.0))
+        m.exec(pos)
+
+    def _suggest_offset(self, diff: float) -> None:
+        """A clock of the PLC that is a day or more off (the date was never set, a dead battery ...) is announced: the axis 'Czas PLC'
+        then shows a date that does not belong to the data; the offset can align it."""
+        if abs(diff) >= 86400.0:
+            self.status_msg = (f"Zegar PLC różni się od zegara komputera o {fmt_offset(diff)}. W polu „Offset osi” (prawy przycisk → "
+                               "„Wyrównaj czas PLC do czasu komputera”) możesz to skorygować na osi „Czas PLC”.")
+            self._update_status()
 
     def device_result(self):
         """The stored device data as a detect.DetectResult (for the 'Sterownik i czas' window)."""
@@ -1080,6 +1323,7 @@ class TraceTab(QWidget):
         self._set_on(self.btn_start, not stopped)       # "on" = connection is active
         self._set_on(self.btn_stop, stopped)            # "on" = connection is stopped
         self.btn_pause.setEnabled(not stopped)
+        self.btn_dev.setEnabled(stopped and not self._dev_busy)
         for w in self._conn_widgets:
             w.setEnabled(stopped)
 
@@ -1156,12 +1400,41 @@ class TraceTab(QWidget):
         if note:
             self.status_msg = note
 
-    def _ping_text(self) -> str:
+    def _ping_parts(self):
+        """(last reply text, loss %) of the ping probe; None = no ping running."""
         p = self.ping_probe.snapshot() if self.ping_probe is not None and self.ping_probe.is_alive() else None
         if not p or not p["sent"]:
-            return ""
-        last = f"{p['last']:.0f} ms" if p["last"] is not None else "brak odp."
-        return f" | Ping: <b>{last}</b>, utrata <b>{p['loss_pct']:.1f}%</b>"
+            return None
+        return (f"{p['last']:.0f} ms" if p["last"] is not None else "brak odp."), p["loss_pct"]
+
+    def _ping_text(self) -> str:
+        parts = self._ping_parts()
+        return f" | Ping: <b>{parts[0]}</b>, utrata <b>{parts[1]:.1f}%</b>" if parts else ""
+
+    def _update_side(self) -> None:
+        """The two tabs at the bottom of the left panel: System (the computer the program runs on) and Sieć (the link to the PLC: what the
+        status bar showed before)."""
+        def table(rows):
+            return "<table cellspacing='0' cellpadding='1'>" + "".join(f"<tr><td>{k}:&nbsp;&nbsp;</td><td><b>{v}</b></td></tr>" for k, v in rows) + "</table>"
+        now = datetime.now()
+        cpu = sysinfo.cpu_percent()
+        app = sysinfo.app_cpu_percent()
+        sys_rows = [("Godzina systemowa", f"{now:%Y-%m-%d}&nbsp;&nbsp;{now:%H:%M:%S}"), ("Obciążenie CPU", f"{cpu:.0f} %" if cpu is not None else "—"),
+                    ("w tym ta aplikacja", f"{app:.1f} %" if app is not None else "—"), ("GUI lag", f"{self.plot.gui_lag_ms:.1f} ms")]
+        txt = table(sys_rows)
+        if txt != self.lbl_sys.text():
+            self.lbl_sys.setText(txt)
+        if self.acq and self.state in ("running", "reconnecting"):
+            st = self.acq.stats
+            rows = [("PLC comm lag Avg", f"{st.avg_lag:.1f} ms (n={st.n})"), ("PLC comm lag Last", f"{st.last_lag:.1f} ms"),
+                    ("Missed", f"{st.missed} ({st.missed_pct:.1f}%)")]
+            ping = self._ping_parts()
+            rows.append(("Ping", f"{ping[0]}, utrata {ping[1]:.1f}%" if ping else "—"))
+            txt = table(rows)
+        else:
+            txt = "<i>Brak połączenia ze sterownikiem – parametry sieci pojawią się po Start.</i>"
+        if txt != self.lbl_net.text():
+            self.lbl_net.setText(txt)
 
     def _update_status(self):
         hint = (" | <b>Punkty ukryte: za dużo próbek w oknie – przybliż wykres albo zwiększ limit "
@@ -1169,12 +1442,11 @@ class TraceTab(QWidget):
         if self.acq and self.state in ("running", "reconnecting"):
             st = self.acq.stats
             st.gui_lag_ms = self.plot.gui_lag_ms
-            self.lbl_status.setText(
-                f"PLC comm lag Avg: <b>{st.avg_lag:.1f} ms</b> (n=<b>{st.n}</b>), Last: <b>{st.last_lag:.1f} ms</b> | "
-                f"GUI lag: <b>{st.gui_lag_ms:.1f} ms</b>  Missed: <b>{st.missed} ({st.missed_pct:.1f}%)</b>"
-                f"{self._ping_text()}{self._rec_status()}  <b>{html.escape(self.status_msg)}</b>{hint}")
+            rec = self._rec_status().lstrip(" |")
+            self.lbl_status.setText(f"{rec + '  ' if rec else ''}<b>{html.escape(self.status_msg)}</b>{hint}")
         else:
             self.lbl_status.setText(f"<b>{html.escape(self.status_msg)}</b>{hint}")
+        self._update_side()
         tip = html.unescape(re.sub(r"<[^>]+>", "", self.lbl_status.text()))
         if tip != self.lbl_status.toolTip():
             self.lbl_status.setToolTip(tip)                          # the full text when it does not fit

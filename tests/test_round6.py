@@ -85,7 +85,7 @@ def test_interface_dialog_has_the_bar_and_status_settings(app):
 # ------------------------------------------------------------------------------------------------ settings panel
 def test_left_panel_is_never_narrower_than_its_content(app):
     tab = _tab()
-    sc = tab.split_h.widget(0)
+    sc = tab._left_scroll
     need = sc.widget().minimumSizeHint().width()
     assert tab._left_min >= need and tab.split_h.sizes()[0] >= need                  # no hidden fields at the start
     tab.split_h.set_sizes_for(120)

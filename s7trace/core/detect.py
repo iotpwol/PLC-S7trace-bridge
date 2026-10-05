@@ -150,6 +150,31 @@ def identify_s7(client, res: DetectResult, notes: list | None = None) -> None:
         info["family"] = family
 
 
+def device_data(res: DetectResult, rack: int, slot: int) -> dict:
+    """The device dict kept by the tab / hosted connection (shown in the 'Sterownik' box, saved with recordings)."""
+    return {"method": "s7", "info": res.info, "plc_time": res.plc_time, "plc_time_utc": res.plc_time_utc,
+            "time_diff_local": res.time_diff_local, "time_diff_utc": res.time_diff_utc, "rack": rack, "slot": slot}
+
+
+def read_device_s7(host_text: str, rack: int, slot: int) -> dict:
+    """One short S7 connection that only reads the controller data and its clock (no signals, no acquisition); raises on failure."""
+    import snap7
+    from .acquisition import parse_host
+    host, port = parse_host(host_text)
+    c = snap7.client.Client()
+    c.connect(host, rack, slot, port)
+    try:
+        res = DetectResult(host=host)
+        res.rack, res.slot = rack, slot
+        identify_s7(c, res)
+        return device_data(res, rack, slot)
+    finally:
+        try:
+            c.disconnect()
+        except Exception:
+            pass
+
+
 def probe_s7(host: str, port: int, rack: int, slot: int, res: DetectResult) -> Step:
     t0 = time.perf_counter()
     st = Step("s7", "S7comm (port 102)")

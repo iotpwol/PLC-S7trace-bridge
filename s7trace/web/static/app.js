@@ -71,7 +71,7 @@ function go(v) {
 async function start() {
   me = await api("/api/me");
   if (!me.user) return showLogin();
-  mkLoadPrefs();
+  mkLoadPrefs(); panelLoad();
   $("who").textContent = `${me.user} (${me.role})`; $("logout").hidden = false; $("nav").hidden = false;
   $("nav-users").hidden = me.role !== "admin"; $("nav-targets").hidden = me.role !== "admin";
   $("new-conn").hidden = ROLE_RANK[me.role] < ROLE_RANK.operator;
@@ -130,8 +130,8 @@ window.openEditor = async (id) => {
   for (const el of $("e-form").querySelectorAll("input,select,button[type=button]")) if (!["e-cancel", "e-delete"].includes(el.id)) el.disabled = false;
   $("e-name").value = d.name; $("e-ip").value = d.ip; $("e-rack").value = d.rack; $("e-slot").value = d.slot;
   $("e-cycle").value = d.cycle_ms; $("e-window").value = d.window_s;
-  $("e-device").innerHTML = (d.device || []).map(([a, b]) => `<tr><th>${esc(a)}</th><td>${esc(b)}</td></tr>`).join("") || '<tr><td class="muted">Brak danych sterownika – pojawią się po pierwszym połączeniu.</td></tr>';
-  $("e-ylayout").value = d.y_layout || "lanes"; $("e-autoy").checked = d.auto_y !== false; $("e-ymin").value = d.y_min ?? 0; $("e-ymax").value = d.y_max ?? 10; $("e-points").checked = !!d.show_points; $("e-legend").value = d.legend_mode || "name"; $("e-taxis").value = d.time_axis || "rel"; $("e-toff").value = d.time_offset || 0;
+  showDevice(d);
+  $("e-ylayout").value = d.y_layout || "lanes"; $("e-autoy").checked = d.auto_y !== false; $("e-ymin").value = d.y_min ?? 0; $("e-ymax").value = d.y_max ?? 10; $("e-points").checked = !!d.show_points; $("e-legend").value = d.legend_mode || "name"; $("e-taxis").value = d.time_axis || "rel"; cxOffSet($("e-toff-s"), $("e-toff-d"), $("e-toff-t"), d.time_offset || 0);
   fillSelect($("e-type"), d.options.conn_types, d.conn_type); fillSelect($("e-mode"), d.options.modes, d.mode || d.options.modes[0]);
   $("e-delete").hidden = !id;
   $("e-sig").tBodies[0].innerHTML = ""; d.signals.forEach(addSigRow);
@@ -193,10 +193,43 @@ function collectSignals() {
     return o;
   });
 }
+function showDevice(d) {
+  $("e-device").innerHTML = (d.device || []).map(([a, b]) => `<tr><th>${esc(a)}</th><td>${esc(b)}</td></tr>`).join("") || '<tr><td class="muted">Brak danych sterownika – pobierz je przyciskiem poniżej albo pojawią się po pierwszym połączeniu.</td></tr>';
+  plcClockInit(d);
+}
+$("e-readdev").addEventListener("click", async () => {
+  if (!editing?.id) { $("e-devmsg").textContent = " Najpierw zapisz połączenie."; return; }
+  $("e-readdev").disabled = true; $("e-devmsg").textContent = " Łączenie i odczyt danych sterownika…";
+  try { const d = await api(`/api/connections/${editing.id}/read-device`, {}); showDevice(d); $("e-devmsg").textContent = ""; }
+  catch (e) { $("e-devmsg").textContent = " " + e.message; }
+  $("e-readdev").disabled = !!editing?.running;
+});
+// the clock of the PLC in the device table: read once at the connection, then the server's clock + the difference, refreshed every second;
+// a clock a day or more off is announced and can be aligned with the offset of the time axis
+let plcClock = null;
+function plcClockInit(d) {
+  plcClock = d.plc_diff === null || d.plc_diff === undefined ? null : { diff: +d.plc_diff, base: +d.server_now, tz: +d.server_tz || 0, t0: performance.now() };
+  const note = $("e-plcnote"); note.hidden = true; note.innerHTML = "";
+  if (plcClock && Math.abs(plcClock.diff) >= 86400) {
+    note.hidden = false; note.innerHTML = `Zegar PLC różni się od zegara serwera o <b>${cxOffFmt(plcClock.diff)}</b>. <button type="button" id="e-plcalign">Wyrównaj oś „Czas PLC” do serwera</button>`;
+    $("e-plcalign").onclick = () => cxOffSet($("e-toff-s"), $("e-toff-d"), $("e-toff-t"), -plcClock.diff);
+  }
+  plcClockTick();
+}
+function plcClockTick() {
+  const tb = $("e-device"); if (!tb) return; let row = $("e-plcrow");
+  if (!plcClock) { row?.remove(); return; }
+  const ms = Math.round((plcClock.base + plcClock.diff + plcClock.tz + (performance.now() - plcClock.t0) / 1000) * 1000), t = new Date(ms), p = (n) => String(n).padStart(2, "0");
+  if (!row) { row = document.createElement("tr"); row.id = "e-plcrow"; tb.appendChild(row); }
+  row.innerHTML = `<th>Czas PLC</th><td>${t.getUTCFullYear()}-${p(t.getUTCMonth() + 1)}-${p(t.getUTCDate())}\u00a0\u00a0${p(t.getUTCHours())}:${p(t.getUTCMinutes())}:${p(t.getUTCSeconds())}</td>`;
+}
+setInterval(plcClockTick, 1000);
 $("e-form").addEventListener("submit", async (e) => {
   e.preventDefault(); $("e-error").textContent = "";
+  const toff = cxOffGet($("e-toff-s"), $("e-toff-d"), $("e-toff-t")) ?? 0;
+  if (Number.isNaN(toff)) { $("e-error").textContent = "Offset osi: godzina w postaci HH:MM:SS.mmm, data = liczba dób."; return; }
   const body = { name: $("e-name").value, window_s: +$("e-window").value, y_layout: $("e-ylayout").value, auto_y: $("e-autoy").checked,
-    y_min: +$("e-ymin").value, y_max: +$("e-ymax").value, show_points: $("e-points").checked, legend_mode: $("e-legend").value, time_axis: $("e-taxis").value, time_offset: +$("e-toff").value || 0,
+    y_min: +$("e-ymin").value, y_max: +$("e-ymax").value, show_points: $("e-points").checked, legend_mode: $("e-legend").value, time_axis: $("e-taxis").value, time_offset: toff,
     trigger: { enabled: $("t-enabled").checked, signal: $("t-signal").value, mode: $("t-mode").value, a: +$("t-a").value, b: +$("t-b").value,
                hysteresis: +$("t-h").value, pretrigger: +$("t-pre").value, action: $("t-action").value, filename: $("t-file").value } };
   if (!editing.recording) body.rec = { target: $("r-target").value, mode: $("r-mode").value, filename: $("r-file").value };
@@ -235,9 +268,11 @@ function connectStream() {
   stream = new EventSource(`/api/connections/${id}/stream?seconds=${sec}`);
   stream.onmessage = (ev) => {
     const d = JSON.parse(ev.data);
-    if (d.reset) { series = { t: d.t, values: d.values, names: d.names, colors: d.colors, start_us: d.start_us, shares: d.shares, gains: d.gains, dtypes: d.dtypes, offsets: d.offsets, layout: d.layout, addresses: d.addresses, tips: d.tips }; }   // (identical colours: palette below)
+    if (d.reset) { series = { t: d.t, values: d.values, names: d.names, colors: d.colors, start_us: d.start_us, shares: d.shares, gains: d.gains, dtypes: d.dtypes, offsets: d.offsets, layout: d.layout, addresses: d.addresses, tips: d.tips, plc_diff: d.plc_diff, tz_offset: d.tz_offset }; }   // (identical colours: palette below)
     else { series.t.push(...d.t); d.values.forEach((col, k) => (series.values[k] ||= []).push(...col)); }
     if (d.start_us) series.start_us = d.start_us;
+    if (d.plc_diff !== undefined) series.plc_diff = d.plc_diff;
+    if (d.tz_offset !== undefined) series.tz_offset = d.tz_offset;
     if (d.names?.length && d.names.join("\u0001") !== searchNames) { searchNames = d.names.join("\u0001"); $("c-search-box")._rebuild?.(); }
     if (d.shares) { series.shares = d.shares; series.gains = d.gains; series.dtypes = d.dtypes; series.offsets = d.offsets; series.layout = d.layout; series.addresses = d.addresses; series.tips = d.tips; }
     if (d.names?.length) { series.names = d.names; series.colors = new Set(d.colors).size < d.colors.length ? d.colors.map((_, k) => COLORS[k % COLORS.length]) : d.colors; }
@@ -591,17 +626,127 @@ $("u-kind").addEventListener("change", () => { $("u-pass").hidden = $("u-kind").
 start();
 
 
-// ---------------------------------------------------------------- foldable groups (title click; the state is remembered in this browser)
+// ---------------------------------------------------------------- layout of the settings panel (the counterpart of the desktop one):
+// groups fold on a title click, are moved by dragging the title up / down; order / folds / bottom tab are kept per account on the server
+const PANEL_GROUPS = ["Połączenie", "Sterownik", "Zakres okna wykresu", "Trigger", "Nagrywanie REC"];
+let PANEL = { order: PANEL_GROUPS.slice(), folds: {}, hidden: {}, info_tab: 0 }, panelSave = null;
+const panelRows = (f) => [...new Set([...f.querySelectorAll("[data-row]")].map((e) => e.dataset.row))];    // names of the elements of a group
+function panelNormalize(raw) {
+  raw = raw && typeof raw === "object" ? raw : {};
+  const order = []; for (const g of raw.order || []) if (PANEL_GROUPS.includes(g) && !order.includes(g)) order.push(g);
+  for (const g of PANEL_GROUPS) if (!order.includes(g)) order.push(g);
+  const folds = {}; for (const g of PANEL_GROUPS) folds[g] = !!(raw.folds && raw.folds[g]);
+  const hidden = {}; for (const g of PANEL_GROUPS) { const known = panelRows(document.querySelector(`#e-folds .fold[data-fold="${g}"]`) || document.body); const want = (raw.hidden && raw.hidden[g]) || []; hidden[g] = known.filter((k) => want.includes(k)); }
+  const t = Number(raw.info_tab); return { order, folds, hidden, info_tab: t === 1 ? 1 : 0 };
+}
+function panelFolds() { return [...document.querySelectorAll("#e-folds .fold")]; }
+function panelApply() {
+  const box = $("e-folds"); if (!box) return;
+  const by = {}; panelFolds().forEach((f) => { by[f.dataset.fold] = f; });
+  PANEL.order.forEach((g) => { if (by[g]) box.appendChild(by[g]); });
+  panelFolds().forEach((f) => {
+    f.classList.toggle("folded", !!PANEL.folds[f.dataset.fold]);
+    f.querySelectorAll("[data-row]").forEach((e) => e.classList.toggle("row-hidden", (PANEL.hidden[f.dataset.fold] || []).includes(e.dataset.row)));
+  });
+  sideTab(PANEL.info_tab, true);
+}
+function panelCollect() {
+  PANEL = { order: panelFolds().map((f) => f.dataset.fold), folds: Object.fromEntries(panelFolds().map((f) => [f.dataset.fold, f.classList.contains("folded")])),
+    hidden: Object.fromEntries(panelFolds().map((f) => [f.dataset.fold, panelRows(f).filter((k) => f.querySelector(`[data-row="${CSS.escape(k)}"]`).classList.contains("row-hidden"))])), info_tab: PANEL.info_tab };
+}
+function panelPersist() {
+  panelCollect(); clearTimeout(panelSave);
+  panelSave = setTimeout(() => { api("/api/prefs", { panel: PANEL }).catch(() => {}); }, 400);
+}
+async function panelLoad() { try { PANEL = panelNormalize((await api("/api/prefs")).prefs.panel); } catch (e) { /* defaults */ } panelApply(); }
 (() => {
-  let saved = {}; try { saved = JSON.parse(localStorage.getItem("s7trace.folds") || "{}"); } catch (e) { /* none */ }
-  document.querySelectorAll(".fold").forEach((f) => {
-    const k = f.dataset.fold; if (saved[k]) f.classList.add("folded");
-    f.querySelector(".fold-h").addEventListener("click", () => {
-      f.classList.toggle("folded"); saved[k] = f.classList.contains("folded");
-      try { localStorage.setItem("s7trace.folds", JSON.stringify(saved)); } catch (e) { /* not remembered */ }
+  document.querySelectorAll("#e-folds .fold").forEach((f) => {
+    const h = f.querySelector(".fold-h"); h.classList.add("grab"); h.title = "Kliknij: zwiń / rozwiń. Przeciągnij w górę lub w dół: zmień kolejność pól.";
+    let down = null, drag = false;
+    h.addEventListener("pointerdown", (e) => { if (e.button !== 0) return; down = { x: e.clientX, y: e.clientY }; drag = false; h.setPointerCapture(e.pointerId); });
+    h.addEventListener("pointermove", (e) => {
+      if (!down) return;
+      if (!drag && Math.abs(e.clientY - down.y) > 5) { drag = true; f.classList.add("dragging"); }
+      if (!drag) return;
+      const others = panelFolds().filter((x) => x !== f); let before = null;
+      for (const o of others) { const r = o.getBoundingClientRect(); if (e.clientY < r.top + r.height / 2) { before = o; break; } }
+      const box = $("e-folds");
+      if (before) { if (f.nextElementSibling !== before) box.insertBefore(f, before); } else if (box.lastElementChild !== f) box.appendChild(f);
     });
+    const end = (e) => {
+      if (!down) return; const was = drag; down = null; drag = false; f.classList.remove("dragging");
+      try { h.releasePointerCapture(e.pointerId); } catch (x) { /* already released */ }
+      if (e.type === "pointercancel") return;
+      if (!was) f.classList.toggle("folded");
+      panelPersist();
+    };
+    h.addEventListener("pointerup", end); h.addEventListener("pointercancel", end);
   });
 })();
+
+
+// right click on the name of an element hides it; right click on the title of a group lists its elements (check list) and folds it
+function ctxMenu(x, y, items) {                                       // items: [label, fn | null, checked | undefined] | "-" | ["head", text]
+  document.querySelectorAll(".ctx-menu").forEach((m) => m.remove());
+  const m = document.createElement("div"); m.className = "ctx-menu";
+  items.forEach((it) => {
+    if (it === "-") { m.appendChild(document.createElement("hr")); return; }
+    const d = document.createElement("div"); const [label, fn, checked] = it;
+    d.textContent = (checked === undefined ? "" : checked ? "✓ " : " ") + label;
+    if (!fn) d.className = fn === undefined ? "head" : "off"; else d.addEventListener("click", () => { m.remove(); fn(); });
+    m.appendChild(d);
+  });
+  document.body.appendChild(m);
+  m.style.left = Math.min(x, innerWidth - m.offsetWidth - 4) + "px"; m.style.top = Math.min(y, innerHeight - m.offsetHeight - 4) + "px";
+  const close = (e) => { if (!m.contains(e.target)) { m.remove(); removeEventListener("pointerdown", close, true); } };
+  addEventListener("pointerdown", close, true);
+}
+function panelSetRow(f, key, show) {
+  f.querySelectorAll(`[data-row="${CSS.escape(key)}"]`).forEach((e) => e.classList.toggle("row-hidden", !show)); panelPersist();
+}
+function panelRowItems(f) {
+  const items = panelRows(f).map((k) => { const hid = f.querySelector(`[data-row="${CSS.escape(k)}"]`).classList.contains("row-hidden"); return [k, () => panelSetRow(f, k, hid), !hid]; });
+  const any = items.some((it) => !it[2]);
+  return [...items, "-", ["Pokaż wszystkie elementy", any ? () => panelRows(f).forEach((k) => f.querySelectorAll(`[data-row="${CSS.escape(k)}"]`).forEach((e) => e.classList.remove("row-hidden"))) || panelPersist() : null]];
+}
+$("e-folds").addEventListener("contextmenu", (e) => {
+  const f = e.target.closest(".fold"); if (!f) return;
+  const row = e.target.closest("[data-row]");
+  if (e.target.closest(".fold-h")) {
+    e.preventDefault();
+    ctxMenu(e.clientX, e.clientY, [[f.classList.contains("folded") ? "Rozwiń pole" : "Zwiń pole", () => { f.classList.toggle("folded"); panelPersist(); }], "-", [`Elementy pola „${f.dataset.fold}”`], ...panelRowItems(f)]);
+  } else if (row && (e.target.closest("label") === row || row.tagName !== "LABEL") && !e.target.closest("input,select,textarea,button")) {
+    e.preventDefault();
+    ctxMenu(e.clientX, e.clientY, [[`Ukryj „${row.dataset.row}”`, () => panelSetRow(f, row.dataset.row, false)], "-", [`Elementy pola „${f.dataset.fold}”`], ...panelRowItems(f)]);
+  }
+});
+
+
+// ---------------------------------------------------------------- 'System' / 'Sieć' tabs under the chart (the counterpart of the tabs at the bottom of the program's left panel)
+let sideTimer = null, sideBusy = false, sideNet = null;
+function sideTab(n, silent) {
+  PANEL.info_tab = n === 1 ? 1 : 0;
+  document.querySelectorAll("#c-side .side-tabs button").forEach((b) => b.classList.toggle("on", Number(b.dataset.tab) === PANEL.info_tab));
+  if (!silent) { panelPersist(); sideRefresh(); }
+}
+document.querySelectorAll("#c-side .side-tabs button").forEach((b) => b.addEventListener("click", () => sideTab(Number(b.dataset.tab))));
+async function sideRefresh() {
+  if (view !== "chart" || sideBusy) return; sideBusy = true;
+  const rows = (r) => "<table>" + r.map(([k, v]) => `<tr><td>${k}:</td><td><b>${esc(String(v))}</b></td></tr>`).join("") + "</table>";
+  try {
+    if (PANEL.info_tab === 0) {
+      const d = await api("/api/sysinfo");
+      $("c-side-body").innerHTML = rows([["Godzina systemowa serwera", d.time], ["Obciążenie CPU serwera", d.cpu === null ? "—" : d.cpu.toFixed(0) + " %"], ["w tym ten serwer (S7Trace)", d.app_cpu === null || d.app_cpu === undefined ? "—" : d.app_cpu.toFixed(1) + " %"]]);
+    } else {
+      const id = $("c-conn").value; const d = id ? await api(`/api/connections/${id}/diag?ping=1`) : null; const L = d && d.link;
+      $("c-side-body").innerHTML = L ? rows([["Czas odczytu śr.", `${dgF(L.lag?.avg)} ms (n=${L.samples})`], ["Czas odczytu ost.", `${dgF(L.lag?.last)} ms`],
+        ["Pominięte cykle", `${L.missed} (${dgF(L.missed_pct)}%)`], ["Ping (z serwera)", d.ping_ms === null || d.ping_ms === undefined ? "brak odpowiedzi" : d.ping_ms + " ms"]])
+        : '<i class="muted">Brak połączenia ze sterownikiem – parametry sieci pojawią się po Start.</i>';
+    }
+  } catch (e) { /* the next tick tries again */ }
+  sideBusy = false;
+}
+sideTimer = setInterval(() => { if (view === "chart") sideRefresh(); }, 1500);
 
 
 // ---------------------------------------------------------------- "O programie" and the help mode ("?": the element under the mouse is described)

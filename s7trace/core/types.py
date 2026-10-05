@@ -134,7 +134,27 @@ def signal_tip_static(s: "Signal") -> str:
 
 LEGEND_MODES = {"name": "Nazwa", "address": "Adres / węzeł OPC"}
 TIME_AXES = {"rel": "Względna [s] (od startu)", "app": "Czas aplikacji (zegar komputera)", "plc": "Czas PLC (zegar sterownika)"}
-TIME_OFFSET_MAX = 86400.0                      # [s] largest correction of the time axis
+TIME_OFFSET_MAX = 3650 * 86400.0               # [s] largest correction of the time axis (10 years: a PLC whose date was never set)
+
+
+def offset_split(seconds: float) -> tuple[bool, int, int]:
+    """A signed offset [s] as (negative, whole days, milliseconds of the day) - the two fields of the offset editor."""
+    v = max(-TIME_OFFSET_MAX, min(TIME_OFFSET_MAX, float(seconds)))
+    days, ms = divmod(int(round(abs(v) * 1000)), 86_400_000)
+    return v < 0 and (days or ms) > 0, days, ms
+
+
+def offset_join(negative: bool, days: int, ms: int) -> float:
+    s = days * 86400.0 + ms / 1000.0
+    return -s if negative else s
+
+
+def fmt_offset(seconds: float) -> str:
+    """'+3 d 02:00:00.000' - an offset / a difference of clocks for messages."""
+    neg, days, ms = offset_split(seconds)
+    h, rest = divmod(ms, 3_600_000)
+    m, rest = divmod(rest, 60_000)
+    return f"{'-' if neg else '+'}{days} d {h:02d}:{m:02d}:{rest // 1000:02d}.{rest % 1000:03d}"
 
 
 def axis_shift(mode: str, start_epoch: float, plc_diff: float | None, offset: float) -> float:

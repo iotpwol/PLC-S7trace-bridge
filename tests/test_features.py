@@ -300,8 +300,9 @@ def test_save_profile_one_parameter_per_line(app, tmp_path):
     lines = open(p, encoding="utf-8").read().splitlines()
     assert lines[0] == "{" and lines[-1] == "}"
     body = lines[1:-1]
-    assert len(body) == 6 + len(th.COLOR_KEYS) + 4              # profile, font x2, REC blink, bar_always, status_lines + colours + marker look
-    assert all(l.startswith('  "') and l.count(":") == 1 for l in body)       # name: value, nothing else
+    assert len(body) == 6 + len(th.COLOR_KEYS) + 4 + 4          # profile, font x2, REC blink, bar_always, status_lines + colours + marker look + panel (order, folds, hidden, info_tab)
+    import json
+    assert all(l.startswith('  "') and len(json.loads("{" + l.rstrip(",") + "}")) == 1 for l in body)       # name: value, nothing else
     assert '  "window_bg": "#f0f0f0",' in body
     got = th.load_profile(p)
     assert got["profile"] == "light" and got["font_size"] == 12 and got["font_family"] == "Arial"

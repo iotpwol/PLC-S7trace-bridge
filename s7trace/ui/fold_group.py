@@ -2,9 +2,9 @@
 (pointing right = folded, down = unfolded) that turns by 90 degrees while the box folds / unfolds."""
 from __future__ import annotations
 
-from PySide6.QtCore import QEasingCurve, QPointF, Qt, QVariantAnimation, Signal
+from PySide6.QtCore import QEasingCurve, QPoint, QPointF, Qt, QVariantAnimation, Signal
 from PySide6.QtGui import QPainter, QPolygonF
-from PySide6.QtWidgets import QGroupBox, QStyle, QStyleOptionGroupBox, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QGroupBox, QStyle, QStyleOptionGroupBox, QVBoxLayout, QWidget
 
 QWIDGETSIZE_MAX = 16777215
 NB = chr(0xA0)                                      # non-breaking spaces are not trimmed from the title
@@ -12,6 +12,9 @@ NB = chr(0xA0)                                      # non-breaking spaces are no
 
 class FoldGroup(QGroupBox):
     foldedChanged = Signal(bool)
+    dragMoved = Signal(int)                                  # global y of the mouse while the group is dragged by its title
+    dragFinished = Signal()
+    contextRequested = Signal(QPoint)                        # right click on the title (global position): menu of the group
 
     def __init__(self, title: str, key: str = "", parent=None):
         super().__init__(title + NB * 2 + NB * 3, parent)   # two spaces between the name and the triangle (+ room for it)
@@ -27,6 +30,8 @@ class FoldGroup(QGroupBox):
         self._anim.finished.connect(self._finished)
         self.setMouseTracking(True)
         self.setToolTip("")
+        self._press = None                                   # (global mouse position) of a press on the title
+        self._dragging = False
 
     def title(self) -> str:                                  # the name without the spacing
         return self._plain
@@ -111,12 +116,41 @@ class FoldGroup(QGroupBox):
 
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton and self._label_rect().adjusted(-4, -2, 4, 2).contains(e.position().toPoint()):
-            self.toggle()
+            self._press = e.globalPosition().toPoint()       # a click folds / unfolds, a drag up / down moves the group
+            self._dragging = False
             e.accept()
             return
         super().mousePressEvent(e)
 
     def mouseMoveEvent(self, e):
+        if self._press is not None and e.buttons() & Qt.LeftButton:
+            gp = e.globalPosition().toPoint()
+            if not self._dragging and abs(gp.y() - self._press.y()) >= QApplication.startDragDistance():
+                self._dragging = True
+                self.setCursor(Qt.ClosedHandCursor)
+            if self._dragging:
+                self.dragMoved.emit(gp.y())
+            e.accept()
+            return
         over = self._label_rect().adjusted(-4, -2, 4, 2).contains(e.position().toPoint())
         self.setCursor(Qt.PointingHandCursor if over else Qt.ArrowCursor)
         super().mouseMoveEvent(e)
+
+    def contextMenuEvent(self, e):
+        if self._label_rect().adjusted(-4, -2, 4, 2).contains(e.pos()):
+            self.contextRequested.emit(e.globalPos())
+            e.accept()
+            return
+        super().contextMenuEvent(e)
+
+    def mouseReleaseEvent(self, e):
+        if e.button() == Qt.LeftButton and self._press is not None:
+            was_drag, self._press, self._dragging = self._dragging, None, False
+            self.setCursor(Qt.PointingHandCursor)
+            if was_drag:
+                self.dragFinished.emit()
+            else:
+                self.toggle()
+            e.accept()
+            return
+        super().mouseReleaseEvent(e)
