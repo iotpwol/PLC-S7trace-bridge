@@ -241,3 +241,18 @@ def test_help_pictures_are_all_used_and_exist():
     assert not (disk - used), sorted(disk - used)
     assert not [n for n in disk if n.startswith("zal")]                       # the old pictures are gone
     assert len(used) >= 90
+
+
+def test_help_pictures_are_shown_at_the_real_size(app):
+    """The pictures are taken at 125 % screen scale: on a 100 % screen they must be shown 1.25 times smaller (the window as big as the real one)."""
+    from PySide6.QtCore import QUrl
+    from PySide6.QtGui import QImage
+    from s7trace.ui.help_dialog import ImageBrowser, SHOT_DPR
+    b = ImageBrowser()
+    b.resize(1400, 800)
+    b.show()
+    dpr = b.devicePixelRatioF()
+    src = QImage(os.path.join(HELP_DIR, "img", "menu_plik.png"))
+    got = b.loadResource(2, QUrl("img/menu_plik.png"))
+    assert abs(got.width() - round(src.width() / SHOT_DPR * dpr)) <= 1
+    b.close()

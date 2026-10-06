@@ -54,6 +54,8 @@ def pump(n: int = 6, ms: int = 30) -> None:
 def save(pm: QPixmap, name: str) -> None:
     os.makedirs(OUT, exist_ok=True)
     path = os.path.join(OUT, name + ".png")
+    if abs(pm.devicePixelRatio() - 1.25) > 0.01:                             # help_dialog.SHOT_DPR assumes pictures taken at 125 %
+        print(f"  WARNING: {name} taken at scale {pm.devicePixelRatio()} (help_dialog.SHOT_DPR = 1.25)")
     pm.save(path)
     SAVED.append(name)
     print(f"  {name}.png  {pm.width()}x{pm.height()}")

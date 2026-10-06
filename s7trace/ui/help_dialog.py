@@ -10,6 +10,8 @@ from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QLineEdit, QListWid
 
 from .help_content import HELP_DIR, sections                      # noqa: E402,F401  (HELP_DIR / sections: part of this module's interface)
 
+SHOT_DPR = 1.25            # the pictures were taken by tools/make_help_images.py at 125 % screen scale (= 1.25 x the logical size of a window)
+
 
 class ImageBrowser(QTextBrowser):
     """QTextBrowser that shows the pictures 1:1 in screen pixels (no scaling when they fit) and scales only the wider ones itself, smoothly -
@@ -22,8 +24,10 @@ class ImageBrowser(QTextBrowser):
             if not img.isNull():
                 dpr = self.devicePixelRatioF()
                 room = max(300, round((self.viewport().width() - 30) * dpr))            # text area in real pixels
-                if img.width() > room:                                                   # only a picture that does not fit is scaled
-                    img = img.scaledToWidth(room, Qt.SmoothTransformation)
+                want = round(img.width() / SHOT_DPR * dpr)                               # the real size of the shown window on THIS screen
+                want = min(want, room)                                                   # a picture that does not fit is scaled down
+                if want != img.width():                                                  # the pictures were taken at 125 %: on a 100 % screen they shrink
+                    img = img.scaledToWidth(want, Qt.SmoothTransformation)
                 img.setDevicePixelRatio(dpr)
                 return img
         return super().loadResource(rtype, url)
