@@ -5,6 +5,19 @@ from dataclasses import dataclass
 
 MODES = ["==", ">", "<", "between", "rising edge", "falling edge"]
 ACTIONS = ["Pauza", "Zapis CSV", "Pauza + zapis CSV"]
+DEFAULT_SNAPSHOT_DB = "snapshots.db"            # a separate SQLite file for the snapshots (folder = TriggerConfig.folder)
+PLACES = ("shared", "own")                      # snapshots go to the general database (as REC) or to a separate one
+
+
+def action_label(action: str, target_label: str) -> str:
+    """The text of an action for the chosen target: 'Zapis CSV' -> 'Zapis SQLite' (the stored value stays 'Zapis CSV')."""
+    return action.replace("CSV", target_label)
+
+
+def saves(action: str) -> bool:
+    return "CSV" in action                       # every action that writes the snapshot (whatever the target)
+
+
 OLD_SNAPSHOT_NAME = "snapshot_{tab}_{date}_{time}.csv"
 DEFAULT_SNAPSHOT_NAME = "snapshot_{confname}_{ip}_{tab}_{date}_{time}.csv"
 DEFAULT_REC_NAME = "REC_{confname}_{ip}_{tab}_{date}_{time}.csv"
@@ -22,6 +35,9 @@ class TriggerConfig:
     action: str = "Pauza"
     folder: str = "snapshots"
     filename: str = DEFAULT_SNAPSHOT_NAME
+    target: str = "csv"                         # where a snapshot goes: "csv" (file) or a database kind (sqlite / influx1 / influx2 / timescale; Web: a target name)
+    place: str = "shared"                       # databases: "shared" = the general database (as REC), "own" = a separate one (SQLite file in `folder`, else a separate table / measurement)
+    db_file: str = DEFAULT_SNAPSHOT_DB          # separate SQLite file (name in `folder`)
 
 
 class TriggerEngine:

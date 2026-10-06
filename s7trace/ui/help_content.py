@@ -311,6 +311,15 @@ sygnału (bez gain i offsetu Y).</p>
         ("Zapis CSV", "Zapisuje okno do pliku i uzbraja się ponownie."),
         ("Pauza + zapis CSV", "Jedno i drugie."),
     ], ("Akcja", "Działanie")) + """
+<h3>Gdzie trafia zapis (snapshot)</h3>
+<p>Pole <b>Zapis do</b> wybiera cel zapisu wyzwalacza – tak jak w REC: <b>Plik CSV</b> (domyślnie), <b>SQLite</b>, <b>InfluxDB 1.x / 2.x</b> albo <b>TimescaleDB</b>. Tekst akcji zmienia się razem z celem („Zapis SQLite”, „Pauza + zapis InfluxDB 1.x”…).
+Dla bazy snapshot jest <b>nagraniem</b> o tytule „Snapshot (trigger)” (widać go w „Przeglądzie nagrań”). Pole <b>Baza</b> mówi, dokąd:</p>
+<ul>
+<li><b>Ogólna (jak w REC)</b> – do tej samej bazy co nagrania REC; jej ustawienia (adres, baza, użytkownik / token) są tam, gdzie ustawień REC (przycisk „…” w polu REC → Zapis do);</li>
+<li><b>Osobna</b> – dla SQLite: <b>własny plik w folderze snapshotów</b> (pola <b>Folder</b> i <b>Plik bazy</b>, domyślnie <i>snapshots.db</i>, jedna baza zbiera wszystkie snapshoty karty); dla InfluxDB / TimescaleDB: <b>osobna tabela albo measurement</b> (nazwa jak w REC z dopiskiem <i>_snapshots</i>) w tej samej bazie.</li>
+</ul>
+""" + _img("grp_trigger_sqlite", "Snapshot do osobnej bazy SQLite (aktywne pola: Zapis do, Baza, Folder, Plik bazy)") + """
+<p>Pola <b>Folder</b> i <b>Nazwa pliku</b> dotyczą zapisu do pliku CSV; <b>Folder</b> i <b>Plik bazy</b> – osobnej bazy SQLite. Pola, które przy danym wyborze nie mają znaczenia, są wyszarzone. Zapis do bazy odbywa się w tle, wynik pojawia się w pasku statusu.</p>
 <p>Moment wyzwolenia jest zaznaczany na wykresie pionową czerwoną linią <b>TRIG</b>:</p>
 """ + _img("wykres_trigger", "Wykres po wyzwoleniu triggera") + _img("okno_glowne_trigger", "Całe okno z uzbrojonym triggerem")))
 

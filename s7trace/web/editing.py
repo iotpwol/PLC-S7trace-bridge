@@ -2,6 +2,7 @@
 Every value coming from the network is checked here (types, ranges, lengths) before it reaches the acquisition."""
 from __future__ import annotations
 
+import os
 import re
 
 from ..core import planner, store as store_mod, trigger as trig
@@ -57,7 +58,8 @@ def view(cfg: TabConfig, web: dict | None = None, targets: list[str] | None = No
             "legend_mode": cfg.legend_mode, "legend_style": cfg.legend_style, "time_axis": cfg.time_axis, "time_offset": cfg.time_offset, "y_layout": cfg.y_layout, "auto_y": cfg.auto_y, "y_min": cfg.y_min, "y_max": cfg.y_max, "show_points": cfg.show_points, "auto_reset": cfg.auto_reset,
             "signals": [s.to_dict() for s in cfg.signals],
             "trigger": {"enabled": t.enabled, "signal": t.signal, "mode": t.mode, "a": t.a, "b": t.b, "hysteresis": t.hysteresis,
-                        "pretrigger": t.pretrigger, "action": t.action, "filename": t.filename},
+                        "pretrigger": t.pretrigger, "action": t.action, "filename": t.filename,
+                        "target": t.target, "place": t.place, "db_file": t.db_file},
             "rec": {"target": (web or {}).get("rec_target", "csv"), "mode": cfg.store.mode, "filename": cfg.rec_filename},
             "options": {"conn_types": CONN_TYPES, "modes": MODES, "sources": ALL_SOURCES, "dtypes": list(TYPES),
                         "formats": FORMATS, "source_of": SOURCE_OF, "trigger_modes": trig.MODES, "trigger_actions": trig.ACTIONS,
@@ -213,6 +215,19 @@ def apply(cfg: TabConfig, patch: dict, running: bool, web: dict | None = None, r
             if d["action"] not in trig.ACTIONS:
                 raise EditError("Wyzwalacz: nieznana akcja.")
             out["action"] = d["action"]
+        if "target" in d:                                           # where a snapshot goes: a CSV file, the account's SQLite or an admin's target
+            if d["target"] not in ["csv", "sqlite"] + list(targets or []):
+                raise EditError("Wyzwalacz: nieznany cel zapisu.")
+            out["target"] = d["target"]
+        if "place" in d:
+            if d["place"] not in trig.PLACES:
+                raise EditError("Wyzwalacz: baza „shared” (ogólna) albo „own” (osobna).")
+            out["place"] = d["place"]
+        if "db_file" in d:
+            name = os.path.basename(str(d["db_file"]).strip()) or trig.DEFAULT_SNAPSHOT_DB
+            if not re.fullmatch(r"[\w .\-]{1,80}", name):
+                raise EditError("Wyzwalacz: nazwa pliku bazy – litery, cyfry, spacja, kropka, minus i podkreślenie.")
+            out["db_file"] = name if name.lower().endswith((".db", ".sqlite", ".sqlite3")) else name + ".db"
         if "filename" in d:
             try:
                 out["filename"] = files.check_template(str(d["filename"])) or trig.DEFAULT_SNAPSHOT_NAME

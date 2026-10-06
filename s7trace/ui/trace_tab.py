@@ -36,6 +36,7 @@ from .markers_ui import TabMarkers
 from .plotview import PlotView
 from .signals_dialog import SignalsDialog
 from ..core import ip_history, sessions
+from ..core import rec_ops
 from ..core.store import KIND_LABEL, KINDS, MODE_LABEL, DbRecorder, StoreConfig, device_summary, test_connection
 from ..core.store import MODES as STORE_MODES            # (planner.MODES = communication modes)
 from .fold_group import FoldGroup
@@ -326,7 +327,19 @@ class TraceTab(QWidget):
         self.sp_thyst = _spin(0, 1e9, 0, dec=3)
         self.sp_tpre = _spin(0, 86400, 0, dec=3)
         self.cb_tact = QComboBox()
-        self.cb_tact.addItems(trg.ACTIONS)
+        for a in trg.ACTIONS:                            # the stored value is the action; its text names the chosen target ('Zapis SQLite')
+            self.cb_tact.addItem(a, a)
+        self.cb_ttarget = QComboBox()                    # where a snapshot goes: CSV file or a database (like REC)
+        for k in KINDS:
+            self.cb_ttarget.addItem(KIND_LABEL[k], k)
+        self.cb_tplace = QComboBox()                     # a database: the general one (settings of REC) or a separate one
+        self.cb_tplace.addItem("Ogólna (jak w REC)", "shared")
+        self.cb_tplace.addItem("Osobna", "own")
+        for cb in (self.cb_ttarget, self.cb_tplace):
+            cb.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+            cb.setMinimumContentsLength(6)
+            cb.setMinimumWidth(70)
+        self.ed_tdb = QLineEdit()                        # file of the separate SQLite database (in the folder above)
         self.ed_tfolder = QLineEdit()
         btn_folder = QPushButton("...")
         btn_folder.clicked.connect(self._pick_folder)
@@ -342,8 +355,11 @@ class TraceTab(QWidget):
         f.addRow("Histereza:", self.sp_thyst)
         f.addRow("Pretrigger [s]:", self.sp_tpre)
         f.addRow("Akcja:", self.cb_tact)
+        f.addRow("Zapis do:", self.cb_ttarget)
+        f.addRow("Baza:", self.cb_tplace)
         f.addRow("Folder:", fr)
         f.addRow("Nazwa pliku:", self.ed_tname)
+        f.addRow("Plik bazy:", self.ed_tdb)
 
         f = group("Nagrywanie REC")
         self.ed_rfolder = QLineEdit()
@@ -525,11 +541,11 @@ class TraceTab(QWidget):
         self.plot.windowChanged.connect(self._on_zoomed)
         self.plot.userMoved.connect(self._on_user_moved)
         self.ed_ip.editingFinished.connect(lambda: self.titleChanged.emit(self.title()))
-        for w in (self.chk_trig, self.cb_tsig, self.cb_tmode, self.cb_tact):
+        for w in (self.chk_trig, self.cb_tsig, self.cb_tmode, self.cb_tact, self.cb_ttarget, self.cb_tplace):
             (w.toggled if isinstance(w, QCheckBox) else w.currentIndexChanged).connect(self._trigger_changed)
         for w in (self.sp_ta, self.sp_tb, self.sp_thyst, self.sp_tpre):
             w.valueChanged.connect(self._trigger_changed)
-        for w in (self.ed_tfolder, self.ed_tname):
+        for w in (self.ed_tfolder, self.ed_tname, self.ed_tdb):
             w.editingFinished.connect(self._trigger_changed)
         for w in (self.ed_rfolder, self.ed_rname):
             w.editingFinished.connect(self._collect)
@@ -969,9 +985,12 @@ class TraceTab(QWidget):
         self.sp_tb.setValue(t.b)
         self.sp_thyst.setValue(t.hysteresis)
         self.sp_tpre.setValue(t.pretrigger)
-        self.cb_tact.setCurrentText(t.action)
+        self.cb_tact.setCurrentIndex(max(self.cb_tact.findData(t.action), 0))
+        self.cb_ttarget.setCurrentIndex(max(self.cb_ttarget.findData(t.target), 0))
+        self.cb_tplace.setCurrentIndex(max(self.cb_tplace.findData(t.place), 0))
         self.ed_tfolder.setText(t.folder)
         self.ed_tname.setText(t.filename)
+        self.ed_tdb.setText(t.db_file)
         self._refresh_signal_widgets(select=t.signal)
         self.plot.set_window(c.window_s)
         self.plot.set_auto_y(c.auto_y)
@@ -1016,8 +1035,10 @@ class TraceTab(QWidget):
         t.mode = self.cb_tmode.currentText()
         t.a, t.b = self.sp_ta.value(), self.sp_tb.value()
         t.hysteresis, t.pretrigger = self.sp_thyst.value(), self.sp_tpre.value()
-        t.action = self.cb_tact.currentText()
+        t.action = self.cb_tact.currentData() or trg.ACTIONS[0]
+        t.target, t.place = self.cb_ttarget.currentData() or "csv", self.cb_tplace.currentData() or "shared"
         t.folder, t.filename = self.ed_tfolder.text().strip(), self.ed_tname.text().strip()
+        t.db_file = self.ed_tdb.text().strip() or trg.DEFAULT_SNAPSHOT_DB
         return c
 
     def to_config(self) -> TabConfig:
@@ -1112,11 +1133,31 @@ class TraceTab(QWidget):
             return
         t = self._collect().trigger
         self.sp_tb.setEnabled(t.mode == "between")
+        self._trigger_target_ui(t)
         self.engine = trg.TriggerEngine(t)
         if self.state == "running" and t.enabled and self.trig_state in ("idle", "armed"):
             self.trig_state = "armed"
         elif not t.enabled and self.trig_state != "hold":
             self.trig_state = "idle"
+
+    def _trigger_target_ui(self, t) -> None:
+        """The snapshot target decides which fields apply: CSV = folder + file name, a database = 'Baza' (general / separate), a separate
+        SQLite file = folder + file of the database; the action's text names the target."""
+        label = KIND_LABEL[t.target].replace("Plik CSV", "CSV") if t.target in KIND_LABEL else "CSV"
+        for i in range(self.cb_tact.count()):
+            self.cb_tact.setItemText(i, trg.action_label(self.cb_tact.itemData(i), label))
+        db = t.target != "csv"
+        own = db and t.place == "own"
+        self.cb_ttarget.setEnabled(trg.saves(t.action))
+        self.cb_tplace.setEnabled(db and trg.saves(t.action))
+        self.cb_tplace.setItemText(1, "Osobny plik w folderze" if t.target == "sqlite" else "Osobna tabela / measurement" if db else "Osobna")
+        self.ed_tfolder.setEnabled(not db or (own and t.target == "sqlite"))
+        self.ed_tname.setEnabled(not db)
+        self.ed_tdb.setEnabled(own and t.target == "sqlite")
+        self.cb_tplace.setToolTip("Ogólna: snapshoty trafiają do tej samej bazy co nagrania REC (jej ustawienia: przycisk „...” w polu REC → Zapis do).\n"
+                                  "Osobna: SQLite – własny plik w folderze snapshotów; InfluxDB / TimescaleDB – osobna tabela albo measurement "
+                                  "(nazwa jak w REC z dopiskiem _snapshots) w tej samej bazie.")
+        self.ed_tdb.setToolTip("Plik osobnej bazy SQLite (w folderze powyżej); jedna baza zbiera wszystkie snapshoty tej karty. Można użyć {confname} {ip} {tab}.")
 
     @staticmethod
     def _portable_folder(path: str) -> str:
@@ -1173,7 +1214,7 @@ class TraceTab(QWidget):
                                 "(opcjonalnie z portem: 127.0.0.1:1102).")
             self.ed_ip.setFocus()
             return
-        writes_trigger = c.trigger.enabled and "CSV" in c.trigger.action and "{confname}" in c.trigger.filename
+        writes_trigger = c.trigger.enabled and trg.saves(c.trigger.action) and c.trigger.target == "csv" and "{confname}" in c.trigger.filename
         writes_rec = self.btn_rec.isChecked() and "{confname}" in c.rec_filename
         if writes_trigger or writes_rec:                 # ask for the configuration name before the first file is written
             self._confname_for_file()
@@ -1654,7 +1695,9 @@ class TraceTab(QWidget):
         x0 = self.trig_t - pre
         x1 = x0 + self.trig_win
         note = ""
-        if "CSV" in tc.action:
+        if trg.saves(tc.action) and tc.target != "csv":
+            note = self._snapshot_to_db(x0, x1)
+        elif trg.saves(tc.action):
             try:
                 path = self._save_range(x0, x1, tc.filename, "snapshot")
                 note = f"Trigger: zapisano {path}"
@@ -1775,6 +1818,45 @@ class TraceTab(QWidget):
             path = f"{base}_{n}{ext}"
             n += 1
         return path
+
+    def _snapshot_db_file(self) -> str:
+        """Absolute path of the separate SQLite database of the snapshots (placeholders of the name expanded; the file is reused)."""
+        tc = self.cfg.trigger
+        name = (tc.db_file or trg.DEFAULT_SNAPSHOT_DB).format_map(_Names(
+            tab=_sanitize(self.title()), date="", time="", confname=_sanitize(self.cfg.conf_name.strip() or "no_name"),
+            ip=_sanitize(parse_host(self.ed_ip.text())[0])))
+        if not name.lower().endswith((".db", ".sqlite", ".sqlite3")):
+            name += ".db"
+        folder = self._abs_folder(tc.folder)
+        os.makedirs(folder, exist_ok=True)
+        return os.path.join(folder, _sanitize_filename(name))
+
+    def _snapshot_to_db(self, x0: float, x1: float) -> str:
+        """A trigger snapshot as a recording of a database (the general one, as REC, or a separate one). Runs in a thread (a network
+        database may be slow); the result comes back as a status message through `_recOpDone`."""
+        tc, c = self.cfg.trigger, self._collect()
+        t, v = self.buffer.snapshot(x0, x1)
+        if not ((t >= x0) & (t <= x1)).any():
+            return "Trigger: błąd zapisu do bazy — brak próbek w zakresie"
+        own_file = self._snapshot_db_file() if tc.target == "sqlite" and tc.place == "own" else ""
+        cfg = rec_ops.snapshot_store(dataclasses.replace(c.store), tc.target, tc.place, own_file)
+        meta = {"name": self.title(), "ip": c.ip, "tab": self.title(), "conf": c.conf_name, "title": "Snapshot (trigger)",
+                "device": device_summary(self.device, c.ip), "notes": f"Zapis wyzwalacza: sygnał {tc.signal}, {tc.mode}"}
+        sigs, start_wall, base = list(self._run_signals or self.display_signals()), self.start_wall, data_dir()
+        a, b = max(x0, float(t[0])), min(x1, float(t[-1]))
+
+        def work():
+            try:
+                where, _sid = rec_ops.save_range_recording(cfg, sigs, start_wall, t, v, a, b, meta, base)
+                err = ""
+            except Exception as e:
+                where, err = "", str(e) or type(e).__name__
+            try:
+                self._recOpDone.emit("snapshot", 0, where, err)
+            except RuntimeError:                                 # the tab is gone
+                pass
+        threading.Thread(target=work, daemon=True, name="SnapshotDb").start()
+        return f"Trigger: zapisuję snapshot do bazy ({cfg.describe()})…"
 
     def _save_range(self, x0: float, x1: float, template: str, prefix: str) -> str:
         path = self._file_name(template, prefix)

@@ -401,6 +401,10 @@ class TabRecMarks:
 
     # ---- results (GUI thread)
     def _done(self, kind: str, n: int, text: str, err: str) -> None:
+        if kind == "snapshot":                                   # a trigger snapshot written to a database (TraceTab._snapshot_to_db)
+            self.tab.status_msg = f"Trigger: błąd zapisu do bazy — {err}" if err else f"Trigger: zapisano snapshot → {text}"
+            self.tab._update_status()
+            return
         if kind == "manual":
             if err:
                 self.m.mark_saved(n, "")

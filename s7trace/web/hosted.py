@@ -20,7 +20,8 @@ from ..core.config import TabConfig, load_app_config
 from ..core.csvio import CsvRecorder, write_csv
 from ..core.drivers import CONN_LABEL, family_of
 from ..core.store import DbRecorder, StoreConfig, device_lines, device_summary
-from ..core.trigger import TriggerEngine
+from ..core.trigger import DEFAULT_SNAPSHOT_DB, TriggerEngine
+from ..core.trigger import saves as trig_saves
 from ..core.types import Signal, fmt_diff, signal_tip_static
 from . import files
 
@@ -256,7 +257,9 @@ class HostedConnection:
         x0 = self.trig_t - pre
         x1 = x0 + self.trig_win
         note, name = "", ""
-        if "CSV" in tc.action:
+        if trig_saves(tc.action) and tc.target != "csv":
+            name, note = self._snapshot_to_db(x0, x1)
+        elif trig_saves(tc.action):
             try:
                 t, v = self.buffer.snapshot(x0, x1)
                 m = (t >= x0) & (t <= x1)
@@ -279,6 +282,41 @@ class HostedConnection:
         self.trig_events = (self.trig_events + [{"t": self.trig_t, "x0": x0, "x1": x1, "file": name,
                                                   "us": int(time.time() * 1e6)}])[-20:]
         self.version += 1
+
+    def _snapshot_to_db(self, x0: float, x1: float) -> tuple[str, str]:
+        """A trigger snapshot as a recording of a database: the same target as REC would use (the general database) or a separate one (the
+        account's own SQLite file `snapshots/<db_file>`; a table / measurement of its own next to the general ones). A thread does the writing."""
+        tc = self.cfg.trigger
+        try:
+            t, v = self.buffer.snapshot(x0, x1)
+            if not ((t >= x0) & (t <= x1)).any():
+                raise ValueError("brak próbek w zakresie")
+            scfg, base = self._store_for(tc.target)
+            if tc.place == "own":
+                if scfg.kind == "sqlite":
+                    base = os.path.join(base, "snapshots")
+                    os.makedirs(base, exist_ok=True)
+                    scfg = rec_ops.snapshot_store(scfg, "sqlite", "own", os.path.join(base, tc.db_file or DEFAULT_SNAPSHOT_DB))
+                else:
+                    scfg = rec_ops.snapshot_store(scfg, scfg.kind, "own")
+            meta = {"name": self.name, "ip": self.cfg.ip, "tab": self.name, "conf": self.cfg.conf_name or self.name, "title": "Snapshot (trigger)",
+                    "owner": self.owner, "computer": "Web", "device": device_summary(self.device, self.cfg.ip),
+                    "notes": f"Zapis wyzwalacza: sygnał {tc.signal}, {tc.mode}"}
+            sigs, start_wall = list(self.signals), self.start_wall
+            a, b = max(x0, float(t[0])), min(x1, float(t[-1]))
+        except Exception as e:
+            return "", f"Błąd zapisu do bazy: {e}"
+
+        def work():
+            try:
+                where, _sid = rec_ops.save_range_recording(scfg, sigs, start_wall, t, v, a, b, meta, base)
+                msg = f"Zapisano snapshot → {where}"
+            except Exception as e:
+                msg = f"Błąd zapisu do bazy: {e}"
+            self.trig_note = msg
+            self.version += 1
+        threading.Thread(target=work, daemon=True, name="SnapshotDb").start()
+        return "", "Zapisuję snapshot do bazy…"
 
     # ---- REC
     def _store_for(self, target: str) -> tuple[StoreConfig, str]:

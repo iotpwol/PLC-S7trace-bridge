@@ -210,6 +210,7 @@ od otwartej przeglądarki i nie traci próbek.
 - **Zapis CSV:** zakres `[t − przedtrigger, t − przedtrigger + okno czasu]` z bufora trafia do pliku konta w `files\u_<konto>\snapshots`.
 - **Pauza:** wykres każdego przeglądającego zamraża okno wokół wyzwolenia (czerwona linia „T”) aż do „Wznów (uzbrój wyzwalacz)”
   (wstrzymanie dotyczy wyzwalacza i widoku, nie akwizycji ani REC). Znaczniki „T” widać też przy akcji „Zapis CSV” (do 20 ostatnich zdarzeń).
+- **Zapis do bazy** (`trigger.target`: `csv` / `sqlite` (baza konta `recordings.db`) / nazwa celu admina; `trigger.place`: `shared` = ta sama baza co REC, `own` = osobna: plik `snapshots/<db_file>` w folderze konta albo osobna tabela / measurement `…_snapshots` celu sieciowego): snapshot jest nagraniem „Snapshot (trigger)” (`rec_ops.save_range_recording`, zapis w osobnym wątku, wynik w notatce wyzwalacza). Pola w edytorze: „Zapis snapshotu do”, „Baza snapshotów”, „Plik bazy snapshotów”.
 - Zmiana ustawień wyzwalacza podczas pracy restartuje maszynę stanów (uzbraja od nowa).
 - Nazwa pliku: szablon ze znacznikami `{confname} {ip} {tab} {date} {time}` (bez ścieżek i znaków `\ / : * ? " < > |`);
   folder jest zawsze folderem konta. `{confname}` = nazwa konfiguracji albo nazwa połączenia (serwer nigdy nie pyta w oknie dialogowym).

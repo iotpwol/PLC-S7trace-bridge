@@ -143,6 +143,7 @@ window.openEditor = async (id) => {
   $("t-enabled").checked = tr.enabled; $("t-a").value = tr.a; $("t-b").value = tr.b; $("t-h").value = tr.hysteresis; $("t-pre").value = tr.pretrigger;
   fillSelect($("t-mode"), d.options.trigger_modes, tr.mode); fillSelect($("t-action"), d.options.trigger_actions, tr.action);
   $("t-file").value = tr.filename; trigSignals(tr.signal);
+  fillSelect($("t-target"), d.options.rec_targets, tr.target || "csv"); $("t-place").value = tr.place || "shared"; $("t-dbfile").value = tr.db_file || "snapshots.db"; trigTarget();
   fillSelect($("r-target"), d.options.rec_targets, rc.target); $("r-mode").value = rc.mode; $("r-file").value = rc.filename;
   editing.recording = !!d.recording;
   if (editing.running) for (const el of $("e-form").querySelectorAll("input,select,button[type=button]"))
@@ -239,13 +240,22 @@ $("e-form").addEventListener("submit", async (e) => {
   const body = { name: $("e-name").value, window_s: +$("e-window").value, y_layout: $("e-ylayout").value, auto_y: $("e-autoy").checked,
     y_min: +$("e-ymin").value, y_max: +$("e-ymax").value, show_points: $("e-points").checked, legend_mode: $("e-legend").value, time_axis: $("e-taxis").value, time_offset: toff,
     trigger: { enabled: $("t-enabled").checked, signal: $("t-signal").value, mode: $("t-mode").value, a: +$("t-a").value, b: +$("t-b").value,
-               hysteresis: +$("t-h").value, pretrigger: +$("t-pre").value, action: $("t-action").value, filename: $("t-file").value } };
+               hysteresis: +$("t-h").value, pretrigger: +$("t-pre").value, action: $("t-action").value, filename: $("t-file").value,
+               target: $("t-target").value, place: $("t-place").value, db_file: $("t-dbfile").value } };
   if (!editing.recording) body.rec = { target: $("r-target").value, mode: $("r-mode").value, filename: $("r-file").value };
   if (!editing.running) Object.assign(body, { ip: $("e-ip").value, rack: +$("e-rack").value, slot: +$("e-slot").value, cycle_ms: +$("e-cycle").value,
     conn_type: $("e-type").value, mode: $("e-mode").value, signals: collectSignals() });
   try { await api(editing.id ? `/api/connections/${editing.id}/config` : "/api/connections", body); go("overview"); }
   catch (err) { $("e-error").textContent = err.message; }
 });
+// the snapshot target decides which fields apply (the counterpart of the program's panel): CSV = file name, a database = general / separate, a separate SQLite = its file
+function trigTarget() {
+  const t = $("t-target").value, db = t !== "csv", own = db && $("t-place").value === "own", sqlite = t === "sqlite";
+  $("t-place").disabled = !db; $("t-file").disabled = db; $("t-dbfile").disabled = !(own && sqlite);
+  $("t-place").options[1].textContent = sqlite ? "Osobny plik w katalogu snapshotów konta" : db ? "Osobna tabela / measurement" : "Osobna";
+  for (const o of $("t-action").options) o.textContent = o.value.replace("CSV", t === "csv" ? "CSV" : t === "sqlite" ? "SQLite" : t);
+}
+for (const id of ["t-target", "t-place", "t-action"]) $(id).addEventListener("change", trigTarget);
 $("e-delete").addEventListener("click", async () => {
   if (!confirm("Usunąć to połączenie razem z jego konfiguracją?")) return;
   try { await api(`/api/connections/${editing.id}/delete`, {}); go("overview"); } catch (err) { $("e-error").textContent = err.message; }
@@ -683,7 +693,7 @@ const PANEL_ROWS = {
   "Połączenie": ["Nazwa", "Adres IP", "Rack", "Slot", "Cykl [ms]", "Sposób połączenia", "Tryb odczytu", "Kreator"],
   "Sterownik": ["Rodzina", "Model", "Numer katalogowy (MLFB)", "Firmware", "Numer seryjny", "Nazwa stacji", "Nazwa modułu", "Producent / copyright", "Stan CPU", "Długość PDU [B]", "Czas PLC", "Pobierz dane"],
   "Zakres okna wykresu": ["Okno czasu [s]", "Układ wykresu", "Auto Y", "Y min", "Y maks", "Punkty", "Legenda", "Oś czasu", "Offset osi"],
-  "Trigger": ["Włączony", "Sygnał", "Warunek", "A", "B", "Histereza", "Przedtrigger [s]", "Akcja", "Nazwa pliku zapisu"],
+  "Trigger": ["Włączony", "Sygnał", "Warunek", "A", "B", "Histereza", "Przedtrigger [s]", "Akcja", "Zapis snapshotu do", "Baza snapshotów", "Nazwa pliku zapisu", "Plik bazy snapshotów"],
   "Nagrywanie REC": ["Cel zapisu", "Tryb", "Nazwa pliku CSV"],
   "System": ["Godzina systemowa", "System operacyjny", "Obciążenie CPU", "w tym ten serwer"],
   "Sieć": ["Czas odczytu śr.", "Czas odczytu ost.", "Pominięte cykle", "Ping"],

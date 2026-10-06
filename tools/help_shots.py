@@ -300,6 +300,14 @@ def trigger_state():
     tab.cb_tact.setCurrentIndex(0)                         # pause
     pump(3)
     grp_shot(tab, "Trigger", "grp_trigger_wlaczony")
+    tab.cb_tact.setCurrentIndex(2)                         # the snapshot into a database: the target and its separate SQLite file
+    tab.cb_ttarget.setCurrentIndex(tab.cb_ttarget.findData("sqlite"))
+    tab.cb_tplace.setCurrentIndex(tab.cb_tplace.findData("own"))
+    pump(3)
+    grp_shot(tab, "Trigger", "grp_trigger_sqlite")
+    tab.cb_ttarget.setCurrentIndex(tab.cb_ttarget.findData("csv"))
+    tab.cb_tplace.setCurrentIndex(tab.cb_tplace.findData("shared"))
+    tab.cb_tact.setCurrentIndex(0)
     for _ in range(150):                                   # wait for the firing (D160E rises every 4.5 s)
         pump(1, 100)
         if tab.paused:

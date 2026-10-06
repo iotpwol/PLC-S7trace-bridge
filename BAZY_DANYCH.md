@@ -131,6 +131,10 @@ Lista **„Próbki:”** dotyczy wszystkich celów (także CSV). Domyślnie: **T
 
 ---
 
+### Snapshoty wyzwalacza w bazie
+
+Akcja wyzwalacza „Zapis …” może zapisać okno (przedtrigger + okno czasu) nie tylko do pliku CSV, ale też do bazy – pole **Zapis do** (CSV / SQLite / InfluxDB / TimescaleDB), jak w REC. Snapshot jest **nagraniem** (tytuł „Snapshot (trigger)”) i jest widoczny w „Przeglądzie nagrań”. Pole **Baza**: **Ogólna** = ta sama baza i ustawienia co REC; **Osobna** = SQLite: własny plik (domyślnie `snapshots.db` w folderze snapshotów), InfluxDB: osobny measurement `<measurement>_snapshots`, TimescaleDB: osobna tabela `<tabela>_snapshots` (`core/rec_ops.snapshot_store`).
+
 ## 4. Szczegóły każdej bazy
 
 ### 4.1. Plik CSV

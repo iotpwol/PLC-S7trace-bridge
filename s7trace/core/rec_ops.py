@@ -61,6 +61,18 @@ def covers(first_time: float, t0: float) -> bool:
     return first_time <= t0 + 1e-6
 
 
+def snapshot_store(base: StoreConfig, target: str, place: str, sqlite_file: str = "") -> StoreConfig:
+    """The database a trigger snapshot is written to: the general one (the settings of REC, only the kind may differ) or a separate one -
+    a SQLite file of its own (`sqlite_file`, absolute) / a separate table (TimescaleDB) or measurement (InfluxDB) next to the general ones."""
+    cfg = dataclasses.replace(base, kind=target)
+    if place == "own":
+        if target == "sqlite":
+            cfg = dataclasses.replace(cfg, sqlite_path=sqlite_file or "snapshots.db", rotate_mb=0, rotate_daily=False, sqlite_shared=False)
+        elif target in StoreConfig.NETWORK:
+            cfg = dataclasses.replace(cfg, measurement=f"{base.measurement}_snapshots", table=f"{base.table}_snapshots")
+    return cfg
+
+
 def save_range_recording(cfg: StoreConfig, signals, start_wall: datetime, t, v, a: float, b: float, meta_extra: dict,
                          base_dir: str = "", csv_path: str = "") -> tuple[str, str]:
     """Writes [a, b] of the buffered data as a NEW recording: a CSV file (`csv_path`) or a record of the database target `cfg`.

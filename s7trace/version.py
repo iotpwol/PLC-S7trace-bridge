@@ -1,7 +1,7 @@
 """Program identity shown in 'O programie' (desktop) and in the Web page. Update VERSION (+0.01 with every change) and DATE
 (dd-mm-yyyy) together whenever the program is changed - see CLAUDE.md."""
 AUTHOR = "PWOL79 & CLAUDE"
-VERSION = "1.14"
+VERSION = "1.15"
 DATE = "06-10-2026"
 
 

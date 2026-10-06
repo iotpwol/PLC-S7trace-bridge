@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass, field
 from .drivers import conn_defaults
 from .planner import MODE_BLOCKS
 from .store import StoreConfig
-from .trigger import DEFAULT_REC_NAME, OLD_SNAPSHOT_NAME, DEFAULT_SNAPSHOT_NAME, TriggerConfig
+from .trigger import DEFAULT_REC_NAME, OLD_SNAPSHOT_NAME, DEFAULT_SNAPSHOT_NAME, PLACES, TriggerConfig
 from .types import TIME_OFFSET_MAX, Signal
 
 
@@ -100,6 +100,10 @@ class TabConfig:
         if isinstance(d.get("trigger"), dict):
             known = {k: v for k, v in d["trigger"].items() if k in TriggerConfig.__dataclass_fields__}
             c.trigger = TriggerConfig(**known)
+        if c.trigger.place not in PLACES:
+            c.trigger.place = "shared"
+        if not isinstance(c.trigger.target, str) or not c.trigger.target:
+            c.trigger.target = "csv"
         if c.trigger.filename == OLD_SNAPSHOT_NAME:                  # the former default -> the new default
             c.trigger.filename = DEFAULT_SNAPSHOT_NAME
         if not (isinstance(c.legend_pos, (list, tuple)) and len(c.legend_pos) == 2):

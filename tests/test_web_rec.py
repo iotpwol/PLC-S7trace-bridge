@@ -144,6 +144,50 @@ def test_trigger_pause_and_csv(sim, mgr):
     assert h.trig_state == "off"
 
 
+def test_trigger_snapshot_to_a_database_general_or_separate(sim, mgr):
+    from s7trace.core import store as store_mod
+    from s7trace.core.store import StoreConfig
+    sim.db1[100] = 0
+    cfg = _cfg(1.0)
+    cfg.trigger.enabled, cfg.trigger.signal, cfg.trigger.mode, cfg.trigger.a = True, "b0", "rising edge", 0.5
+    cfg.trigger.action, cfg.trigger.target, cfg.trigger.place = "Zapis CSV", "sqlite", "shared"
+    h = _run(mgr, cfg)
+    acct = files.account_dir(mgr.files_root, "ola")
+    try:
+        time.sleep(0.4)
+        sim.db1[100] = 1
+        assert _wait(lambda: "Zapisano snapshot" in h.trig_note, 10)               # the account's general database (as REC with 'sqlite')
+        be = store_mod.open_backend(StoreConfig(kind="sqlite", sqlite_path="recordings.db"), acct)
+        assert [x["title"] for x in be.sessions()] == ["Snapshot (trigger)"]
+        be.close()
+        assert not files.listing(mgr.files_root, "ola") or all(f["kind"] != "snapshots" for f in files.listing(mgr.files_root, "ola"))   # no CSV file
+        sim.db1[100] = 0
+        h.cfg.trigger.place, h.cfg.trigger.db_file = "own", "mine.db"                 # a separate file in the account's snapshots folder
+        time.sleep(0.4)
+        h.trig_note = ""
+        sim.db1[100] = 1
+        assert _wait(lambda: "Zapisano snapshot" in h.trig_note, 10)
+        be = store_mod.open_backend(StoreConfig(kind="sqlite", sqlite_path="mine.db"), os.path.join(acct, "snapshots"))
+        assert len(be.sessions()) == 1
+        be.close()
+    finally:
+        sim.db1[100] = 0
+        h.shutdown()
+
+
+def test_trigger_target_is_validated_in_the_editor():
+    from s7trace.core.config import TabConfig
+    c = TabConfig()
+    editing.apply(c, {"trigger": {"target": "sqlite", "place": "own", "db_file": "x y.db"}}, running=False, web={}, targets=["moja"])
+    assert (c.trigger.target, c.trigger.place, c.trigger.db_file) == ("sqlite", "own", "x y.db")
+    editing.apply(c, {"trigger": {"target": "moja", "db_file": "plik"}}, running=False, web={}, targets=["moja"])
+    assert c.trigger.target == "moja" and c.trigger.db_file == "plik.db"
+    for bad in ({"target": "nope"}, {"place": "x"}, {"db_file": "..//x*"}):
+        with pytest.raises(editing.EditError):
+            editing.apply(c, {"trigger": bad}, running=False, web={}, targets=["moja"])
+    assert editing.view(c, {}, ["moja"])["trigger"]["target"] == "moja"
+
+
 def test_trigger_marker_only_rearms(sim, mgr):
     sim.db1[100] = 0
     cfg = _cfg(1.0)
