@@ -139,6 +139,7 @@ def test_trigger_pause_and_csv(sim, mgr):
         time.sleep(0.5)
         sim.db1[100] = 1
         assert _wait(lambda: len(h.trig_events) == 2, 8)                     # fires again after re-arming
+        assert [e["n"] for e in h.trig_events] == [1, 2]                     # the chart line is "TRIG (n)": n counts the firings of the run
     finally:
         h.shutdown()
     assert h.trig_state == "off"

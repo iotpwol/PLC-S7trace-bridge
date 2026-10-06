@@ -286,6 +286,18 @@
     <label>Grubość linii REC [px] <input id="mkw-rec_width" type="number" step="1"></label>
     <label>Rodzaj linii REC <select id="mkw-rec_style"><option value="solid">ciągła</option><option value="dash">kreskowana</option><option value="dot">kropkowana</option><option value="dashdot">kreska-kropka</option></select></label>
     <label>Obszar „Manual REC”: nieprzezroczystość [%] <input id="mkw-rec_opacity" type="number" step="1"></label>
+    <h4>Linie TRIG (n)</h4>
+    <label><input id="mkw-trig_show" type="checkbox"> Rysuj „TRIG (n)” na wykresie przy każdym wyzwoleniu triggera</label>
+    <label>Kolor linii TRIG <input id="mkw-trig_color" type="color"></label>
+    <label>Grubość linii TRIG [px] <input id="mkw-trig_width" type="number" step="1"></label>
+    <label>Rodzaj linii TRIG <select id="mkw-trig_style"><option value="solid">ciągła</option><option value="dash">kreskowana</option><option value="dot">kropkowana</option><option value="dashdot">kreska-kropka</option></select></label>
+    <h4>Przerwy Stop → Start (pas o stałej szerokości)</h4>
+    <label>Kolor wypełnienia pasa <input id="mkw-gap_fill" type="color"></label>
+    <label>Nieprzezroczystość wypełnienia [%] <input id="mkw-gap_opacity" type="number" step="1"></label>
+    <label><input id="mkw-gap_text" type="checkbox"> Opis długości przerwy w pasie</label>
+    <label>Kierunek opisu <select id="mkw-gap_text_dir"><option value="vertical">w pionie</option><option value="horizontal">w poziomie</option></select></label>
+    <label>Kolor czcionki opisu <input id="mkw-gap_text_color" type="color"></label>
+    <label>Położenie opisu <select id="mkw-gap_text_pos"><option value="top">u góry</option><option value="middle">pośrodku</option><option value="bottom">na dole</option></select></label>
     <div class="inline"><button type="button" id="mkw-default">Domyślne</button><button type="button" id="mkw-ok">OK</button><button type="button" id="mkw-cancel">Anuluj</button></div>
   </form>
 </dialog>

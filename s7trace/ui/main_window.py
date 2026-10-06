@@ -21,6 +21,7 @@ from ..version import about_lines
 from . import help_mode, tray
 from .interface_dialog import InterfaceDialog
 from .render_dialog import RenderDialog
+from .gap_dialog import GapDialog
 from .marker_look_dialog import MarkerLookDialog
 from .wizard_dialog import WizardDialog
 from .trace_tab import RACK_SLOT_HELP, TraceTab, dot_icon
@@ -241,6 +242,7 @@ class MainWindow(QMainWindow):
         self.act_gap["full"].setChecked(True)
         self.menu_gap.addSeparator()
         self._act(self.menu_gap, "Szerokość przerwy [px]…", lambda: self._cur(self._gap_px_dialog))
+        self._act(self.menu_gap, "Wygląd i szerokość przerw…", lambda: self._cur(self._gap_dialog))
         self.menu_legend = v.addMenu("Położenie legendy (ta karta)")
         for label, pos in (("Lewy górny róg", (0, 0)), ("Prawy górny róg", (1, 0)),
                            ("Lewy dolny róg", (0, 1)), ("Prawy dolny róg", (1, 1))):
@@ -469,6 +471,14 @@ class MainWindow(QMainWindow):
                                     tab.cfg.gap_px, GAP_PX_MIN, GAP_PX_MAX)
         if ok:
             tab.set_gap_mode("fixed", v)
+
+    def _gap_dialog(self, tab) -> None:
+        """All settings of the pauses in one window: the way of showing (this tab), the band width, the look of a band (interface configuration)."""
+        dlg = GapDialog(tab.cfg.gap_mode, tab.cfg.gap_px, self.marker_look, lambda m, px: tab.set_gap_mode(m, px), self._apply_marker_look, self)
+        if dlg.exec():
+            mode, px, look = dlg.result()
+            tab.set_gap_mode(mode, px)
+            self._apply_marker_look(look)
 
     def _legend_style_all(self, style: str) -> None:
         """'Wszystkie otwarte karty': the same signal-name style in every open tab (each keeps it as its own setting)."""

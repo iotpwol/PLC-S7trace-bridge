@@ -238,6 +238,7 @@ QMenuBar::item:selected {{ background: {t['accent']}; }}
 QMenu {{ background: {t['menu_bg']}; color: {t['menu_text']}; border: 1px solid rgba(128,128,128,110); }}
 QMenu::item:selected {{ background: {t['accent']}; color: #ffffff; }}
 QMenu::item:disabled {{ color: {_disabled(t['menu_text'])}; }}
+QMenu::separator {{ height: 1px; background: {t['menu_text']}; margin: 4px 6px; }}
 QTabBar::tab {{ background: {t['tab_bg']}; color: {t['text']}; padding: 4px 12px;
     border: 1px solid rgba(128,128,128,110); border-bottom: none; margin-left: 1px; }}
 QTabBar::tab {{ min-width: 70px; }}

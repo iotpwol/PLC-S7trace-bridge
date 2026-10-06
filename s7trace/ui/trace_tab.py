@@ -145,6 +145,7 @@ class TraceTab(QWidget):
         self.engine = trg.TriggerEngine(cfg.trigger)
         self.trig_state = "idle"       # idle / armed / post / hold
         self.trig_t = 0.0
+        self.trig_n = 0                                   # number of the last firing of the trigger in this run (the line is 'TRIG (n)')
         self.trig_win = 0.0
         self.trig_post_end = 0.0
         self._stat_tick = 0
@@ -208,6 +209,12 @@ class TraceTab(QWidget):
         self._dev_rows_on = False                                                     # the controller rows are shown (there is data and no message)
         self._net_on = False                                                          # the 'Sieć' rows are shown (the connection works)
         self._row_keys: dict[str, list[str]] = {}
+        self._autohide: dict[str, bool] = dict(panel_cfg.DEFAULTS["autohide"])        # "Ukrywanie nieaktywnych" per group (part of the panel layout)
+        self._pinned: set[tuple[str, str]] = set()                                    # greyed-out elements shown on purpose (until they change state)
+        self._row_fields: dict[str, list[list[QWidget]]] = {}                         # group -> per row: the input widgets (their enabled state decides)
+        self._field_rows: dict[QWidget, tuple[str, str]] = {}
+        self._inact: dict[tuple[str, str], bool] = {}
+        self._rows_pending = False
         self._row_ctx: dict[QWidget, tuple[str, str]] = {}                           # label / spanning widget -> (group, row name)
 
         def group(title):
@@ -342,8 +349,8 @@ class TraceTab(QWidget):
             cb.setMinimumWidth(70)
         self.ed_tdb = QLineEdit()                        # file of the separate SQLite database (in the folder above)
         self.ed_tfolder = QLineEdit()
-        btn_folder = QPushButton("...")
-        btn_folder.clicked.connect(self._pick_folder)
+        self.btn_tfolder = btn_folder = QPushButton("...")
+        self.btn_tfolder.clicked.connect(self._pick_folder)
         fr = QHBoxLayout()
         fr.addWidget(self.ed_tfolder)
         fr.addWidget(btn_folder)
@@ -721,8 +728,20 @@ class TraceTab(QWidget):
         """Names the rows of every group / tab (the label without the colon; a row without a label is named after its content) and
         catches right clicks on them (on the name, on a value, on the empty part of the box)."""
         alone = {id(self.btn_dev): "Pobierz dane", id(self.chk_auto): "Auto Y", id(self.chk_trig): "Włącz trigger"}
+
+        def widgets(item) -> list[QWidget]:                       # the widgets of a form field (a layout holds several: spin + spin + button)
+            if item is None:
+                return []
+            if item.widget() is not None:
+                return [item.widget()]
+            lay, out = item.layout(), []
+            for i in range(lay.count() if lay is not None else 0):
+                out += widgets(lay.itemAt(i))
+            return out
+
         for title, f in self._forms.items():
             keys = []
+            fields: list[list[QWidget]] = []
             for r in range(f.rowCount()):
                 lab, fld = f.itemAt(r, QFormLayout.LabelRole), f.itemAt(r, QFormLayout.FieldRole)
                 ws = []
@@ -731,23 +750,35 @@ class TraceTab(QWidget):
                     ws.append(lab.widget())
                     if fld is not None and isinstance(fld.widget(), QLabel):
                         ws.append(fld.widget())
+                    inputs = [w for w in widgets(fld) if not isinstance(w, QLabel)]
                 else:
                     span = f.itemAt(r, QFormLayout.SpanningRole)
                     w = span.widget() if span is not None else None
                     key = alone.get(id(w), "") if w is not None else ""
                     if w is not None:
                         ws.append(w)
+                    inputs = [w] if w is not None else []
                 keys.append(key)
+                fields.append(inputs)
                 if key:
                     for w in ws:
                         self._row_ctx[w] = (title, key)
                         w.installEventFilter(self)
+                    if title in panel_cfg.AUTOHIDE_GROUPS:
+                        for w in inputs:                          # a change of the enabled state re-evaluates the row
+                            self._field_rows[w] = (title, key)
+                            w.installEventFilter(self)
             self._row_keys[title] = keys
+            self._row_fields[title] = fields
         for title, body in self._bodies.items():
             self._body_ctx[body] = title
             body.installEventFilter(self)
+        self._refresh_inactive()
 
     def eventFilter(self, obj, ev):
+        if ev.type() == QEvent.EnabledChange and obj in self._field_rows and not self._rows_pending:
+            self._rows_pending = True                             # (several fields change together: one pass)
+            QTimer.singleShot(0, self._refresh_inactive)
         if ev.type() == QEvent.ContextMenu:
             if obj in self._row_ctx:
                 title, key = self._row_ctx[obj]
@@ -769,7 +800,35 @@ class TraceTab(QWidget):
                 return not self._net_on
             if not self._net_on:
                 return False
-        return key not in self._hidden.get(title, [])
+        return key not in self._hidden.get(title, []) and not self._auto_hidden(title, key)
+
+    def _row_inactive(self, title: str, key: str) -> bool:
+        """The element is greyed out because of another setting (its input widgets are all disabled). Locking the connection fields while
+        reading does not count: that is not a dependency, the fields are only frozen."""
+        keys = self._row_keys.get(title, [])
+        if key not in keys:
+            return False
+        ws = self._row_fields[title][keys.index(key)]
+        if not ws:
+            return False
+        stopped = self.state == "stopped"
+        return all(not w.isEnabledTo(self) and not (w in self._conn_widgets and not stopped) for w in ws)
+
+    def _auto_hidden(self, title: str, key: str) -> bool:
+        return bool(self._autohide.get(title)) and (title, key) not in self._pinned and self._row_inactive(title, key)
+
+    def _refresh_inactive(self) -> None:
+        """An element became (in)active: a pin ('show although inactive') is only valid until the state changes again; the rows are updated."""
+        self._rows_pending = False
+        for title in panel_cfg.AUTOHIDE_GROUPS:
+            for key in self._row_keys.get(title, []):
+                if not key:
+                    continue
+                now = self._row_inactive(title, key)
+                if self._inact.get((title, key), now) != now or not now:
+                    self._pinned.discard((title, key))
+                self._inact[(title, key)] = now
+        self._apply_rows()
 
     def _apply_rows(self) -> None:
         for title, f in self._forms.items():
@@ -785,9 +844,21 @@ class TraceTab(QWidget):
     def _toggle_row(self, title: str, key: str, show: bool) -> None:
         if show:
             h = [k for k in self._hidden[title] if k != key]
+            if self._autohide.get(title) and self._row_inactive(title, key):
+                self._pinned.add((title, key))                    # shown although inactive - until it changes state again
+        elif (title, key) in self._pinned:
+            self._pinned.discard((title, key))                    # a pinned element goes back to the automatic hiding
+            h = list(self._hidden[title])
         else:
             h = [k for k in self._row_keys[title] if k in self._hidden[title] or k == key]
         self._set_hidden({**self._hidden, title: h})
+        self._apply_rows()
+        self._layout_moved()
+
+    def _set_autohide(self, title: str, on: bool) -> None:
+        self._autohide[title] = bool(on)
+        self._pinned = {p for p in self._pinned if p[0] != title}
+        self._apply_rows()
         self._layout_moved()
 
     def _rows_menu(self, m: QMenu, title: str) -> None:
@@ -795,12 +866,29 @@ class TraceTab(QWidget):
         for key in dict.fromkeys(k for k in self._row_keys.get(title, []) if k):
             a = m.addAction("Pobierz dane sterownika (przycisk)" if key == "Pobierz dane" else key)
             a.setCheckable(True)
-            a.setChecked(key not in self._hidden[title])
+            a.setChecked(key not in self._hidden[title] and not self._auto_hidden(title, key))
             a.triggered.connect(lambda checked, k=key: self._toggle_row(title, k, checked))
         m.addSeparator()
         a = m.addAction("Pokaż wszystkie elementy")
-        a.setEnabled(bool(self._hidden[title]))
-        a.triggered.connect(lambda: (self._set_hidden({**self._hidden, title: []}), self._layout_moved()))
+        auto = [k for k in self._row_keys.get(title, []) if k and self._auto_hidden(title, k)]
+        a.setEnabled(bool(self._hidden[title]) or bool(auto))
+        a.triggered.connect(lambda: self._show_all(title))
+        if title in panel_cfg.AUTOHIDE_GROUPS:
+            m.addSeparator()
+            a = m.addAction("Ukrywanie nieaktywnych")
+            a.setCheckable(True)
+            a.setChecked(bool(self._autohide.get(title)))
+            a.setToolTip("Elementy wyszarzone przez inne ustawienia (np. „Zapis do” przy akcji „Pauza”) ukrywają się same; z tego menu można je pokazać "
+                         "mimo to – do następnej zmiany ich stanu.")
+            a.triggered.connect(lambda checked: self._set_autohide(title, checked))
+
+    def _show_all(self, title: str) -> None:
+        for k in self._row_keys.get(title, []):                   # (also the greyed-out ones: shown until they change state)
+            if k and self._autohide.get(title) and self._row_inactive(title, k):
+                self._pinned.add((title, k))
+        self._set_hidden({**self._hidden, title: []})
+        self._apply_rows()
+        self._layout_moved()
 
     def _device_action(self, m: QMenu) -> None:
         a = m.addAction("Pobierz dane sterownika")          # also when the button itself is hidden
@@ -839,7 +927,8 @@ class TraceTab(QWidget):
     def panel_state(self) -> dict:
         """Order of the groups, folded groups and the bottom tab: the layout of the left panel (a part of the interface configuration)."""
         return {"order": self._group_order(), "folds": {k: g.folded() for k, g in self.folds.items()},
-                "hidden": {k: list(v) for k, v in self._hidden.items()}, "info_tab": self.info_tabs.currentIndex()}
+                "hidden": {k: list(v) for k, v in self._hidden.items()}, "info_tab": self.info_tabs.currentIndex(),
+                "autohide": dict(self._autohide)}
 
     def apply_panel(self, p: dict) -> None:
         p = panel_cfg.normalize(p)
@@ -859,6 +948,11 @@ class TraceTab(QWidget):
                 lv.insertWidget(first + n, g)
         for k, g in self.folds.items():
             g.set_folded(bool(p["folds"].get(k, False)), animate=False)
+        if p["autohide"] != self._autohide:
+            self._autohide = dict(p["autohide"])
+            self._pinned.clear()
+            if self._row_keys:
+                self._apply_rows()
         if p["hidden"] != self._hidden:
             self._set_hidden(p["hidden"])
         if p["info_tab"] != self.info_tabs.currentIndex():
@@ -1069,7 +1163,7 @@ class TraceTab(QWidget):
         self.cfg = cfg
         self.buffer.reset(len(self.display_signals()))
         self._run_signals = []
-        self.plot.clear_trigger_marks()
+        self._clear_trig()
         self._noname_asked = False
         self._load_cfg()
         self.titleChanged.emit(self.title())
@@ -1165,16 +1259,26 @@ class TraceTab(QWidget):
             self.cb_tact.setItemText(i, trg.action_label(self.cb_tact.itemData(i), label))
         db = t.target != "csv"
         own = db and t.place == "own"
-        self.cb_ttarget.setEnabled(trg.saves(t.action))
-        self.cb_tplace.setEnabled(db and trg.saves(t.action))
+        saves = trg.saves(t.action)
+        self.cb_ttarget.setEnabled(saves)
+        self.cb_tplace.setEnabled(db and saves)
         self.cb_tplace.setItemText(1, "Osobny plik w folderze" if t.target == "sqlite" else "Osobna tabela / measurement" if db else "Osobna")
-        self.ed_tfolder.setEnabled(not db or (own and t.target == "sqlite"))
-        self.ed_tname.setEnabled(not db)
-        self.ed_tdb.setEnabled(own and t.target == "sqlite")
+        self.ed_tfolder.setEnabled(saves and (not db or (own and t.target == "sqlite")))
+        self.btn_tfolder.setEnabled(self.ed_tfolder.isEnabled())
+        self.ed_tname.setEnabled(saves and not db)
+        self.ed_tdb.setEnabled(saves and own and t.target == "sqlite")
         self.cb_tplace.setToolTip("Ogólna: snapshoty trafiają do tej samej bazy co nagrania REC (jej ustawienia: przycisk „...” w polu REC → Zapis do).\n"
                                   "Osobna: SQLite – własny plik w folderze snapshotów; InfluxDB / TimescaleDB – osobna tabela albo measurement "
                                   "(nazwa jak w REC z dopiskiem _snapshots) w tej samej bazie.")
         self.ed_tdb.setToolTip("Plik osobnej bazy SQLite (w folderze powyżej); jedna baza zbiera wszystkie snapshoty tej karty. Można użyć {confname} {ip} {tab}.")
+        NOSAVE = "akcja „Pauza” niczego nie zapisuje – wybierz akcję z zapisem."
+        for w, base, why in (                                      # a greyed-out field says why
+                (self.cb_ttarget, "Gdzie trafia snapshot: plik CSV albo baza danych.", "akcja „Pauza” niczego nie zapisuje – wybierz akcję z zapisem."),
+                (self.cb_tplace, self.cb_tplace.toolTip(), "dotyczy tylko zapisu do bazy danych (nie do pliku CSV)." if saves else "akcja „Pauza” niczego nie zapisuje."),
+                (self.ed_tfolder, None, "folder dotyczy zapisu do pliku CSV albo osobnego pliku SQLite." if saves else NOSAVE),
+                (self.ed_tname, "Nazwa pliku snapshotu. Można użyć {confname} {ip} {tab} {date} {time}.", "nazwa pliku dotyczy tylko zapisu do pliku CSV." if saves else NOSAVE),
+                (self.ed_tdb, self.ed_tdb.toolTip(), "plik bazy dotyczy tylko zapisu do SQLite z opcją „Osobny plik w folderze”." if saves else NOSAVE)):
+            self._tip(w, base, why)
 
     @staticmethod
     def _portable_folder(path: str) -> str:
@@ -1188,12 +1292,28 @@ class TraceTab(QWidget):
             return os.path.relpath(os.path.abspath(path), data_dir())
         return path
 
+    def _tip(self, w, base: str | None, why: str) -> None:
+        """Tooltip of a trigger field = its description + (when the field is greyed out) the reason. `base` None = keep the description."""
+        parts = getattr(self, "_tip_parts", None)
+        if parts is None:
+            parts = self._tip_parts = {}
+        if base is not None:
+            parts[id(w)] = base
+        elif id(w) not in parts:
+            parts[id(w)] = w.toolTip()
+        text = parts[id(w)]
+        if not w.isEnabled():
+            sep = "<br><br>" if "<br>" in text else "\n\n"
+            text = f"{text}{sep}Pole nieaktywne: {why}" if text else f"Pole nieaktywne: {why}"
+        w.setToolTip(text)
+
     def _folder_tips(self, *_):
         """The folder fields show the full system path a (relative) name resolves to."""
         for ed, default in ((self.ed_tfolder, "snapshots"), (self.ed_rfolder, "rec")):
             full = self._abs_folder(ed.text().strip() or default)
-            ed.setToolTip(f"Zapis do: {full}<br>Nazwa względna to folder w Dokumentach bieżącego użytkownika Windows "
-                          f"({data_dir()}); ścieżka bezwzględna działa tak, jak wpisano.")
+            self._tip(ed, f"Zapis do: {full}<br>Nazwa względna to folder w Dokumentach bieżącego użytkownika Windows "
+                          f"({data_dir()}); ścieżka bezwzględna działa tak, jak wpisano.",
+                      "folder dotyczy zapisu do pliku CSV albo osobnego pliku SQLite." if ed is self.ed_tfolder else "ten sposób zapisu nie używa folderu.")
             ed.setPlaceholderText(default)
 
     def _pick_folder(self):
@@ -1252,7 +1372,7 @@ class TraceTab(QWidget):
                 return
             self.buffer.reset(len(run))
             self.mk.rec.new_run()                        # the Start / Stop REC lines and Manual REC areas belong to the previous run
-            self.plot.clear_trigger_marks()
+            self._clear_trig()
         self._continued = cont
         self._run_signals = [Signal.from_dict(s.to_dict()) for s in run]
         self.plot.set_signals(run)
@@ -1340,7 +1460,7 @@ class TraceTab(QWidget):
             self._restart_time_axis()
         elif self.recorder is None:
             self.mk.rec.new_run()
-        self.plot.clear_trigger_marks()
+        self._clear_trig()
         self._pending.clear()
         if self.state == "stopped":
             self.loaded = None
@@ -1702,9 +1822,15 @@ class TraceTab(QWidget):
                     pre = min(tc.pretrigger, self.trig_win)
                     self.trig_post_end = t + max(self.trig_win - pre, 0.0)
                     self.trig_state = "post"
-                    self.plot.mark_trigger(t)
+                    self.trig_n += 1
+                    self.plot.mark_trigger(t, self.trig_n)
             if self.trig_state == "post" and t >= self.trig_post_end:
                 self._trigger_action()
+
+    def _clear_trig(self) -> None:
+        """A new run / Reset of the chart: the TRIG lines go and the numbering starts again."""
+        self.trig_n = 0
+        self.plot.clear_trigger_marks()
 
     def _trigger_action(self):
         tc = self.cfg.trigger

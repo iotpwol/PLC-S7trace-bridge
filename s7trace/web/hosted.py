@@ -51,6 +51,7 @@ class HostedConnection:
         self.trig_t = self.trig_win = self.trig_post_end = 0.0
         self.trig_x0 = self.trig_x1 = None
         self.trig_events: list[dict] = []
+        self.trig_n = 0                                       # number of the last firing in this run (the chart line is 'TRIG (n)')
         self._trig_idx: int | None = None
         # REC
         self.recorder = None
@@ -146,6 +147,7 @@ class HostedConnection:
             if not cont:
                 self.buffer.reset(len(run))
                 self.rec_marks.reset()
+                self.trig_n, self.trig_events = 0, []
             self._continued = cont
             c = self.cfg
             self.acq = ProcAcquirer(
@@ -172,6 +174,7 @@ class HostedConnection:
         for a new one (refused while REC runs: the recording needs continuous times); a stopped one starts afresh. True = the axis was restarted."""
         with self._lock:
             self.buffer.reset()
+            self.trig_n, self.trig_events = 0, []
             axis = bool(restart_axis) and self.recorder is None and self.state != "stopped" and self.acq is not None and bool(self.acq.t0)
             if axis:
                 self.acq.time_offset = -(time.perf_counter() - self.acq.t0)
@@ -247,6 +250,7 @@ class HostedConnection:
             pre = min(tc.pretrigger, self.trig_win)
             self.trig_post_end = t + max(self.trig_win - pre, 0.0)
             self.trig_state = "post"
+            self.trig_n += 1
             self.version += 1
         if self.trig_state == "post" and t >= self.trig_post_end:
             self._trigger_action()
@@ -279,7 +283,7 @@ class HostedConnection:
             self.engine.reset()
             self.trig_state = "armed"
         self.trig_note = note
-        self.trig_events = (self.trig_events + [{"t": self.trig_t, "x0": x0, "x1": x1, "file": name,
+        self.trig_events = (self.trig_events + [{"t": self.trig_t, "n": self.trig_n, "x0": x0, "x1": x1, "file": name,
                                                   "us": int(time.time() * 1e6)}])[-20:]
         self.version += 1
 

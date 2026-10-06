@@ -34,9 +34,12 @@ WEB_ROWS = {                                               # the Web editor has 
 # the controller box shows the basic data; the rest (the same data as in the wizard's 'Sterownik i czas' tab) is hidden until asked for
 DEFAULT_HIDDEN = {"Sterownik": ["Numer katalogowy (MLFB)", "Numer seryjny", "Producent / copyright", "Stan CPU", "Długość PDU [B]"]}
 ALL_GROUPS = GROUPS + INFO_GROUPS
+# groups whose elements get greyed out when another setting makes them useless: with "Ukrywanie nieaktywnych" (per group, on by default) such an
+# element is hidden automatically; the group's menu can show it anyway (until it becomes inactive again)
+AUTOHIDE_GROUPS = ("Połączenie", "Zakres okna wykresu", "Trigger", "Nagrywanie REC")
 
 DEFAULTS = {"order": list(GROUPS), "folds": {g: False for g in GROUPS},
-            "hidden": {g: list(DEFAULT_HIDDEN.get(g, [])) for g in ALL_GROUPS}, "info_tab": 0}
+            "hidden": {g: list(DEFAULT_HIDDEN.get(g, [])) for g in ALL_GROUPS}, "info_tab": 0, "autohide": {g: True for g in AUTOHIDE_GROUPS}}
 
 
 def normalize(raw, rows: dict = ROWS) -> dict:
@@ -59,4 +62,6 @@ def normalize(raw, rows: dict = ROWS) -> dict:
         tab = int(raw.get("info_tab", 0))
     except (TypeError, ValueError):
         tab = 0
-    return {"order": order, "folds": folds, "hidden": hidden, "info_tab": tab if 0 <= tab < INFO_TABS else 0}
+    auto_in = raw.get("autohide") if isinstance(raw.get("autohide"), dict) else {}
+    autohide = {g: bool(auto_in.get(g, True)) for g in AUTOHIDE_GROUPS}
+    return {"order": order, "folds": folds, "hidden": hidden, "info_tab": tab if 0 <= tab < INFO_TABS else 0, "autohide": autohide}

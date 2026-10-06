@@ -121,18 +121,25 @@ class TimeAxis(pg.AxisItem):
         return out
 
 
+AXIS_Y_WIDTH = 46                  # [px] the left axis (and the overview strip's left margin): the title column + the numbers
+
+
 class AxisTitle(QGraphicsTextItem):
-    """The title of an axis ('Sygnały', 'Czas'). It needs no room of its own: it is drawn BEHIND the tick numbers of the axis (the numbers
-    cover it, not the other way round) and can be dragged along the axis with the mouse."""
+    """The title of an axis ('Sygnały', 'Czas'). It needs no room of its own: it is drawn OVER the tick numbers of the axis on an opaque
+    background (a number that runs into it is covered, the title always stays readable) and can be dragged along the axis with the mouse."""
+    X_GAP = 0                      # vertical title: distance from the left edge of the chart area
+    Y_DROP = 3                     # horizontal title: moved down towards the overview strip
 
     def __init__(self, text: str, axis, vertical: bool):
         super().__init__(text, axis)
         self.axis, self.vertical = axis, vertical
         self.frac = 0.5                                            # position along the axis (0..1)
-        self.setFlag(QGraphicsItem.ItemStacksBehindParent, True)
+        self._bg = QColor("#000000")
+        self.document().setDocumentMargin(1.5)
+        self.setZValue(50)                                         # above the tick numbers
         self.setAcceptedMouseButtons(Qt.LeftButton)
         self.setCursor(Qt.SizeVerCursor if vertical else Qt.SizeHorCursor)
-        self.setToolTip("Przeciągnij, aby przesunąć opis osi (liczby osi zasłaniają go).")
+        self.setToolTip("Przeciągnij, aby przesunąć opis osi (zasłania liczby osi).")
         if vertical:
             self.setRotation(-90)
         axis.geometryChanged.connect(self.place)
@@ -146,6 +153,14 @@ class AxisTitle(QGraphicsTextItem):
     def set_color(self, color) -> None:
         self.setDefaultTextColor(QColor(color))
 
+    def set_background(self, color) -> None:
+        self._bg = QColor(color)
+        self.update()
+
+    def paint(self, p, option, widget=None) -> None:
+        p.fillRect(self.boundingRect(), self._bg)
+        super().paint(p, option, widget)
+
     def _rect(self) -> QRectF:
         """The axis band itself (pyqtgraph's boundingRect() of an axis with a grid reaches over the whole plot)."""
         return QRectF(QPointF(0.0, 0.0), self.axis.size())
@@ -154,10 +169,10 @@ class AxisTitle(QGraphicsTextItem):
         r, tb = self._rect(), self.boundingRect()
         if self.vertical:                                          # text rotated by -90: it runs upwards from its position
             c = min(max(self.frac * r.height(), tb.width() / 2), max(r.height() - tb.width() / 2, tb.width() / 2))
-            self.setPos(r.left() + 1, r.top() + c + tb.width() / 2)
+            self.setPos(r.left() + self.X_GAP, r.top() + c + tb.width() / 2)
         else:
             c = min(max(self.frac * r.width(), tb.width() / 2), max(r.width() - tb.width() / 2, tb.width() / 2))
-            self.setPos(r.left() + c - tb.width() / 2, r.top() + max((r.height() - tb.height()) / 2, 0.0))
+            self.setPos(r.left() + c - tb.width() / 2, r.top() + max((r.height() - tb.height()) / 2, 0.0) + self.Y_DROP)
 
     def mousePressEvent(self, ev) -> None:
         ev.accept()
@@ -277,7 +292,7 @@ class PlotView(QWidget):
         self.gap_px = 0                                  # > 0: every pause is a band of this many pixels
         self._band_items: list = []
         self._mkeep: list[dict] = []                     # the items of the last set_markers (re-drawn when the pauses change)
-        self._trig_t: float | None = None                # real time of the TRIG line
+        self._trigs: list[tuple[float, int]] = []        # the TRIG lines of this run: (real time, number of the firing)
         self._ghost_t: float | None = None               # real time of the ghost
         self._dirty = True
         self._last_version = -1
@@ -321,6 +336,8 @@ class PlotView(QWidget):
 
         self.glw = pg.GraphicsLayoutWidget()          # main chart
         self.glw_ov = pg.GraphicsLayoutWidget()       # overview strip (own widget -> draggable splitter)
+        for g in (self.glw, self.glw_ov):             # no room left of the axis: the title stands at the edge, the chart gets wider
+            g.ci.layout.setContentsMargins(0.0, 9.0, 9.0, 9.0)
         self.glw_ov.setMinimumHeight(48)
         self.split = FoldSplitter(Qt.Vertical, 1, 100)       # button / double click on the bar folds the overview down
         self.split.addWidget(self.glw)
@@ -351,7 +368,7 @@ class PlotView(QWidget):
 
         self.ov = self.glw_ov.addPlot(row=0, col=0, axisItems={"bottom": TimeAxis("bottom")})
         self.ov.setMenuEnabled(False)
-        self.ov.getAxis("left").setWidth(62)
+        self.ov.getAxis("left").setWidth(AXIS_Y_WIDTH)
         self.ov.getAxis("left").setStyle(showValues=False)
         self.ov.hideButtons()
         self.ov.setMouseEnabled(x=False, y=False)
@@ -369,7 +386,7 @@ class PlotView(QWidget):
         self.legend.sigDoubleClicked.connect(lambda *_: self.legendDoubleClicked.emit())   # -> 'Sygnały…'
         self.legend.setBrush(pg.mkBrush(0, 0, 0, 170))
         self.legend.setPen(pg.mkPen("#b0b0b0"))
-        self.vb.sigResized.connect(lambda *_: self._place_tags())
+        self.vb.sigResized.connect(lambda *_: (self._place_tags(), self._stack_labels()))
         self.curves: list[pg.PlotDataItem] = []
         self.points: list[pg.PlotDataItem] = []
         self.ov_curves: list[pg.PlotDataItem] = []
@@ -549,6 +566,8 @@ class PlotView(QWidget):
                 a.setTextPen(pen)
         self.title_x.set_color(fg)
         self.title_y.set_color(fg)
+        self.title_x.set_background(bg)
+        self.title_y.set_background(bg)
         self._axis_labels()
         c = QColor(bg)
         c.setAlpha(170)
@@ -600,8 +619,7 @@ class PlotView(QWidget):
         self._x = (float(self._d(keep[0])), float(self._d(keep[1])))
         self.window = max(self._x[1] - self._x[0], MIN_WINDOW)
         self.set_markers(self._mkeep)                                  # the markers stand on other positions now
-        if self._trig_t is not None:
-            self.mark_trigger(self._trig_t)
+        self._draw_trigs()
         if self._ghost_t is not None and self.ghost is not None:
             self.ghost.setValue(self._d(self._ghost_t))
         self._rebuild_bands()
@@ -625,35 +643,50 @@ class PlotView(QWidget):
         self._install_gm(GapMap(self._gaps_raw, g), keep)
 
     def _rebuild_bands(self) -> None:
-        """Fixed-width pauses: a translucent band with the length of the pause written in it."""
+        """Fixed-width pauses: a translucent band; the length of the pause is written in it (look: marker_look gap_* keys)."""
         for it in self._band_items:
             self.plot.removeItem(it)
         self._band_items = []
         if self.gm.g <= 0:
             return
+        look = self.mlook
+        fill = QColor(look["gap_fill"])
+        fill.setAlphaF(look["gap_opacity"] / 100.0)
         for i in range(self.gm.n):
-            reg = pg.LinearRegionItem(values=(float(self.gm.D[i]), float(self.gm.E[i])), movable=False, brush=pg.mkBrush(150, 150, 150, 38), pen=pg.mkPen(None))
+            reg = pg.LinearRegionItem(values=(float(self.gm.D[i]), float(self.gm.E[i])), movable=False, brush=pg.mkBrush(fill), pen=pg.mkPen(None))
             reg.setZValue(2)
             reg.setAcceptedMouseButtons(Qt.NoButton)
             for ln in reg.lines:
                 ln.setAcceptedMouseButtons(Qt.NoButton)
                 ln.setVisible(False)
+            self.plot.addItem(reg, ignoreBounds=True)
+            self._band_items.append(reg)
+            if not look["gap_text"]:
+                continue
             L = float(self.gm.L[i])
-            txt = pg.TextItem(f"przerwa {L:.1f} s" if L < 600 else f"przerwa {L / 60:.1f} min", color="#a0a0a0", anchor=(0.5, 0.5), angle=90)
+            vertical = look["gap_text_dir"] == "vertical"
+            pos = look["gap_text_pos"]
+            # the anchor is in the frame of the (unrotated) text: a vertical text runs upwards, so its end is at the top
+            ax, ay = ((1 if pos == "top" else 0 if pos == "bottom" else 0.5), 0.5) if vertical else (0.5, (0 if pos == "top" else 1 if pos == "bottom" else 0.5))
+            txt = pg.TextItem(f"przerwa {L:.1f} s" if L < 600 else f"przerwa {L / 60:.1f} min", color=look["gap_text_color"], anchor=(ax, ay),
+                              angle=90 if vertical else 0)
             txt.setZValue(2)
             txt.setPos(float(self.gm.j[i]), 0.5)
-            self.plot.addItem(reg, ignoreBounds=True)
             self.plot.addItem(txt, ignoreBounds=True)
-            self._band_items += [reg, txt]
+            self._band_items.append(txt)
             txt._band = True
+        self._place_band_text()
 
     def _place_band_text(self) -> None:
         if not self._band_items:
             return
         (_, _), (y0, y1) = self.vb.viewRange()
+        pos = self.mlook["gap_text_pos"]
+        margin = (y1 - y0) * 0.02
+        y = y1 - margin if pos == "top" else y0 + margin if pos == "bottom" else (y0 + y1) / 2
         for it in self._band_items:
             if getattr(it, "_band", False):
-                it.setPos(it.pos().x(), (y0 + y1) / 2)
+                it.setPos(it.pos().x(), y)
 
     def set_view(self, x0: float, x1: float) -> None:
         self._x = (float(self._d(x0)), float(self._d(x1)))
@@ -690,7 +723,7 @@ class PlotView(QWidget):
     def _axis_labels(self) -> None:
         lanes = getattr(self, "y_layout", "lanes") == "lanes"
         self.title_y.set_text("Sygnały" if lanes else "Offset")
-        self.axis_y.setWidth(62)                                  # just the numbers (the same as the overview strip below)
+        self.axis_y.setWidth(AXIS_Y_WIDTH)                        # the title column + the numbers (the same as the overview strip below)
         if not lanes:
             self.axis_y.lanes = []
             self.axis_y.labels = []
@@ -988,14 +1021,38 @@ class PlotView(QWidget):
             self._marker_extras()
             self._marker_style()
             self._delta_overlay()
+            self._stack_labels()
         finally:
             self._mset = False
+
+    LABEL_GAP = 8                                        # [px] between two vertical marker labels standing on the same line
+
+    def _stack_labels(self) -> None:
+        """The vertical descriptions of markers that stand on the same time (e.g. 'Stop REC (1)' and 'Stop odczytu (1)') would be printed
+        over each other: they are placed one below the other along the line instead."""
+        if not getattr(self, "mitems", None):
+            return
+        groups: dict[int, list] = {}
+        h = max(float(self.vb.height()), 1.0)
+        w = max(float(self.vb.width()), 1.0)
+        (x0, x1), _ = self.vb.viewRange()
+        for cur in self.mitems.values():
+            for lab in (cur.get("label"), cur.get("label2")):
+                if lab is not None and getattr(lab, "line", None) is not None:
+                    groups.setdefault(round(lab.line.value() / max(x1 - x0, 1e-9) * w / 4.0), []).append(lab)    # (the same place within ~4 px)
+        for labs in groups.values():
+            pos = 0.985
+            for lab in labs:
+                lab.setPosition(pos)
+                pos -= (lab.textItem.boundingRect().width() + self.LABEL_GAP) / h
 
     def set_marker_look(self, cfg: dict) -> None:
         """Line widths of the markers (settings); the markers are rebuilt with the new look."""
         self.mlook = marker_look.normalize(cfg)
         for mid in list(self.mitems):
             self._marker_remove(mid)
+        self._rebuild_bands()                            # (the look of the pauses and of the TRIG lines is part of it)
+        self._draw_trigs()
 
     def _width(self, it: dict, case: str) -> int:
         """Line width [px] of a marker: its own width (> 0) or the setting of the case: 'all' / 'sel' / 'other' / 'hover'."""
@@ -1034,6 +1091,7 @@ class PlotView(QWidget):
                 ln.setVisible(False)
             self.plot.addItem(main, ignoreBounds=True)
             return {"look": look, "main": main, "label": None, "extras": [], "data": it}
+        label2 = None
         if it["kind"] in SPAN_KINDS:
             fill = self._range_fill(it)
             main = _MarkerRegion(values=(it["x0"], it["x1"]), brush=pg.mkBrush(fill), pen=self._marker_pen(it),
@@ -1047,7 +1105,7 @@ class PlotView(QWidget):
             label = pg.InfLineLabel(main.lines[0], text, position=0.985, color=col, rotateAxis=(1, 0), anchors=[(1, 1), (1, 1)])
             if it.get("title2"):                                     # a named second edge (Manual Stop REC)
                 t2 = it["title2"]
-                pg.InfLineLabel(main.lines[1], (t2[:28] + "…") if len(t2) > 29 else t2, position=0.985, color=col, rotateAxis=(1, 0),
+                label2 = pg.InfLineLabel(main.lines[1], (t2[:28] + "…") if len(t2) > 29 else t2, position=0.985, color=col, rotateAxis=(1, 0),
                                 anchors=[(1, 1), (1, 1)])
             self.plot.addItem(main, ignoreBounds=True)
         else:
@@ -1058,7 +1116,7 @@ class PlotView(QWidget):
             main.sigClicked.connect(lambda l, ev, i=mid: self._marker_clicked(i, ev))
             label = main.label
             self.plot.addItem(main, ignoreBounds=True)
-        return {"look": look, "main": main, "label": label, "extras": [], "data": it}
+        return {"look": look, "main": main, "label": label, "label2": label2, "extras": [], "data": it}
 
     def _marker_remove(self, mid: int) -> None:
         cur = self.mitems.pop(mid, None)
@@ -1310,18 +1368,29 @@ class PlotView(QWidget):
     def clear_markers(self) -> None:
         self.set_markers([])
 
-    def mark_trigger(self, t: float) -> None:
+    MAX_TRIGS = 200                                      # lines of the last firings that are kept (every line is a scene item)
+
+    def mark_trigger(self, t: float, n: int = 0) -> None:
+        """A firing of the trigger: the line 'TRIG (n)' (the lines of the earlier firings of the run stay)."""
+        self._trigs = (self._trigs + [(float(t), int(n))])[-self.MAX_TRIGS:]
+        self._draw_trigs()
+
+    def _draw_trigs(self) -> None:
         for ln in self.trigger_lines:
             self.plot.removeItem(ln)
-        self._trig_t = t
-        ln = pg.InfiniteLine(pos=float(self._d(t)), angle=90, movable=False,
-                             pen=pg.mkPen("#ff4040", width=1, style=Qt.DotLine),
-                             label="TRIG", labelOpts={"color": "#ff6060", "position": 0.92})
-        self.plot.addItem(ln, ignoreBounds=True)
-        self.trigger_lines = [ln]
+        self.trigger_lines = []
+        look = self.mlook
+        if not look["trig_show"]:
+            return
+        style = self.LINE_STYLES.get(look["trig_style"], Qt.DotLine)
+        for t, n in self._trigs:
+            ln = pg.InfiniteLine(pos=float(self._d(t)), angle=90, movable=False, pen=pg.mkPen(look["trig_color"], width=look["trig_width"], style=style),
+                                 label=f"TRIG ({n})" if n else "TRIG", labelOpts={"color": look["trig_color"], "position": 0.92})
+            self.plot.addItem(ln, ignoreBounds=True)
+            self.trigger_lines.append(ln)
 
     def clear_trigger_marks(self) -> None:
-        self._trig_t = None
+        self._trigs = []
         for ln in self.trigger_lines:
             self.plot.removeItem(ln)
         self.trigger_lines = []

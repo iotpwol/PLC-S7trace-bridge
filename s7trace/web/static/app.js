@@ -130,7 +130,7 @@ window.openEditor = async (id) => {
   editing = { id, opts: d.options, running: d.state !== "stopped" };
   $("e-title").textContent = id ? `Edycja połączenia: ${d.name || d.ip}` : "Nowe połączenie";
   $("e-note").textContent = editing.running ? "Połączenie jest uruchomione – zmiana adresu, cyklu i sygnałów wymaga jego zatrzymania (nazwa i okno czasu – nie)." : "";
-  for (const el of $("e-form").querySelectorAll("input,select,button[type=button]")) if (!["e-cancel", "e-delete"].includes(el.id)) el.disabled = false;
+  for (const el of $("e-form").querySelectorAll("input,select,button[type=button]")) if (!["e-cancel", "e-delete"].includes(el.id)) { el.disabled = false; delete el.dataset.lock; }
   $("e-name").value = d.name; $("e-ip").value = d.ip; $("e-rack").value = d.rack; $("e-slot").value = d.slot;
   $("e-cycle").value = d.cycle_ms; $("e-window").value = d.window_s;
   showDevice(d);
@@ -147,8 +147,9 @@ window.openEditor = async (id) => {
   fillSelect($("r-target"), d.options.rec_targets, rc.target); $("r-mode").value = rc.mode; $("r-file").value = rc.filename;
   editing.recording = !!d.recording;
   if (editing.running) for (const el of $("e-form").querySelectorAll("input,select,button[type=button]"))
-    if (!["e-name", "e-window", "e-cancel"].includes(el.id) && !el.closest("#e-trig") && !el.closest("#e-rec")) el.disabled = true;
-  if (editing.recording) for (const el of $("e-rec").querySelectorAll("input,select")) el.disabled = true;
+    if (!["e-name", "e-window", "e-cancel"].includes(el.id) && !el.closest("#e-trig") && !el.closest("#e-rec")) { el.disabled = true; el.dataset.lock = "1"; }   // (frozen while the connection runs: not "inactive")
+  if (editing.recording) for (const el of $("e-rec").querySelectorAll("input,select")) { el.disabled = true; el.dataset.lock = "1"; }
+  depApply();
   if (editing.recording) $("e-note").textContent += " Nagrywanie trwa – ustawienia REC są zablokowane.";
 };
 function addSigRow(sg) {
@@ -249,11 +250,28 @@ $("e-form").addEventListener("submit", async (e) => {
   catch (err) { $("e-error").textContent = err.message; }
 });
 // the snapshot target decides which fields apply (the counterpart of the program's panel): CSV = file name, a database = general / separate, a separate SQLite = its file
+// Fields that make no sense with another setting are disabled (the same dependencies as in the program), and "Ukrywanie nieaktywnych" hides them.
+function depApply() {
+  const set = (id, dis) => { const e = $(id); if (e && !e.dataset.lock) e.disabled = dis; };
+  set("t-b", $("t-mode").value !== "between");
+  const offset = $("e-ylayout").value === "offset";
+  set("e-autoy", !offset); set("e-ymin", !offset || $("e-autoy").checked); set("e-ymax", !offset || $("e-autoy").checked);
+  const csv = $("r-target").value === "csv"; set("r-file", !csv);
+  trigTarget();
+}
+for (const id of ["t-mode", "e-ylayout", "e-autoy", "r-target"]) $(id).addEventListener("change", () => depApply());
 function trigTarget() {
   const t = $("t-target").value, db = t !== "csv", own = db && $("t-place").value === "own", sqlite = t === "sqlite";
-  $("t-place").disabled = !db; $("t-file").disabled = db; $("t-dbfile").disabled = !(own && sqlite);
+  const saves = $("t-action").value.includes("CSV"), off = (id, dis, why) => {         // a greyed-out field says why (title = hint + reason)
+    const e = $(id); e.dataset.tip = e.dataset.tip ?? e.title; e.disabled = dis; e.title = e.dataset.tip + (dis ? (e.dataset.tip ? "\n" : "") + "Pole nieaktywne: " + why : "");
+  };
+  off("t-target", !saves, "akcja „Pauza” niczego nie zapisuje – wybierz akcję z zapisem.");
+  off("t-place", !(db && saves), saves ? "dotyczy tylko zapisu do bazy danych (nie do pliku CSV)." : "akcja „Pauza” niczego nie zapisuje.");
+  off("t-file", db || !saves, saves ? "nazwa pliku dotyczy tylko zapisu do pliku CSV." : "akcja „Pauza” niczego nie zapisuje.");
+  off("t-dbfile", !(saves && own && sqlite), saves ? "plik bazy dotyczy tylko zapisu do SQLite z opcją „Osobny plik”." : "akcja „Pauza” niczego nie zapisuje.");
   $("t-place").options[1].textContent = sqlite ? "Osobny plik w katalogu snapshotów konta" : db ? "Osobna tabela / measurement" : "Osobna";
   for (const o of $("t-action").options) o.textContent = o.value.replace("CSV", t === "csv" ? "CSV" : t === "sqlite" ? "SQLite" : t);
+  panelApplyHidden();
 }
 for (const id of ["t-target", "t-place", "t-action"]) $(id).addEventListener("change", trigTarget);
 $("e-delete").addEventListener("click", async () => {
@@ -379,7 +397,7 @@ function liveRange() {
 function paint() {
   if (!(frozen || series)) return;                                                   // (nothing loaded yet)
   const ds = frozen || series, sec = +$("c-sec").value, [t0, t1] = liveRange();
-  drawChart($("canvas"), ds, t0, t1, { ...cxOpts($("canvas"), ds), mk: MK.live, markers: (lastDesc?.trigger?.events || []).map((e) => e.t), left: frozen ? "okno zamrożone triggerem" : `-${sec} s`,
+  drawChart($("canvas"), ds, t0, t1, { ...cxOpts($("canvas"), ds), mk: MK.live, markers: (lastDesc?.trigger?.events || []).map((e) => ({ t: e.t, n: e.n })), left: frozen ? "okno zamrożone triggerem" : `-${sec} s`,
     right: frozen ? "" : liveView ? "" : "teraz", empty: "Brak danych – uruchom połączenie (Start) na stronie Przegląd.", legend: $("c-legend") });
   cxOverview($("canvas"));
 }
@@ -449,9 +467,14 @@ function drawChart(cv, ds, t0, t1, o) {
     g.save(); g.beginPath(); g.rect(pad.l, pad.t, W - pad.l - pad.r, H - pad.t - pad.b); g.clip(); g.font = "11px sans-serif"; g.textAlign = "center";
     for (let i = 0; i < gm.a.length; i++) {
       const xa = X(gm.a[i]), xb = X(gm.b[i]); if (xb < pad.l || xa > W - pad.r) continue;
-      g.fillStyle = "rgba(150,150,150,0.15)"; g.fillRect(xa, pad.t, xb - xa, H - pad.t - pad.b);
-      g.fillStyle = "#a0a0a0"; g.save(); g.translate((xa + xb) / 2 + 4, (pad.t + H - pad.b) / 2); g.rotate(-Math.PI / 2);
-      g.fillText(gm.L[i] < 600 ? `przerwa ${gm.L[i].toFixed(1)} s` : `przerwa ${(gm.L[i] / 60).toFixed(1)} min`, 0, 0); g.restore();
+      g.fillStyle = mkRgba(MKLOOK.gap_fill, MKLOOK.gap_opacity / 100); g.fillRect(xa, pad.t, xb - xa, H - pad.t - pad.b);
+      if (!MKLOOK.gap_text) continue;
+      const pos = MKLOOK.gap_text_pos, vert = MKLOOK.gap_text_dir === "vertical", yt = pad.t + 6, yb = H - pad.b - 6, ym = (pad.t + H - pad.b) / 2;
+      g.fillStyle = MKLOOK.gap_text_color; g.save(); g.textBaseline = "middle";
+      const txt = gm.L[i] < 600 ? `przerwa ${gm.L[i].toFixed(1)} s` : `przerwa ${(gm.L[i] / 60).toFixed(1)} min`;
+      if (vert) { g.translate((xa + xb) / 2, pos === "top" ? yt : pos === "bottom" ? yb : ym); g.rotate(-Math.PI / 2); g.textAlign = pos === "top" ? "right" : pos === "bottom" ? "left" : "center"; }   // reads upwards: its end is at the top
+      else { g.translate((xa + xb) / 2, pos === "top" ? yt + 6 : pos === "bottom" ? yb - 6 : ym); }
+      g.fillText(txt, 0, 0); g.restore();
     }
     g.restore();
   }
@@ -459,9 +482,11 @@ function drawChart(cv, ds, t0, t1, o) {
   if (legStyle(cv, ds) === "labels") cxTags(g, cv, ds, lanes, colors, pad, H);                // a translucent box with the name beside every signal, right of the Y axis
   if (o.mk) mkPaint(g, cv, o.mk, cv._geo, lanes);                                    // markers (bookmarks) over the curves
   if (o.mk && o.mk.kind === "live") recmPaint(g, cv, ds, cv._geo);                    // Start / Stop REC lines, Manual REC areas, the ghost of a moved Start REC
-  g.strokeStyle = "#ff4d4d"; g.fillStyle = "#ff4d4d"; g.lineWidth = 1; g.setLineDash([5, 4]);
-  for (const t of o.markers || []) { if (t < t0 || t > t1) continue; const x = X(t); g.beginPath(); g.moveTo(x, pad.t); g.lineTo(x, H - pad.b); g.stroke(); g.fillText("T", x + 3, H - pad.b - 4); }
-  g.setLineDash([]); g.fillStyle = "#aaa";
+  if (MKLOOK.trig_show) {                                                            // the lines "TRIG (n)" (look: Znaczniki -> Wygląd znaczników)
+    g.strokeStyle = MKLOOK.trig_color; g.fillStyle = MKLOOK.trig_color; g.lineWidth = MKLOOK.trig_width; g.setLineDash(MK_STYLES[MKLOOK.trig_style] || []); g.textAlign = "left";
+    for (const m of o.markers || []) { if (m.t < t0 || m.t > t1) continue; const x = X(m.t); g.beginPath(); g.moveTo(x, pad.t); g.lineTo(x, H - pad.b); g.stroke(); g.fillText(m.n ? `TRIG (${m.n})` : "TRIG", x + 3, H - pad.b - 4); }
+  }
+  g.setLineDash([]); g.lineWidth = 1; g.fillStyle = "#aaa";
   if (o.clock || gm) cxAxis(g, cv._geo, o.clock || { mode: "rel", shift: 0, tz: 0 });   // a clock axis (server / PLC time) replaces the "-200 s ... teraz" labels; so do the ticks of a chart with cut-out pauses
   else { g.fillText(o.left || "", pad.l, H - 6); if (o.right) { const w = g.measureText(o.right).width; g.fillText(o.right, W - pad.r - w, H - 6); } }
   if (cv._cx) cxPaint(g, cv);                                                        // cursors V1/V2, H1/H2 and their read-out
@@ -710,18 +735,32 @@ const PANEL_ROWS = {
   "Sieć": ["Czas odczytu śr.", "Czas odczytu ost.", "Pominięte cykle", "Ping"],
 };
 const PANEL_DEFAULT_HIDDEN = { "Sterownik": ["Numer katalogowy (MLFB)", "Numer seryjny", "Producent / copyright", "Stan CPU", "Długość PDU [B]"] };
-let PANEL = { order: PANEL_GROUPS.slice(), folds: {}, hidden: JSON.parse(JSON.stringify(PANEL_DEFAULT_HIDDEN)), info_tab: 0 }, panelSave = null;
+const PANEL_AUTOHIDE = ["Połączenie", "Zakres okna wykresu", "Trigger", "Nagrywanie REC"];       // = panel_cfg.AUTOHIDE_GROUPS: groups with greyed-out elements
+let PANEL = { order: PANEL_GROUPS.slice(), folds: {}, hidden: JSON.parse(JSON.stringify(PANEL_DEFAULT_HIDDEN)), info_tab: 0, autohide: Object.fromEntries(PANEL_AUTOHIDE.map((g) => [g, true])) }, panelSave = null;
+const PANEL_PIN = new Set(), PANEL_INACT = {};          // "group|row" shown although inactive (until its state changes) / the last known inactive state
 function panelNormalize(raw) {
   raw = raw && typeof raw === "object" ? raw : {};
   const order = []; for (const g of raw.order || []) if (PANEL_GROUPS.includes(g) && !order.includes(g)) order.push(g);
   for (const g of PANEL_GROUPS) if (!order.includes(g)) order.push(g);
   const folds = {}; for (const g of PANEL_GROUPS) folds[g] = !!(raw.folds && raw.folds[g]);
   const hidden = {}; for (const g of Object.keys(PANEL_ROWS)) { const want = Array.isArray(raw.hidden?.[g]) ? raw.hidden[g] : (PANEL_DEFAULT_HIDDEN[g] || []); hidden[g] = PANEL_ROWS[g].filter((k) => want.includes(k)); }
-  const t = Number(raw.info_tab); return { order, folds, hidden, info_tab: t === 1 ? 1 : 0 };
+  const autohide = {}; for (const g of PANEL_AUTOHIDE) autohide[g] = raw.autohide?.[g] !== false;
+  const t = Number(raw.info_tab); return { order, folds, hidden, info_tab: t === 1 ? 1 : 0, autohide };
 }
 function panelFolds() { return [...document.querySelectorAll("#e-folds .fold")]; }
+// An element is INACTIVE when all its controls are disabled by another setting (the lock of a running connection / a recording does not count: dataset.lock).
+const panelRowInactive = (row) => { const c = [...row.querySelectorAll("input,select,textarea,button")]; return c.length > 0 && c.every((e) => e.disabled && !e.dataset.lock); };
+const panelRowEl = (group, key) => [...document.querySelectorAll(`#e-folds .fold[data-fold="${group}"] [data-row]`)].find((e) => e.dataset.row === key);
+const panelAutoHidden = (group, key) => { const e = panelRowEl(group, key); return !!(e && PANEL.autohide[group] && !PANEL_PIN.has(group + "|" + key) && panelRowInactive(e)); };
 function panelApplyHidden() {
-  panelFolds().forEach((f) => f.querySelectorAll("[data-row]").forEach((e) => e.classList.toggle("row-hidden", (PANEL.hidden[f.dataset.fold] || []).includes(e.dataset.row))));
+  panelFolds().forEach((f) => f.querySelectorAll("[data-row]").forEach((e) => {
+    const g = f.dataset.fold, k = g + "|" + e.dataset.row; let auto = false;
+    if (PANEL_AUTOHIDE.includes(g)) {                       // "Ukrywanie nieaktywnych": a pin lives only until the element changes state
+      const now = panelRowInactive(e); if ((k in PANEL_INACT && PANEL_INACT[k] !== now) || !now) PANEL_PIN.delete(k);
+      PANEL_INACT[k] = now; auto = !!PANEL.autohide[g] && now && !PANEL_PIN.has(k);
+    }
+    e.classList.toggle("row-hidden", auto || (PANEL.hidden[g] || []).includes(e.dataset.row));
+  }));
 }
 function panelApply() {
   const box = $("e-folds"); if (!box) return;
@@ -816,14 +855,26 @@ $("c-state").addEventListener("contextmenu", (e) => {
       ["do prawej", () => { STATUS.align = "right"; statusPersist(); }, STATUS.align === "right"]]]]);
 });
 function panelSetRow(group, key, show) {
-  const h = (PANEL.hidden[group] || []).filter((k) => k !== key); if (!show) h.push(key);
+  const pin = group + "|" + key, e = panelRowEl(group, key);
+  let h = (PANEL.hidden[group] || []).filter((k) => k !== key);
+  if (show) { if (PANEL.autohide[group] && e && panelRowInactive(e)) PANEL_PIN.add(pin); }            // shown although inactive - until it changes state
+  else if (PANEL_PIN.has(pin)) { PANEL_PIN.delete(pin); h = PANEL.hidden[group] || []; }                // back to the automatic hiding
+  else h.push(key);
   PANEL.hidden[group] = PANEL_ROWS[group].filter((k) => h.includes(k));
   panelApplyHidden(); sideRefresh(true); panelPersist();
 }
+function panelShowAll(group) {
+  for (const k of PANEL_ROWS[group]) if (PANEL.autohide[group] && panelAutoHidden(group, k)) PANEL_PIN.add(group + "|" + k);
+  PANEL.hidden[group] = []; panelApplyHidden(); sideRefresh(true); panelPersist();
+}
 function panelRowItems(group) {
-  const hid = PANEL.hidden[group] || [];
-  const items = PANEL_ROWS[group].map((k) => [k === "Pobierz dane" ? "Pobierz dane sterownika (przycisk)" : k, () => panelSetRow(group, k, hid.includes(k)), !hid.includes(k)]);
-  return [...items, "-", ["Pokaż wszystkie elementy", hid.length ? () => { PANEL.hidden[group] = []; panelApplyHidden(); sideRefresh(true); panelPersist(); } : null]];
+  const hid = PANEL.hidden[group] || [], auto = PANEL_AUTOHIDE.includes(group);
+  const shown = (k) => !hid.includes(k) && !(auto && panelAutoHidden(group, k));
+  const items = PANEL_ROWS[group].map((k) => [k === "Pobierz dane" ? "Pobierz dane sterownika (przycisk)" : k, () => panelSetRow(group, k, !shown(k)), shown(k)]);
+  const any = hid.length || (auto && PANEL_ROWS[group].some((k) => panelAutoHidden(group, k)));
+  const out = [...items, "-", ["Pokaż wszystkie elementy", any ? () => panelShowAll(group) : null]];
+  if (auto) out.push("-", ["Ukrywanie nieaktywnych", () => { PANEL.autohide[group] = !PANEL.autohide[group]; for (const p of [...PANEL_PIN]) if (p.startsWith(group + "|")) PANEL_PIN.delete(p); panelApplyHidden(); panelPersist(); }, !!PANEL.autohide[group]]);
+  return out;
 }
 const panelDeviceItem = (group) => (group === "Sterownik" ? [["Pobierz dane sterownika", () => $("e-readdev").click()], "-"] : []);
 $("e-folds").addEventListener("contextmenu", (e) => {

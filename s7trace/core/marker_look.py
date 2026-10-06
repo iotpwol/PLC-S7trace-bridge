@@ -2,7 +2,9 @@
 width (> 0) keeps it; markers with width 0 ('wg ustawień') use these values. Saved in the UI section of the config.
 
 The same dialog holds the look of the REC marks ('Start REC (n)' / 'Stop REC (n)' lines the chart draws by itself when the recording starts /
-stops, and the area of a 'Manual REC'): switched on / off, colour, width, line style, opacity of the manual area."""
+stops, and the area of a 'Manual REC'): switched on / off, colour, width, line style, opacity of the manual area. And the look of a pause drawn as a
+band of a fixed width (Widok -> Przerwy Stop -> Start): fill colour + opacity, the length of the pause written in it (on / off, direction,
+colour, position)."""
 from __future__ import annotations
 
 # key -> (label, min, max, unit, default, description)
@@ -25,15 +27,34 @@ PARAMS: dict[str, tuple] = {
     "rec_width": ("Linie REC: grubość", 1, 12, "px", 2, "Grubość linii „Start REC” / „Stop REC” i brzegów obszaru „Manual REC”."),
     "rec_opacity": ("Obszar „Manual REC”: nieprzezroczystość", 0, 100, "%", 24,
                     "Jak mocno zabarwiony jest obszar między „Manual Start REC” a „Manual Stop REC” (podobnie jak znacznik zakresu czasu)."),
+    "trig_show": ("Linie TRIG (n) na wykresie", 0, 1, "", 1,
+                  "Gdy włączone, wykres rysuje linię „TRIG (n)” w chwili każdego wyzwolenia triggera. Numer n rośnie przy każdym kolejnym "
+                  "wyzwoleniu w tym przebiegu (od Start do Stop połączenia albo do Resetu wykresu); linie wcześniejszych wyzwoleń zostają."),
+    "trig_width": ("Linie TRIG: grubość", 1, 12, "px", 1, "Grubość linii „TRIG (n)”."),
+    "gap_opacity": ("Przerwa (pas): nieprzezroczystość wypełnienia", 0, 100, "%", 15,
+                    "Jak mocno zabarwiony jest pas przerwy Stop → Start (tryb „Przerwa o stałej szerokości”). 0 = pas bez wypełnienia."),
+    "gap_text": ("Przerwa (pas): opis długości przerwy", 0, 1, "", 1,
+                 "Gdy włączone, w pasie przerwy jest wypisana jej długość (np. „przerwa 20.0 s”)."),
 }
-FLAGS = ("rec_show",)                                  # 0 / 1 values shown as a check box
+FLAGS = ("rec_show", "gap_text", "trig_show")                                  # 0 / 1 values shown as a check box
 # text values: key -> (label, default, description)
 STRINGS: dict[str, tuple] = {
     "rec_color": ("Linie REC: kolor", "#ff8c1a", "Kolor znaczników Start REC / Stop REC i obszaru Manual REC. Początkowo taki jak tło załączonego przycisku REC."),
     "rec_style": ("Linie REC: rodzaj linii", "solid", "Rodzaj linii znaczników Start REC / Stop REC: ciągła, kreskowana, kropkowana albo kreska-kropka."),
+    "trig_color": ("Linie TRIG: kolor", "#ff4040", "Kolor linii „TRIG (n)” i jej opisu."),
+    "trig_style": ("Linie TRIG: rodzaj linii", "dot", "Rodzaj linii „TRIG (n)”: ciągła, kreskowana, kropkowana albo kreska-kropka."),
+    "gap_fill": ("Przerwa (pas): kolor wypełnienia", "#969696", "Kolor wypełnienia pasa przerwy Stop → Start."),
+    "gap_text_color": ("Przerwa (pas): kolor opisu", "#a0a0a0", "Kolor czcionki opisu długości przerwy."),
+    "gap_text_dir": ("Przerwa (pas): kierunek opisu", "vertical", "Opis długości przerwy: pisany w pionie (od dołu do góry) albo w poziomie."),
+    "gap_text_pos": ("Przerwa (pas): położenie opisu", "middle", "Gdzie w pasie stoi opis: u góry, pośrodku albo na dole."),
 }
 STYLES = ("solid", "dash", "dot", "dashdot")
-ORDER = list(PARAMS)
+COLOR_KEYS = ("rec_color", "trig_color", "gap_fill", "gap_text_color")
+ENUMS: dict[str, tuple] = {"rec_style": STYLES, "trig_style": STYLES, "gap_text_dir": ("vertical", "horizontal"), "gap_text_pos": ("top", "middle", "bottom")}
+ENUM_LABELS: dict[str, dict] = {"gap_text_dir": {"vertical": "w pionie", "horizontal": "w poziomie"},
+                                "gap_text_pos": {"top": "u góry", "middle": "pośrodku", "bottom": "na dole"}}
+ORDER = [k for k in PARAMS if not k.startswith("gap_")]          # the rows of the marker dialog; the gap look has its own dialog
+GAP_KEYS = ("gap_fill", "gap_opacity", "gap_text", "gap_text_color", "gap_text_dir", "gap_text_pos")
 DEFAULTS: dict = {**{k: v[4] for k, v in PARAMS.items()}, **{k: v[1] for k, v in STRINGS.items()}}
 
 
@@ -57,9 +78,10 @@ def normalize(d) -> dict:
                 v = int(v)
             if isinstance(v, (int, float)):
                 out[k] = int(min(max(v, lo), hi))
-        c = d.get("rec_color")
-        if _color_ok(c):
-            out["rec_color"] = c.lower()
-        if d.get("rec_style") in STYLES:
-            out["rec_style"] = d["rec_style"]
+        for k in COLOR_KEYS:
+            if _color_ok(d.get(k)):
+                out[k] = d[k].lower()
+        for k, allowed in ENUMS.items():
+            if d.get(k) in allowed:
+                out[k] = d[k]
     return out

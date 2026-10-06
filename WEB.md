@@ -194,6 +194,10 @@ Po usunięciu konta jego połączenia zostają w pliku i widzi je administrator.
 
 **Przerwy Stop → Start na wykresie (v1.17 / v1.18):** lista **Przerwy Stop → Start** nad wykresem (pozycje „wg połączenia” / „Pełna przerwa” / „Wytnij z wykresu” / „Pas o stałej szerokości”) i pole **px** (szerokość pasa, 8 – 300); wybór zapisuje się przy połączeniu, jeśli konto może je edytować – klucze `gap_mode` (`full` / `join` / `fixed`) i `gap_px` w `/config` i w `series.layout`. Jak w programie okienkowym (Widok → „Przerwy Stop → Start (ta karta)”): **wycięcie** = zerowa szerokość, krzywe się stykają, jeden znacznik „Stop / Start odczytu (n)”, opisy osi (zegarowej albo w sekundach) przeskakują („30 s | 50 s”); **pas o stałej szerokości** = półprzezroczysty pas o `gap_px` pikselach niezależnie od czasu pauzy i przybliżenia (szerokość w jednostkach wykresu wynika z widocznego zakresu: `gmFit`), z długością pauzy w pasie, znacznikami Stop / Start odczytu na brzegach i jednym podwójnym opisem osi pośrodku; czas wewnątrz pasa jest mapowany proporcjonalnie (znacznik w pauzie stoi tam, gdzie jego czas; kliknięcie w pasie daje proporcjonalny czas). Dane, znaczniki i nagrania zostają na prawdziwym czasie; przeciąganie, Ctrl + kółko, pasek podglądu i okno czasu liczą się w jednostkach wykresu (`gmD` / `gmR` / `cxX` / `cxT` w `chartx.js` = odpowiednik `core/gapmap.py`). Dotyczy tylko podglądu na żywo (nagrania z bazy nie mają przerw rozpoznawanych przez serwer).
 
+**Wygląd pasa przerwy (v1.19):** w oknie „Wygląd znaczników” (konto, zapisywane na serwerze razem z szerokością linii): kolor i nieprzezroczystość wypełnienia, opis długości (włączony, w pionie / w poziomie, kolor czcionki, u góry / pośrodku / na dole) – klucze `gap_*` w `/api/prefs` → `marker_look`. Linie „TRIG (n)”: `trig_show` / `trig_width` / `trig_color` / `trig_style` tamże; zdarzenia triggera w `/config` mają numer `n`.
+
+**Ukrywanie nieaktywnych (v1.21):** w edytorze połączenia pola wyszarzone przez inne ustawienia (np. „Zapis snapshotu do” przy akcji „Pauza”, „B” poza warunkiem „between”, „Y min” w układzie pasm) chowają się same. Menu prawego przycisku nad grupą (Połączenie, Zakres okna wykresu, Trigger, Nagrywanie REC) kończy się pozycją **„Ukrywanie nieaktywnych”** (włącz / wyłącz, osobno dla grupy, zapis na koncie: `/api/prefs` → `panel.autohide`); zaznaczenie ukrytego elementu pokazuje go mimo wyszarzenia – do następnej zmiany jego stanu. Pola zablokowane tylko na czas pracy połączenia nie liczą się jako nieaktywne.
+
 Jak w programie okienkowym (Pomoc, rozdz. „Przyciski sterujące”). Domyślnie ponowny **Start** po **Stop** **nie czyści bufora połączenia**: oś czasu biegnie dalej, a w krzywych powstaje **przerwa** równa czasowi między Stop a Start
 (serwer przesuwa czasy nowych próbek – `ProcAcquirer(anchor_ts=…)` – i wstawia dwa wiersze NaN: tuż po ostatniej próbce sprzed przerwy, żeby stara wartość nie była „przedłużana” przez przerwę, oraz w chwili Start). Przerwę znaczą linie **Stop odczytu (n)** / **Start odczytu (n)** (`rec.gaps` w opisie połączenia: `n`, `t0`, `t1`). Wykres jest kontynuowany tylko dla tych samych sygnałów (nazwa, adres, typ); przy zmianie sygnałów albo pustym buforze Start zaczyna od nowa.
 Na stronie wykresu stoi przycisk **Reset** (po lewej od REC, tylko operator / administrator): **kliknięcie** czyści bufor (na pracującym połączeniu czas biegnie dalej, na zatrzymanym wykres zaczyna się od zera);
@@ -210,8 +214,8 @@ od otwartej przeglądarki i nie traci próbek.
 
 - Stany: wyłączony → uzbrojony → zbieranie próbek po wyzwoleniu (okno − przedtrigger) → (po akcji) uzbrojony albo wstrzymany.
 - **Zapis CSV:** zakres `[t − przedtrigger, t − przedtrigger + okno czasu]` z bufora trafia do pliku konta w `files\u_<konto>\snapshots`.
-- **Pauza:** wykres każdego przeglądającego zamraża okno wokół wyzwolenia (czerwona linia „T”) aż do „Wznów (uzbrój wyzwalacz)”
-  (wstrzymanie dotyczy wyzwalacza i widoku, nie akwizycji ani REC). Znaczniki „T” widać też przy akcji „Zapis CSV” (do 20 ostatnich zdarzeń).
+- **Pauza:** wykres każdego przeglądającego zamraża okno wokół wyzwolenia (linia „TRIG (n)”) aż do „Wznów (uzbrój wyzwalacz)”
+  (wstrzymanie dotyczy wyzwalacza i widoku, nie akwizycji ani REC). Linie „TRIG (n)” (n = numer wyzwolenia w tym przebiegu; kolor / grubość / rodzaj: „Wygląd znaczników”) widać też przy akcji „Zapis CSV” (do 20 ostatnich zdarzeń).
 - **Zapis do bazy** (`trigger.target`: `csv` / `sqlite` (baza konta `recordings.db`) / nazwa celu admina; `trigger.place`: `shared` = ta sama baza co REC, `own` = osobna: plik `snapshots/<db_file>` w folderze konta albo osobna tabela / measurement `…_snapshots` celu sieciowego): snapshot jest nagraniem „Snapshot (trigger)” (`rec_ops.save_range_recording`, zapis w osobnym wątku, wynik w notatce wyzwalacza). Pola w edytorze: „Zapis snapshotu do”, „Baza snapshotów”, „Plik bazy snapshotów”.
 - Zmiana ustawień wyzwalacza podczas pracy restartuje maszynę stanów (uzbraja od nowa).
 - Nazwa pliku: szablon ze znacznikami `{confname} {ip} {tab} {date} {time}` (bez ścieżek i znaków `\ / : * ? " < > |`);
@@ -361,6 +365,7 @@ dla zamkniętych połączeń; nagłówki `Cache-Control: no-store`, `X-Content-T
 
 Tryb Web **nie zastępuje** programu okienkowego, tylko go uzupełnia. Czego w przeglądarce nie ma (lub działa inaczej):
 
+- **Napisy osi „Sygnały” / „Czas”** (v1.20: nieprzezroczyste tło nad liczbami osi, przeciągane wzdłuż osi) są tylko w programie okienkowym; wykres w przeglądarce nie ma tytułów osi (opisy znaczników stojących w tym samym czasie układa w osobnych rzędach).
 - **Ikona programu przy zegarze** (Ustawienia → Ikona programu: pasek zadań / obszar powiadomień / oba) dotyczy tylko okna programu; strona w przeglądarce nie ma odpowiednika.
 
 - Wykres: pasy na sygnał (wysokość wg „Share”, jak w programie) albo układ offset, etykiety osi w kolorze pasa, znacznik poziomu sygnału (H), oś czasu zegarowa z offsetem, przybliżanie i przesuwanie, pasek przeglądowy,

@@ -43,9 +43,9 @@ def test_axis_titles_take_no_space_and_can_be_dragged(app, tmp_path):
     pump(lambda: False, 0.2)
     pv = tab.plot
     for t in (pv.title_x, pv.title_y):
-        assert t.flags() & QGraphicsItem.ItemStacksBehindParent                 # the numbers cover the title, not the other way round
+        assert not t.flags() & QGraphicsItem.ItemStacksBehindParent and t.zValue() > 0     # since v1.20 the title covers the numbers (opaque background)
     assert pv.plot.getAxis("left").labelText == "" and pv.plot.getAxis("bottom").labelText == ""      # no pyqtgraph label = no reserved room
-    assert pv.axis_y.width() <= 64 and pv.title_y.toPlainText() == "Sygnały"
+    assert pv.axis_y.width() <= 50 and pv.title_y.toPlainText() == "Sygnały"
     y0, f0 = pv.title_y.pos().y(), pv.title_y.frac
     ev = Ev(pv.axis_y.mapToScene(QPointF(5, pv.axis_y.boundingRect().height() * 0.2)), Qt.LeftButton)
     pv.title_y.mouseMoveEvent(ev)
@@ -228,3 +228,36 @@ def test_show_menu_pauses_the_chart_and_moves_the_view(app, tmp_path, monkeypatc
     x0, x1 = tab.plot.view_range()
     assert x0 < 15.0 < x1
     tab.shutdown()
+
+
+def test_axis_titles_stand_at_the_edge_on_an_opaque_background(app, tmp_path):
+    from s7trace.ui.plotview import AXIS_Y_WIDTH
+    tab = db_tab(tmp_path)
+    tab.show()
+    pump(lambda: False, 0.2)
+    pv = tab.plot
+    assert pv.axis_y.width() == AXIS_Y_WIDTH and pv.ov.getAxis("left").width() == AXIS_Y_WIDTH          # the overview strip stays aligned
+    assert pv.glw.ci.layout.getContentsMargins()[0] == 0.0 and pv.glw_ov.ci.layout.getContentsMargins()[0] == 0.0
+    assert pv.title_y.sceneBoundingRect().left() - pv.glw.sceneRect().left() <= 3                       # 'Sygnały' at the left edge of the chart area
+    pv.apply_theme("#102030", "#ffffff")
+    assert pv.title_x._bg.name() == "#102030" and pv.title_y._bg.name() == "#102030"                    # an opaque background of the chart colour
+    ax = pv.plot.getAxis("bottom")
+    assert pv.title_x.pos().y() >= (ax.height() - pv.title_x.boundingRect().height()) / 2 + pv.title_x.Y_DROP - 1e-6   # 'Czas' dropped 3 px
+
+
+def test_labels_of_markers_on_the_same_time_are_stacked(app, tmp_path):
+    tab = db_tab(tmp_path)
+    feed(tab, 0, 70)
+    tab.show()
+    pv = tab.plot
+    pv.set_view(0, 70)
+    pump(lambda: False, 0.2)
+    mk = lambda i, x, t: {"id": i, "kind": "point", "x0": x, "x1": x, "color": "#ff8c1a", "width": 2, "style": "solid", "opacity": 0,
+                          "priority": 1, "title": t, "tip": "", "signals": []}
+    pv.set_markers([mk(1, 30.0, "Start REC (1)"), mk(2, 30.0, "Stop odczytu (1)"), mk(3, 50.0, "Sam")])
+    p1, p2, p3 = (pv.mitems[i]["label"].orthoPos for i in (1, 2, 3))
+    assert p1 == 0.985 and p3 == 0.985 and p2 < p1                                                      # the second one stands below the first
+    h = float(pv.vb.height())
+    assert abs((p1 - p2) * h - (pv.mitems[1]["label"].textItem.boundingRect().width() + pv.LABEL_GAP)) < 1e-6   # no overlap, a small gap
+    pv.set_markers([mk(1, 30.0, "Start REC (1)"), mk(3, 50.0, "Sam")])
+    assert pv.mitems[1]["label"].orthoPos == 0.985
