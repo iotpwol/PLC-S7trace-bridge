@@ -56,6 +56,8 @@ class HostedConnection:
         self.rec_info: dict = {}
         self.rec_by, self.rec_started_us, self.rec_error, self.rec_label, self.rec_target = "", 0, "", "", ""
         self._rec_lock = threading.RLock()
+        self._continued = False                               # this run continues the chart of the previous one (no reset, a gap in between)
+        self.last_link = ("", 0, 0)                            # (rec_id, from_us, to_us) of the last Manual REC saved
         self.rec_marks = RecMarks()                           # Start / Stop REC of this run (the chart draws them; Manual REC areas live in the browser)
 
     # ---- description (shown on the overview page)
@@ -83,7 +85,7 @@ class HostedConnection:
                 "samples": len(self.buffer),
                 "device": {k: v for k, v in info.items() if isinstance(v, (str, int, float)) and v != ""},
                 "shared": not self.owner, "can_edit": self.can_edit(user, role), "can_run": self.can_run(user, role),
-                "trigger": self.trigger_info(), "rec": self.rec_describe()}
+                "trigger": self.trigger_info(), "rec": self.rec_describe(), "auto_reset": bool(self.cfg.auto_reset)}
 
     def diag(self) -> dict:
         """What the Diagnostics view shows: link quality (the same numbers as 'Diagnostyka połączenia' of the program), the controller data
@@ -137,18 +139,41 @@ class HostedConnection:
             if not run:
                 raise ValueError("Brak sygnałów do pobierania w tej konfiguracji.")
             self.method = self._pick_method(run)
+            cont = self.can_continue(run)
             self.signals = [Signal.from_dict(s.to_dict()) for s in run]
-            self.buffer.reset(len(run))
-            self.rec_marks.reset()
+            if not cont:
+                self.buffer.reset(len(run))
+                self.rec_marks.reset()
+            self._continued = cont
             c = self.cfg
             self.acq = ProcAcquirer(
                 c.ip, c.rack, c.slot, c.cycle_ms, self.signals, c.mode, self.buffer,
                 on_state=self._on_state, driver={"type": self.method, "opts": dict(c.conn)} if self.method != "s7" else None,
-                on_info=self._on_info, on_sample=self._on_sample)
+                on_info=self._on_info, on_sample=self._on_sample,
+                anchor_ts=self.start_wall.timestamp() if cont else None)
             self.state, self.message = "connecting", f"Łączenie z {c.ip}…"
             self.started_us, self.started_by = int(time.time() * 1e6), user
             self.reload_trigger()                                 # (also raises the version)
             self.acq.start()
+
+    @staticmethod
+    def _sig_key(s: Signal) -> tuple:
+        return (s.name, s.source, s.dtype, s.db, s.byte, s.bit, s.node)
+
+    def can_continue(self, run: list[Signal]) -> bool:
+        """A new Start keeps the chart (with a gap in it) unless 'Auto-Reset' is on, there is nothing to continue or the signals changed."""
+        return (not self.cfg.auto_reset and len(self.buffer) > 0 and bool(self.signals)
+                and [self._sig_key(s) for s in run] == [self._sig_key(s) for s in self.signals])
+
+    def reset_chart(self) -> None:
+        """'Reset': clears the buffer. A running connection keeps its time axis (REC and markers keep their times), a stopped one starts afresh."""
+        with self._lock:
+            self.buffer.reset()
+            if self.recorder is None:
+                self.rec_marks.reset()
+            if self.state == "stopped":
+                self.start_wall = datetime.now()
+            self.version += 1
 
     def stop(self) -> None:
         with self._lock:
@@ -164,7 +189,7 @@ class HostedConnection:
 
     def _on_state(self, state: str, message: str) -> None:
         with self._lock:
-            if state == "running" and self.state in ("connecting", "stopped"):
+            if state == "running" and self.state in ("connecting", "stopped") and not self._continued:
                 self.start_wall = datetime.now()
             self.state, self.message = state, message
             self.version += 1
@@ -274,7 +299,8 @@ class HostedConnection:
                 raise ValueError(f"Nie można rozpocząć nagrywania: {e}") from None
             self.recorder, self.rec_info, self.rec_by = rec, info, user
             self.rec_started_us, self.rec_error, self.rec_label, self.rec_target = int(time.time() * 1e6), "", label, target
-            n = self.rec_marks.started(self.buffer.last_time() if len(self.buffer) else 0.0, rec.session if isinstance(rec, DbRecorder) else "")
+            n = self.rec_marks.started(self.buffer.last_time() if len(self.buffer) else 0.0, rec.session if isinstance(rec, DbRecorder) else "",
+                                       "" if isinstance(rec, DbRecorder) else os.path.basename(getattr(rec, "path", "") or ""))
             self.rec_marks.span(n)["target"] = target
             self.version += 1
 
@@ -300,6 +326,28 @@ class HostedConnection:
         return {"name": self.name, "ip": c.ip, "tab": self.name, "conf": c.conf_name or self.name, "owner": user,
                 "computer": ("Web " + address).strip(), "device": device_summary(self.device, c.ip), "title": title, "notes": notes}
 
+    def rec_source(self, target: str | None = None) -> str:
+        """The id of the recordings source (web/recordings.py) the target writes to; CSV files are 'csv'."""
+        target = target or self.web.get("rec_target", "csv")
+        if target == "sqlite":
+            return "sqlite" if self.owner else "shared"
+        return target
+
+    def rec_ref(self, target: str, sid: str) -> str:
+        """The `rec_id` of a marker that belongs to a recording: '<source>|<recording id>' (CSV: 'csv|<file name>')."""
+        return f"{self.rec_source(target)}|{sid}" if sid else ""
+
+    def rec_id_at(self, at_us: int) -> str:
+        """The recording a marker made at this time (us since epoch) of this connection belongs to; '' = the chart buffer only."""
+        t = at_us / 1e6 - self.start_wall.timestamp()
+        for a in self.rec_marks.auto:
+            if a["t0"] <= t <= (a["t1"] if a["t1"] is not None else float("inf")):
+                if a["sid"]:
+                    return self.rec_ref(a.get("target") or "", a["sid"])
+                if a.get("file"):
+                    return "csv|" + a["file"]
+        return ""
+
     def rec_save_range(self, user: str, a: float, b: float, title: str = "", address: str = "") -> str:
         """'Zapis Manual REC': the buffered data of [a, b] become a recording of their own in the connection's REC target.
         Returns where it went (text)."""
@@ -317,9 +365,11 @@ class HostedConnection:
                 path = files.new_path(self.mgr.files_root if self.mgr else "", self.owner, "rec", c.rec_filename,
                                       confname=c.conf_name or self.name, ip=c.ip, tab=self.name)
                 where, _ = rec_ops.save_range_recording(c.store, self.signals, self.start_wall, t, v, a, b, meta, "", path)
+                self.last_link = ("csv|" + os.path.basename(where), store_mod.to_us(self.start_wall, a), store_mod.to_us(self.start_wall, b))
                 return os.path.basename(where)
             scfg, base = self._store_for(target)
-            where, _ = rec_ops.save_range_recording(scfg, self.signals, self.start_wall, t, v, a, b, meta, base)
+            where, sid = rec_ops.save_range_recording(scfg, self.signals, self.start_wall, t, v, a, b, meta, base)
+            self.last_link = (self.rec_ref(target, sid), store_mod.to_us(self.start_wall, a), store_mod.to_us(self.start_wall, b))
             return f"{target}: {where}"
         except ValueError:
             raise
@@ -365,9 +415,12 @@ class HostedConnection:
                 rec_ops.move_start(be, meta, new_us, rows)
             finally:
                 be.close()
+        old = span["t0"]
         self.rec_marks.set_start(int(n), plan["first"])
         self.version += 1
-        return {"t0": plan["first"], "earlier": plan["earlier"], "clamped": plan["clamped"]}
+        lo, hi = sorted((old, plan["first"]))
+        return {"t0": plan["first"], "earlier": plan["earlier"], "clamped": plan["clamped"],
+                "link": {"rec_id": self.rec_ref(target, sid), "a_us": store_mod.to_us(self.start_wall, lo), "b_us": store_mod.to_us(self.start_wall, hi)}}
 
     def rec_info_update(self, info: dict) -> None:
         info = {k: str(v)[:500] for k, v in (info or {}).items() if k in ("title", "description", "notes", "tags")}

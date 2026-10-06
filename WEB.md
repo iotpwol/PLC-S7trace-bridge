@@ -190,6 +190,16 @@ Po usunięciu konta jego połączenia zostają w pliku i widzi je administrator.
 
 ---
 
+### 6.1. Start po Stop, Reset i Auto-Reset
+
+Jak w programie okienkowym (Pomoc, rozdz. „Przyciski sterujące”). Domyślnie ponowny **Start** po **Stop** **nie czyści bufora połączenia**: oś czasu biegnie dalej, a w krzywych powstaje **przerwa** równa czasowi między Stop a Start
+(serwer przesuwa czasy nowych próbek – `ProcAcquirer(anchor_ts=…)` – i wstawia jeden wiersz NaN). Wykres jest kontynuowany tylko dla tych samych sygnałów (nazwa, adres, typ); przy zmianie sygnałów albo pustym buforze Start zaczyna od nowa.
+Na stronie wykresu stoi przycisk **Reset** (po lewej od REC, tylko operator / administrator): **kliknięcie** czyści bufor (na pracującym połączeniu czas biegnie dalej, na zatrzymanym wykres zaczyna się od zera);
+**przytrzymanie** pokazuje po 1 s odliczanie „Reset (3s)” … „(1s)”, a po 4 s załącza **Auto-Reset** (przycisk wciśnięty, niebieski tekst) – wtedy każdy Start zaczyna wykres od nowa. Puszczenie w trakcie odliczania anuluje, kliknięcie „Auto-Reset” go wyłącza.
+Ustawienie `auto_reset` jest w konfiguracji połączenia (zapisywane na koncie; edytowalne też w edytorze połączenia) i w opisie połączenia (`auto_reset`). Kolory załączonego przycisku (tło, tekst) są w oknie „Interfejs” (przycisk „Interfejs” – tabele)
+i zapisują się na koncie razem z kolorami tabel (`/api/prefs`, klucz `table`: `reset_on_bg`, `reset_on_text`). Przeglądarka pyta o znaczniki tylko dla bufora (OK = usuń, Anuluj = zostaw) przy Reset oraz przy Start, gdy Auto-Reset jest włączony.
+Testy: `tests/test_web_reset.py`.
+
 ## 7. Wyzwalacz (trigger)
 
 Ta sama maszyna stanów co w programie okienkowym (`TriggerEngine`): warunki `==`, `>`, `<`, `between`, zbocze narastające/opadające, histereza,
@@ -435,6 +445,7 @@ Wszystkie odpowiedzi to JSON (poza plikami CSV, strumieniem SSE i plikami statyc
 | POST `/api/connections/<id>/delete` | edycja | usunięcie (tylko zatrzymane) |
 | POST `/api/connections/<id>/start`, `/stop` | operator (uruchamianie) | start/stop |
 | POST `/api/connections/<id>/trigger` | operator | `{"action":"rearm"}` |
+| POST `/api/connections/<id>/reset` | operator | `{}` = Reset (czyści bufor połączenia); `{"auto": true|false}` = Auto-Reset (zapisane w konfiguracji połączenia) |
 | POST `/api/connections/<id>/rec` | operator | `{"action":"start"|"stop"|"info", "title":…}` |
 | GET `/api/connections/<id>/series` | podgląd | dane: `seconds`, `since`, albo `from`+`to` |
 | GET `/api/connections/<id>/stream` | podgląd | strumień SSE (`seconds`) |
@@ -530,7 +541,16 @@ To samo, co w programie okienkowym (rozdział „Znaczniki REC” Pomocy), na wy
   Ograniczenie: dane tylko tak daleko wstecz, jak sięga bufor serwera (to samo, co widać na wykresie).
 - Testy: `tests/test_web_rec_marks.py` (serie, zapis zakresu, przesuwanie startu w trakcie nagrywania i po nim, CSV, prawa), `tests/test_rec_marks.py` (rdzeń: SQLite, InfluxDB 1/2 z atrapą serwera, TimescaleDB z atrapą psycopg). Strona sprawdzona ręcznie w wbudowanej przeglądarce (Chromium) na serwerze demonstracyjnym.
 
-### 19.7. Co zostało sprawdzone / czego nie
+### 19.7. Do którego nagrania należy znacznik („Zapis”) i znaczniki tylko dla bufora
+
+Jak w programie okienkowym (BAZY_DANYCH.md, rozdz. 13.12): znacznik założony na połączeniu na żywo dostaje od razu `rec_id` = `<źródło>|<id nagrania>` (serwer podstawia je w `/api/markers`, gdy czas znacznika
+mieści się w REC tego połączenia; plik CSV: `csv|<nazwa>`; puste = tylko bufor). **Zapis Manual REC** i **Zmień Start REC** przenoszą znaczniki razem z danymi (`/rec-range`, `/rec-start`).
+Lista znaczników ma kolumnę **Zapis**, filtr „Zapis” i przycisk **Usuń bez zapisu…** (znaczniki bez nagrania, których połączenie nie ma już danych w pamięci). `GET /api/markers?norec=1` zwraca tylko takie znaczniki,
+każdy znacznik ma pole `buffered`. Przeglądarka pyta przed **Start** połączenia (OK = usuń znaczniki z bufora, który zostanie wyczyszczony; Anuluj = zostaw) i przed trwałym usunięciem nagrania (`Usuń trwale` albo `Usuń` przy wyłączonym koszu).
+Różnica wobec programu okienkowego: okno `confirm` ma dwa przyciski, więc pytania nie da się użyć do przerwania Start; w Web nie ma też „zamykania karty” – bufor trzyma serwer, dopóki połączenie nie wystartuje ponownie.
+Testy: `tests/test_web_marker_rec.py`.
+
+### 19.8. Co zostało sprawdzone / czego nie
 
 - Testy automatyczne: `tests/test_markers.py`, `tests/test_marker_draft.py`, `tests/test_markers_ui.py` (offscreen), `tests/test_web_markers.py` (prawdziwy serwer HTTP:
   widoczność, role, zakresy, grupy, style, walidacja, paczka `batch` – atomowość i prawa, wyszukiwarka w połączeniu i w nagraniu).

@@ -419,6 +419,7 @@ async function gotoMarker(m) {
   const last = mkSpan(m) ? m.end_us : m.at_us, pad = Math.max((last - m.at_us) * 0.3, 20e6);
   if (m.rec_id) {
     const [src, id] = m.rec_id.split("|");
+    if (src === "csv") { alert("Ten znacznik należy do pliku CSV (" + id + ") – otwórz go z listy plików połączenia."); return; }
     go("recs"); await initRecs();
     if (![...$("rv-src").options].some((o) => o.value === src)) { alert("Źródło nagrania nie jest dostępne dla tego konta."); return; }
     $("rv-src").value = src; await refreshRecs();
@@ -439,12 +440,39 @@ let mkList = [], mkSel = new Set();
 function mkMatches(m, f) {   // the filters of the list view applied to a draft marker
   const hay = [m.title, m.description, m.notes, m.author, m.group_name, m.conn_name, ...(m.signals || [])].join(" ").toLowerCase();
   if (f.conn && m.conn !== f.conn) return false;
+  if (f.rec === "buffer" && (m.rec_id || !m.conn)) return false;
+  if (f.rec === "rec" && !m.rec_id) return false;
   if (f.q && !f.q.toLowerCase().split(/\s+/).filter(Boolean).every((w) => hay.includes(w))) return false;
   if (f.priority !== "" && m.priority !== +f.priority) return false;
   if (f.group !== "*" && (m.group_name || "").toLowerCase() !== f.group.toLowerCase()) return false;
   if (f.author && (m.author || "").toLowerCase() !== f.author.toLowerCase()) return false;
   if (f.from && f.to && ((mkSpan(m) ? m.end_us : m.at_us) < f.from || m.at_us > f.to)) return false;
   return true;
+}
+// The recording a marker belongs to ('<source>|<id>'; '' = only the chart buffer; 'csv|<file>' = a CSV file).
+function mkRecLabel(rid) { return !rid ? "bufor (bez zapisu)" : rid.startsWith("csv|") ? "plik " + rid.slice(4) : rid.split("|")[1] || rid; }
+// Saved markers of the account that belong to no recording; `conn` limits them to one connection.
+async function mkBufferOnly(conn) {
+  const qs = new URLSearchParams({ norec: 1, limit: 2000 }); if (conn) qs.set("conn", conn);
+  return (await api("/api/markers?" + qs)).markers.filter((m) => m.can_edit);
+}
+async function mkDeleteNow(ids) { if (ids.length) await api("/api/markers", { action: "batch", adds: [], updates: [], deletes: ids }); if (view === "markers") refreshMarkers(); }
+// Before a connection starts again its chart buffer is cleared: markers that exist only for it would point at nothing.
+async function mkAskBuffer(conn, why) {
+  let rows = []; try { rows = (await mkBufferOnly(conn)).filter((m) => m.buffered); } catch (e) { return; }
+  if (rows.length && confirm(`Na tym połączeniu jest ${rows.length} zapisanych znaczników, które należą tylko do bufora wykresu (żadne nagranie ich nie obejmuje). ${why === "Reset" ? "Reset" : "Start"} wyczyści bufor.\n\nOK – usuń te znaczniki, Anuluj – zostaw je.`))
+    await mkDeleteNow(rows.map((m) => m.id));
+}
+// 'Usuń bez zapisu': what is left by connections that hold no data any more (e.g. the server was restarted).
+async function mkDeleteOrphans() {
+  let rows; try { rows = (await mkBufferOnly("")).filter((m) => !m.buffered); } catch (e) { alert(e.message); return; }
+  if (!rows.length) { alert("Nie ma znaczników bez zapisu (poza tymi, których połączenie ma jeszcze dane w pamięci)."); return; }
+  if (confirm(`Usunąć ${rows.length} zapisanych znaczników, które należą tylko do bufora wykresu (żadne nagranie ich nie obejmuje)?\n\nTego nie można cofnąć.`)) await mkDeleteNow(rows.map((m) => m.id));
+}
+// A recording is deleted for good: ask what to do with its markers.
+async function mkAskRecording(src, id) {
+  let rows = []; try { rows = (await api(`/api/markers?rec=${encodeURIComponent(src + "|" + id)}&limit=2000`)).markers.filter((m) => m.can_edit); } catch (e) { return; }
+  if (rows.length && confirm(`Do tego nagrania należy ${rows.length} znaczników.\n\nOK – usuń je razem z nagraniem, Anuluj – zostaw je (nie będzie dokąd z nich przejść).`)) await mkDeleteNow(rows.map((m) => m.id));
 }
 async function refreshMarkers() {
   const qs = new URLSearchParams();
@@ -457,7 +485,7 @@ async function refreshMarkers() {
   if (v("mkl-scope") === "conn" && $("c-conn").value) qs.set("conn", $("c-conn").value);
   qs.set("order", v("mkl-order")); qs.set("limit", 1000);
   let d; try { d = await api("/api/markers?" + qs); } catch (e) { $("mkl-msg").textContent = "Błąd: " + e.message; return; }
-  const flt = { conn: v("mkl-scope") === "conn" ? $("c-conn").value : "", q: v("mkl-q"), priority: v("mkl-prio"), group: v("mkl-group"), author: v("mkl-author"),
+  const flt = { conn: v("mkl-scope") === "conn" ? $("c-conn").value : "", rec: v("mkl-rec"), q: v("mkl-q"), priority: v("mkl-prio"), group: v("mkl-group"), author: v("mkl-author"),
     from: $("mkl-range").checked && v("mkl-from") && v("mkl-to") ? mkFromInput(v("mkl-from")) : 0, to: $("mkl-range").checked && v("mkl-to") ? mkFromInput(v("mkl-to")) : 0 };
   const rows = d.markers.map((m) => MKD.deleted.has(m.id) ? m : MKD.edited.has(m.id) ? (mkMatches(MKD.edited.get(m.id), flt) ? MKD.edited.get(m.id) : null) : m).filter(Boolean);
   for (const m of MKD.added.values()) if (mkMatches(m, flt)) rows.push(m);
@@ -473,9 +501,9 @@ async function refreshMarkers() {
   $("t-mkl").tBodies[0].innerHTML = mkList.map((m) => { const st = mkdState(m.id); return `<tr data-id="${m.id}" class="${st ? "mkp-" + st : ""}"><td><input type="checkbox" ${mkSel.has(m.id) ? "checked" : ""} ${m.can_edit && st !== "deleted" ? "" : "disabled"}></td>
     <td>${mkStamp(m.at_us)}</td><td><span style="color:${esc(m.color)}">■</span> <b>${st === "deleted" ? "<s>" : ""}${esc(m.title || "(bez tytułu)")}${st === "deleted" ? "</s>" : ""}</b>${st ? ` <span class="mk-state">✱ ${MKD_PL[st]}</span>` : ""}${m.description ? `<div class="muted">${esc(m.description)}</div>` : ""}</td>
     <td>${m.kind === "range" ? "Zakres (" + mkDur((m.end_us - m.at_us) / 1e6) + ")" : m.kind === "delta" ? "Różnica sygnału (" + mkDur((m.end_us - m.at_us) / 1e6) + ")" : "Punkt"}</td><td>${MK_PRIO_PL[m.priority] || m.priority}</td><td>${esc(m.signals.join(", ") || "wszystkie")}</td>
-    <td>${esc(m.group_name)}</td><td>${esc(m.author)}</td><td>${esc(m.conn_name || (m.rec_id ? "nagranie" : ""))}</td><td class="muted">${mkStamp(m.modified_us).slice(0, 19)}</td>
+    <td>${esc(m.group_name)}</td><td>${esc(m.author)}</td><td>${esc(m.conn_name)}</td><td class="${m.rec_id ? "" : "muted"}" title="${m.rec_id ? "Nagranie w bazie, do którego należy znacznik." : "Znacznik istnieje tylko dla bufora wykresu."}">${esc(mkRecLabel(m.rec_id))}</td><td class="muted">${mkStamp(m.modified_us).slice(0, 19)}</td>
     <td>${m.id > 0 || !m.rec_id ? '<button data-act="go">Pokaż</button> ' : ""}<button data-act="edit">${m.can_edit && st !== "deleted" ? "Edytuj" : "Szczegóły"}</button> ${st ? '<button data-act="undo">Cofnij zmianę</button> ' : ""}${m.can_edit && st !== "deleted" ? '<button data-act="del">Usuń</button>' : ""}</td></tr>`; }).join("")
-    || '<tr><td colspan="11" class="muted">Brak znaczników. Dodasz je prawym przyciskiem myszy na wykresie (Podgląd na żywo albo Nagrania).</td></tr>';
+    || '<tr><td colspan="12" class="muted">Brak znaczników. Dodasz je prawym przyciskiem myszy na wykresie (Podgląd na żywo albo Nagrania).</td></tr>';
   $("mkl-msg").textContent = `Znaczników: ${mkList.length}` + (mkdCount() ? ` · niezapisanych zmian: ${mkdCount()} (przycisk „Zapisz znaczniki” u góry)` : "");
 }
 function initMarkersView() {
@@ -489,7 +517,8 @@ function initMarkersView() {
     if (act === "del") mkdDelete(m);
     if (act === "undo") mkdRevert(m.id);
   });
-  for (const id of ["mkl-prio", "mkl-group", "mkl-author", "mkl-scope", "mkl-order", "mkl-range", "mkl-from", "mkl-to"]) $(id).addEventListener("change", refreshMarkers);
+  for (const id of ["mkl-prio", "mkl-group", "mkl-author", "mkl-scope", "mkl-rec", "mkl-order", "mkl-range", "mkl-from", "mkl-to"]) $(id).addEventListener("change", refreshMarkers);
+  $("mkl-orph").addEventListener("click", mkDeleteOrphans);
   let tm = null; $("mkl-q").addEventListener("input", () => { clearTimeout(tm); tm = setTimeout(refreshMarkers, 250); });
   $("mkl-refresh").addEventListener("click", refreshMarkers);
   $("mkl-group-btn").addEventListener("click", () => { if (mkSel.size) mkGroupDialog(null, mkList.filter((m) => mkSel.has(m.id))); else alert("Zaznacz znaczniki (pola po lewej)."); });

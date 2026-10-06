@@ -36,19 +36,20 @@ class RecMarks:
         self.reset()
 
     def reset(self) -> None:
-        self.auto: list[dict] = []          # {n, t0, t1 (None while recording), sid}
+        self.auto: list[dict] = []          # {n, t0, t1 (None while recording), sid (database recording), file (CSV file name)}
         self.manual: list[dict] = []        # {n, a, b (None until the stop is placed), saved (text of where it went or "")}
         self.ghost: dict | None = None      # {n, t}: the moved Start REC
         self.hold = False                   # True while a recorder is re-opened for the same recording (new signals added)
         self.version += 1
 
     # ---- automatic marks (driven by the recorder)
-    def started(self, t: float, sid: str = "") -> int:
+    def started(self, t: float, sid: str = "", file: str = "") -> int:
         if self.hold and self.auto:
             self.auto[-1]["sid"] = sid
+            self.auto[-1]["file"] = file
             return self.auto[-1]["n"]
         n = max((a["n"] for a in self.auto), default=0) + 1
-        self.auto.append({"n": n, "t0": float(t), "t1": None, "sid": sid})
+        self.auto.append({"n": n, "t0": float(t), "t1": None, "sid": sid, "file": file})
         self.version += 1
         return n
 

@@ -109,8 +109,15 @@ class ProcAcquirer:
                  on_state: Callable[[str, str], None] | None = None,
                  on_sample: Callable[[float, list[float]], None] | None = None,
                  driver: dict | None = None,
-                 on_info: Callable[[dict], None] | None = None):
+                 on_info: Callable[[dict], None] | None = None,
+                 anchor_ts: float | None = None):
+        """anchor_ts = wall-clock time (epoch seconds) of the chart time 0 when this run CONTINUES a chart that already holds data:
+        the times of the new samples are shifted so that the chart keeps its time axis, and one NaN row is put into the gap
+        (a break in the curves). None = a new chart: the times are seconds since this run's start."""
         self.buffer = buffer
+        self.anchor_ts = anchor_ts
+        self.time_offset = 0.0            # seconds added to the times of the samples (set when the child reports its start)
+        self.gap_marked = False
         self.on_info = on_info
         self.on_state = on_state or (lambda *_: None)
         self.on_sample = on_sample
@@ -162,10 +169,12 @@ class ProcAcquirer:
                 if msg[0] == "batch":
                     _, rows, st = msg
                     self.stats.apply(st)
+                    off = self.time_offset
                     for row in rows:
                         t, vals = row[0], row[1]
-                        self.buffer.append(t, vals)
                         self.diag.add_sample(t, row[2] if len(row) > 2 else None)
+                        t += off
+                        self.buffer.append(t, vals)
                         if self.on_sample:
                             self.on_sample(t, vals)
                 elif msg[0] == "info":
@@ -175,6 +184,11 @@ class ProcAcquirer:
                     _, state, text, t0 = msg
                     if t0:
                         self.t0 = t0
+                        if self.anchor_ts is not None and not self.gap_marked:         # continuing a chart: keep its time axis
+                            self.time_offset = time.time() - self.anchor_ts - (time.perf_counter() - t0)
+                            if len(self.buffer):
+                                self.buffer.append(self.time_offset, [float("nan")] * self.buffer.n)     # the break between the runs
+                            self.gap_marked = True
                     self.diag.note_state(state)
                     self.on_state(state, text)
                     if state in ("stopped", "error"):

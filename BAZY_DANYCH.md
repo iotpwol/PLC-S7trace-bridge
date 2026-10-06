@@ -595,7 +595,23 @@ jako względny (poza nim – jako bezwzględny). Eksport okna → CSV i import C
   Podczas trwającego nagrywania zmianę wykonuje wątek zapisujący (`DbRecorder.submit`), w kolejności z zapisywanymi wierszami. **Plik CSV** nie jest zmieniany (jest zapisywany na bieżąco) – pozycja jest wyłączona. Zasięg ograniczony buforem wykresu.
 - Testy: `tests/test_rec_marks.py`, `tests/test_rec_marks_ui.py`, `tests/test_web_rec_marks.py`.
 
-### 13.12. Mapa kodu i testów
+### 13.12. Do którego nagrania należy znacznik (kolumna „Zapis”) i sprzątanie po buforze
+
+- Każdy znacznik ma pole `rec_id`: **identyfikator nagrania w bazie**, które obejmuje jego czas (`<id>` w programie okienkowym, `<źródło>|<id>` w Web, plik CSV: `csv:<nazwa>` / `csv|<nazwa>`), albo **puste = znacznik tylko dla bufora wykresu**.
+  Znacznik dostaje je **od razu przy tworzeniu**: z wczytanego nagrania, z trwającego REC albo z wcześniejszego REC tego samego przebiegu, którego zakres obejmuje czas znacznika (`TabMarkers.rec_id_at`, Web `HostedConnection.rec_id_at`).
+  Później zmienia się razem z danymi: po **Zapis Manual REC** znaczniki leżące w obszarze (zapisane w pliku i robocze) przechodzą do nowego nagrania, po **Zmień Start REC** wcześniej – znaczniki z dopisanego fragmentu przechodzą do nagrania,
+  później – znaczniki z obciętego fragmentu wracają do „tylko bufor” (`MarkerStore.link_recording` / `unlink_recording`, `TabMarkers.link_range` / `unlink_range`).
+- Okno „Znaczniki” ma kolumnę **Zapis** (identyfikator nagrania, „plik …” albo „bufor (bez zapisu)”), filtr **Zapis** (każdy / tylko bufor / tylko z nagraniem) i przycisk **Usuń bez zapisu…** (zapisane znaczniki bez nagrania, poza tymi, których wykres jest otwarty).
+- **Gdy bufor znika, program pyta, czy usunąć znaczniki tylko dla niego** (`TabMarkers.confirm_buffer`): przy zamykaniu karty i programu, przy Start (bufor jest czyszczony) i przy wczytaniu nagrania zamiast wykresu; odpowiedzi: Usuń znaczniki / Zostaw / Wróć (Anuluj Start, Anuluj wczytanie).
+  Nie pyta, gdy inna karta ma to samo połączenie (te same znaczniki) ani gdy nie ma takich znaczników. Samo **Stop** nic nie usuwa – wykres nadal jest na ekranie.
+  Jeśli program zostanie zakończony przez system, zanim zdążył zapytać, znaczniki zostają – usuwa się je ręcznie (filtr „Tylko bufor” + Usuń albo „Usuń bez zapisu…”).
+- **Trwałe usunięcie nagrania** (Przegląd nagrań: Usuń trwale / Opróżnij kosz) pyta, co zrobić z jego znacznikami (usuń też / zostaw / anuluj). Przeniesienie do kosza nie pyta (nagranie można przywrócić); automatyczne czyszczenie
+  (retencja, kosz po N dniach) nie pyta i nie rusza znaczników.
+- Web: to samo po stronie serwera (`MarkerService._stamp_rec`, `link_range`, parametr `norec` listy, pole `buffered` = połączenie trzyma jeszcze dane w pamięci); przeglądarka pyta (`confirm`) przed Start połączenia
+  (`mkAskBuffer`) i przed trwałym usunięciem nagrania (`mkAskRecording`) – „OK” usuwa znaczniki, „Anuluj” je zostawia (przeglądarka nie ma pytania z trzema przyciskami, więc Start nie da się tam przerwać tym pytaniem).
+- Testy: `tests/test_marker_rec_link.py`, `tests/test_web_marker_rec.py`.
+
+### 13.13. Mapa kodu i testów
 
 | Element | Plik / symbol |
 |---|---|
@@ -606,5 +622,6 @@ jako względny (poza nim – jako bezwzględny). Eksport okna → CSV i import C
 | Obsługa na karcie, okna | `ui/markers_ui.py`: `TabMarkers`, `MarkerEditDialog`, `PendingDialog` (wykaz do zapisu), `MarkersDialog` (lista), `SearchDialog` |
 | Przypomnienie przy zamykaniu | `ui/main_window.py`: `close_tab`, `closeEvent` → `TabMarkers.confirm_close` |
 | Tryb Web | `web/markers_api.py` (`MarkerService`, `/api/markers`, `/api/search`), `web/static/markers.js`, `web/recordings.py` (`Library.search`) |
+| Znacznik ↔ nagranie | `core/markers.py` (`link_recording`, `unlink_recording`, `buffer_only`, `with_recordings`, `delete_many`), `ui/markers_ui.py` (`rec_id_at`, `link_range`, `confirm_buffer`, kolumna Zapis), `ui/store_dialog.py` (`_ask_markers`), `web/markers_api.py` (`_stamp_rec`, `link_range`) |
 | Znaczniki REC | `core/rec_marks.py`, `core/rec_ops.py`, `ui/rec_marks_ui.py` (`TabRecMarks`), `web/static/recmarks.js`, `web/hosted.py` (`rec_save_range`, `rec_move_start`) |
-| Testy | `tests/test_markers.py`, `tests/test_marker_draft.py`, `tests/test_markers_ui.py`, `tests/test_web_markers.py`, `tests/test_folders.py`, `tests/test_rec_marks.py`, `tests/test_rec_marks_ui.py`, `tests/test_web_rec_marks.py` |
+| Testy | `tests/test_markers.py`, `tests/test_marker_draft.py`, `tests/test_markers_ui.py`, `tests/test_web_markers.py`, `tests/test_folders.py`, `tests/test_rec_marks.py`, `tests/test_rec_marks_ui.py`, `tests/test_web_rec_marks.py`, `tests/test_marker_rec_link.py`, `tests/test_web_marker_rec.py` |

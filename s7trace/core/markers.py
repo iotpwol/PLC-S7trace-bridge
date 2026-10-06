@@ -453,6 +453,46 @@ class MarkerStore:
             self.version += 1
         return n
 
+    # ------------------------------------------------------------ the recording a marker belongs to (`rec_id`, '' = the chart buffer only)
+    def link_recording(self, rec_id: str, t0_us: int, t1_us: int, conn: str | None = None) -> int:
+        """Markers of the buffer only (empty rec_id) whose time lies in [t0, t1] (of connection `conn`) now belong to the recording."""
+        sql, args = "UPDATE markers SET rec_id=? WHERE rec_id='' AND at_us>=? AND at_us<=?", [rec_id[:LIMITS["rec_id"]], int(t0_us), int(t1_us)]
+        if conn is not None:
+            sql += " AND conn=?"
+            args.append(conn)
+        with self._lock, self._db() as db:
+            n = db.execute(sql, args).rowcount
+            self.version += 1
+        return n
+
+    def unlink_recording(self, rec_id: str, t0_us: int, t1_us: int) -> int:
+        """The part [t0, t1) of the recording was cut off: its markers belong to the chart buffer only again."""
+        with self._lock, self._db() as db:
+            n = db.execute("UPDATE markers SET rec_id='' WHERE rec_id=? AND at_us>=? AND at_us<?", (rec_id, int(t0_us), int(t1_us))).rowcount
+            self.version += 1
+        return n
+
+    def buffer_only(self, conn: str | None = None, limit: int = 100_000) -> list[Marker]:
+        """Saved markers that belong to no recording (only to a chart buffer); conn limits them to one connection, None = those of
+        every connection (a marker without a connection is never listed: nothing says which buffer it was made in)."""
+        rows = self.search(rec_id="", conn=conn, limit=limit)
+        return rows if conn is not None else [m for m in rows if m.conn]
+
+    def with_recordings(self, rec_ids: list[str]) -> list[Marker]:
+        """Markers that belong to any of the recordings."""
+        out: list[Marker] = []
+        for rid in dict.fromkeys(r for r in rec_ids if r):
+            out += self.search(rec_id=rid, limit=100_000)
+        return out
+
+    def delete_many(self, ids: list[int]) -> int:
+        n = 0
+        with self._lock, self._db() as db:
+            for i in ids:
+                n += db.execute("DELETE FROM markers WHERE id=?", (int(i),)).rowcount
+            self.version += 1
+        return n
+
     def count(self) -> int:
         with self._db() as db:
             return db.execute("SELECT COUNT(*) FROM markers").fetchone()[0]

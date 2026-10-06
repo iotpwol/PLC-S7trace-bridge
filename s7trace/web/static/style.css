@@ -37,6 +37,7 @@ canvas.ov { margin-top:4px; cursor:ew-resize; } .tools button.on { background:va
 details { margin:8px 0; } details summary { cursor:pointer; color:var(--muted); } .sr-row { margin:4px 0; } .sr-row select, .sr-row input { padding:2px 4px; } .sr-res { margin-top:8px; }
 [hidden] { display:none !important; }
 
+#c-reset { min-width:6.5em; } #c-reset.on { background:var(--rst-bg, var(--bg)); color:var(--rst-text, #4da3ff); font-weight:700; }
 button.warn { background:#b8860b; border-color:#e0a030; color:#fff; }
 #mk-pend { max-width:min(900px,96vw); }
 #mk-pend .mkp-new td:first-child { color:#3fc380; } #mk-pend .mkp-edited td:first-child { color:#e0a030; } #mk-pend .mkp-deleted td:first-child { color:#ff6b6b; }

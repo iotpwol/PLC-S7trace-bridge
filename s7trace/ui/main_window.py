@@ -578,6 +578,8 @@ class MainWindow(QMainWindow):
             r = QMessageBox.question(self, "S7Trace", "Połączenie jest aktywne. Zamknąć kartę?")
             if r != QMessageBox.Yes:
                 return
+        if not tab.mk.confirm_buffer("close", tab._key_shared()):   # saved markers that exist only for this chart buffer
+            return
         tab.shutdown()
         self.tabs.removeTab(i)
         tab.deleteLater()
@@ -707,6 +709,13 @@ class MainWindow(QMainWindow):
             if tab.mk.pending():
                 self.tabs.setCurrentIndex(i)
                 if not tab.mk.confirm_close():
+                    e.ignore()
+                    return
+        for i in range(self.tabs.count()):                        # markers that exist only for a chart buffer that goes away now
+            tab = self.tabs.widget(i)
+            if tab.mk.buffer_markers():
+                self.tabs.setCurrentIndex(i)
+                if not tab.mk.confirm_buffer("close", tab._key_shared()):
                     e.ignore()
                     return
         self._heartbeat.stop()

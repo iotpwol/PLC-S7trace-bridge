@@ -416,8 +416,19 @@ Przełącznik <b>Widok → Legenda</b> ukrywa i pokazuje nazwy w obu stylach. Wy
         ("Start", "Łączy ze sterownikiem i rozpoczyna zbieranie danych (wymaga poprawnego IP i co najmniej jednego pobieranego sygnału). Pyta o nazwę konfiguracji tylko wtedy, gdy ma być zapisany plik z jej nazwą w szablonie."),
         ("Stop", "Kończy połączenie. Dane pozostają na wykresie."),
         ("Pauza / Wznów", "Wstrzymuje widok (zbieranie trwa) i wraca do trybu na żywo."),
+        ("Reset / Auto-Reset", "Kliknięcie czyści bufor i wykres. Przytrzymany 4 s zamienia się w „Auto-Reset”: każdy kolejny Start zaczyna wykres od nowa (szczegóły niżej)."),
         ("● REC", "Włącza ciągłe nagrywanie według panelu „Nagrywanie REC”. Po naciśnięciu program w tle sprawdza serwer bazy; gdy nie odpowiada, od razu pokazuje przyczynę („Przerwij REC” albo kontynuuj – dane czekają w buforze na dysku)."),
-    ]) + _imgs(("przyciski_pauza", "Pauza włączona (przycisk „Wznów” świeci na żółto)"), ("przyciski_rec_aktywny", "REC aktywny – miga czerwona kropka")) + """
+    ]) + _imgs(("przyciski_pauza", "Pauza włączona (przycisk „Wznów” świeci na żółto)"), ("przyciski_rec_aktywny", "REC aktywny – miga czerwona kropka"),
+        ("przyciski_reset_odliczanie", "Reset przytrzymany 2 s: odliczanie „Reset (2s)”"), ("przyciski_auto_reset", "Auto-Reset załączony: przycisk wciśnięty, niebieski tekst")) + """
+<h3>Start po Stop: przerwa w wykresie, Reset i Auto-Reset</h3>
+<p>Domyślnie (Auto-Reset <b>wyłączony</b>) ponowny <b>Start</b> po <b>Stop</b> <b>nie czyści wykresu</b>: oś czasu biegnie dalej, a między ostatnią próbką sprzed Stop a pierwszą po Start
+powstaje <b>przerwa (dziura) w krzywych</b> równa czasowi, który minął między Stop i Start. Znaczniki, znaczniki REC i przybliżanie wykresu zachowują swoje położenie.
+Wykres jest kontynuowany tylko wtedy, gdy pobierane są <b>te same sygnały</b> (nazwa, adres, typ; kolor czy wysokość pasma mogą się zmienić) i na karcie nie ma wczytanego nagrania – w przeciwnym razie Start zaczyna wykres od nowa.</p>
+<p><b>Reset</b> (przycisk po lewej od REC): <b>kliknięcie</b> czyści bufor i wykres. Gdy połączenie pracuje, czas biegnie dalej (REC i znaczniki zachowują swoje czasy) i wykres zapełnia się od tej chwili;
+na zatrzymanej karcie wykres zaczyna się od zera. Jeśli są zapisane znaczniki, które istnieją tylko dla czyszczonego bufora, program pyta, czy je usunąć.</p>
+<p><b>Auto-Reset</b>: przytrzymaj Reset. Po 1 s pojawia się odliczanie <b>Reset (3s) → (2s) → (1s)</b>, a po 4 s przycisk zostaje wciśnięty jako <b>Auto-Reset</b> (niebieski tekst, tło bez zmian). Od tej chwili
+<b>każdy Start czyści wykres</b> i zaczyna go od nowa (tak działał program dawniej). Puszczenie przycisku w trakcie odliczania <b>anuluje</b> (nic się nie dzieje); kliknięcie „Auto-Reset” wyłącza go (nie czyści wykresu).
+Ustawienie jest zapamiętywane przy karcie.</p>
 <h3>Kolory przycisków</h3>
 <p>Wszystkie kolory ustawisz w Ustawienia → Interfejs. Ustawienia fabryczne:</p>
 <table border="1" cellspacing="0" cellpadding="6">
@@ -427,6 +438,7 @@ Przełącznik <b>Widok → Legenda</b> ukrywa i pokazuje nazwy w obu stylach. Wy
 <tr><td>Stop załączony</td><td>""" + _swatch("#3a3a3a", "#b01818", "Stop") + """</td><td>połączenie zatrzymane</td></tr>
 <tr><td>Pauza załączona</td><td>""" + _swatch("#f2d600", "#000000", "Wznów") + """</td><td>widok wstrzymany</td></tr>
 <tr><td>REC załączony</td><td>""" + _swatch("#ff8c1a", "#ffffff", "<span style='color:#ff2020'>●</span> REC") + """</td><td>trwa zapis; kropka miga (domyślnie 0,5 Hz)</td></tr>
+<tr><td>Auto-Reset załączony</td><td>""" + _swatch("#3a3a3a", "#4da3ff", "Auto-Reset") + """</td><td>każdy Start czyści wykres; tło jak przycisku wyłączonego, zmienia się tylko kolor tekstu</td></tr>
 </table>
 <h2>Przyciski znaczników i okien</h2>
 """ + _img("przyciski_znacznikow") + _img("przyciski_znacznikow_robocze", "Przy znacznikach roboczych „Zapisz znaczniki” staje się aktywny i pokazuje ich liczbę") + _table([
@@ -465,6 +477,16 @@ lub programu z niezapisanymi znacznikami pojawia się wykaz zmian (Zapisz / Odrz
 """ + _img("okno_zapis_znacznikow", "Wykaz niezapisanych zmian: nowe, zmienione (z nazwami zmienionych pól), do usunięcia") + """
 <h3>Lista znaczników</h3>
 """ + _img("okno_lista_znacznikow") + """
+<p>Kolumna <b>Zapis</b> pokazuje, do którego nagrania w bazie należy znacznik, albo <b>bufor (bez zapisu)</b> – znacznik istnieje wtedy tylko dla danych widocznych na wykresie. Przy tworzeniu znacznik dostaje
+nagranie, które obejmuje jego czas (trwające REC, wczytane nagranie albo wcześniejszy zapis tego przebiegu); znaczniki leżące w obszarze „Manual REC” po jego zapisie oraz w fragmencie dopisanym przez „Zmień Start REC”
+przechodzą do tego nagrania. Lista ma filtr <b>Zapis</b> (każdy / tylko bufor / tylko z nagraniem).</p>
+""" + _img("okno_lista_znacznikow_zapis", "Lista z kolumną „Zapis”: nagrania i bufor") + """
+<p>Przycisk <b>Usuń bez zapisu…</b> usuwa zapisane znaczniki bez nagrania (poza tymi, których wykres jest otwarty na jakiejś karcie) – to sposób na sprzątanie po zakończeniu programu przez system,
+zanim zdążył zapytać o nie sam.</p>
+<p>Znaczniki bez nagrania nie mają dokąd prowadzić, gdy znika bufor wykresu. Dlatego program <b>pyta</b>, czy je usunąć: przy zamykaniu karty lub programu, przy ponownym Start (bufor jest czyszczony)
+i przy wczytywaniu nagrania zamiast wykresu. <b>Usuń znaczniki</b> kasuje je, <b>Zostaw</b> zostawia, trzeci przycisk wraca do wykresu (albo przerywa Start / wczytanie).
+Pytanie nie pojawia się, gdy inna karta ma to samo połączenie. Przy trwałym usuwaniu nagrania (kosz → „Usuń trwale”) program pyta też, co zrobić z jego znacznikami.</p>
+""" + _img("okno_znaczniki_bez_zapisu", "Pytanie przy zamykaniu karty ze znacznikami tylko dla bufora") + """
 <p>Tabela ma ten sam standard co wszystkie tabele programu (rozdział „Tabele – jeden standard”): sortowanie po kliknięciu nagłówka, regulacja szerokości kolumn, naprzemienne cieniowanie wierszy.
 Pole wyszukiwania filtruje po tytule, opisie, uwagach, autorze, grupie i kolorze. Pozycje robocze są oznaczone kolorem (nowe, zmienione, usunięte – przekreślone).</p>
 <h3>Szukaj w danych</h3>

@@ -110,7 +110,7 @@ async function refreshOverview() {
     <td>${esc(s.address)}</td><td class="muted">${esc(s.agent)}</td><td>${fmtAge(s.login_s)} temu</td>
     <td>${s.active ? '<span class="dot running"></span>aktywny' : "bezczynny " + fmtAge(s.idle_s)}</td><td>${esc(byId[s.viewing] || "–")}</td></tr>`).join("");
 }
-window.act = async (id, what) => { try { await api(`/api/connections/${id}/${what}`, {}); } catch (e) { alert(e.message); } refreshOverview(); };
+window.act = async (id, what) => { if (what === "start" && typeof mkAskBuffer === "function" && overview?.connections?.find((c) => c.id === id)?.auto_reset) await mkAskBuffer(id, "Start"); try { await api(`/api/connections/${id}/${what}`, {}); } catch (e) { alert(e.message); } refreshOverview(); };
 
 // ---------------------------------------------------------------- editor of a connection (own workspace of the account)
 let editing = null;   // {id|null, opts, running}
@@ -296,7 +296,8 @@ function describeChart(d) {
   const t = d.trigger, r = d.rec, canRun = !!conn?.can_run;
   $("c-trig").textContent = t.enabled ? `Trigger (${t.signal}): ${TRIG_PL[t.state] || t.state}${t.note ? " · " + t.note : ""}` : "";
   $("c-rearm").hidden = !(canRun && t.state === "hold");
-  $("c-rec").hidden = !canRun; $("c-title").hidden = $("c-desc").hidden = !canRun || r.active || r.target === "csv";
+  $("c-rec").hidden = !canRun; $("c-reset").hidden = !canRun; if (!RST.t0 && !RST.off) { RST.auto = !!d.auto_reset; resetShow(); }
+  $("c-title").hidden = $("c-desc").hidden = !canRun || r.active || r.target === "csv";
   $("c-rec").textContent = r.active ? "■ Stop REC" : "● REC"; $("c-rec").classList.toggle("rec-on", r.active);
   $("c-recinfo").textContent = r.active ? `REC → ${r.label}${r.by ? " (" + r.by + ")" : ""}${r.error ? " · BŁĄD: " + r.error : ""}` : (r.error ? "REC: " + r.error : "");
   if (t.state === "hold" && t.x0 !== null) {
@@ -306,6 +307,32 @@ function describeChart(d) {
         frozen.colors = new Set(f.colors).size < f.colors.length ? f.colors.map((_, k) => COLORS[k % COLORS.length]) : f.colors; draw(); } }); }
   } else if (!userFrozen) { frozen = null; frozenKey = null; }
 }
+// 'Reset' (clears the chart) / 'Auto-Reset' (hold 4 s: every Start clears the chart): like the desktop button; the count-down shows from the 1st second
+const RST = { t0: 0, timer: null, off: false, auto: false };
+function resetShow() { const b = $("c-reset"); b.textContent = RST.auto ? "Auto-Reset" : "Reset"; b.classList.toggle("on", RST.auto); }
+function resetLabel(held) { return held < 1 ? "Reset" : `Reset (${Math.max(Math.ceil(4 - held), 0)}s)`; }
+async function resetPost(body) { try { await api(`/api/connections/${$("c-conn").value}/reset`, body); } catch (e) { alert(e.message); } }
+async function resetClick() {
+  if (typeof mkAskBuffer === "function") await mkAskBuffer($("c-conn").value, "Reset");
+  await resetPost({}); if (typeof draw === "function") { frozen = null; frozenKey = null; draw(); }
+}
+$("c-reset").addEventListener("pointerdown", (e) => {
+  if (e.button) return; e.preventDefault();
+  if (RST.auto) { RST.off = true; return; }
+  RST.t0 = performance.now(); clearInterval(RST.timer);
+  RST.timer = setInterval(() => {
+    const held = (performance.now() - RST.t0) / 1000;
+    if (held >= 4) { clearInterval(RST.timer); RST.t0 = 0; RST.auto = true; resetShow(); resetPost({ auto: true }); } else $("c-reset").textContent = resetLabel(held);
+  }, 100);
+});
+window.addEventListener("pointerup", (e) => {
+  const over = !!e.target.closest?.("#c-reset");
+  if (RST.off) { RST.off = false; if (over) { RST.auto = false; resetShow(); resetPost({ auto: false }); } return; }
+  if (!RST.t0) return;
+  const held = (performance.now() - RST.t0) / 1000; clearInterval(RST.timer); RST.t0 = 0; resetShow();
+  if (over && held < 1) resetClick();                         // a click; held longer = cancelled
+});
+$("c-reset").addEventListener("click", (e) => { if (e.detail === 0) { if (RST.auto) { RST.auto = false; resetShow(); resetPost({ auto: false }); } else resetClick(); } });   // the keyboard
 $("c-rearm").addEventListener("click", async () => { try { await api(`/api/connections/${$("c-conn").value}/trigger`, { action: "rearm" }); } catch (e) { alert(e.message); } });
 $("c-rec").addEventListener("click", async () => {
   const id = $("c-conn").value, on = lastDesc?.rec?.active;
@@ -452,6 +479,7 @@ window.recAct = async (id, action) => {
   const text = { trash: rv.trashDays > 0 ? `Przenieść nagranie do kosza (do ${rv.trashDays} dni można je przywrócić)?` : "Usunąć nagranie? Tej operacji nie można cofnąć.",
                  purge: "Usunąć TRWALE to nagranie? Tej operacji nie można cofnąć." }[action];
   if (text && !confirm(text)) return;
+  if ((action === "purge" || (action === "trash" && rv.trashDays <= 0)) && typeof mkAskRecording === "function") await mkAskRecording($("rv-src").value, id);
   try { await api("/api/recordings", { source: $("rv-src").value, id, action }); } catch (e) { alert(e.message); }
   if (rv.cur === id) $("rv-view").hidden = true; refreshRecs();
 };
@@ -890,7 +918,8 @@ function tableResizable(table) {
 const TABLE_COLORS = [["header_bg", "Kolor tła nagłówka tabeli", "--tb-head-bg"], ["header_text", "Kolor czcionki nagłówka tabeli", "--tb-head-text"],
   ["odd_bg", "Kolor tła wierszy nieparzystych", "--tb-odd-bg"], ["odd_text", "Kolor czcionki wierszy nieparzystych", "--tb-odd-text"],
   ["even_bg", "Kolor tła wierszy parzystych", "--tb-even-bg"], ["even_text", "Kolor czcionki wierszy parzystych", "--tb-even-text"],
-  ["border", "Kolor ramki tabeli", "--tb-border"]];
+  ["border", "Kolor ramki tabeli", "--tb-border"],
+  ["reset_on_bg", "Auto-Reset załączony: tło", "--rst-bg"], ["reset_on_text", "Auto-Reset załączony: tekst", "--rst-text"]];
 // names of the signals on the chart: 'legend' (list under the chart) or 'labels' (a boxed name at every signal); per account, like the desktop interface configuration
 let legSave = null;
 function legendStyleApply() { document.querySelectorAll("[data-x=lst]").forEach((s) => { s.value = LEGSTYLE; }); }
@@ -909,7 +938,8 @@ function tableColorsDialog() {
   const box = $("ui-rows"); box.innerHTML = "";
   const th = document.querySelector("th"), td = document.querySelector("td") || th;
   const dflt = { header_bg: rgbHex(th && getComputedStyle(th).backgroundColor), header_text: rgbHex(th && getComputedStyle(th).color), odd_bg: rgbHex(getComputedStyle(document.body).backgroundColor),
-    odd_text: rgbHex(td && getComputedStyle(td).color), even_bg: "#2f2f2f", even_text: rgbHex(td && getComputedStyle(td).color), border: "#454545" };
+    odd_text: rgbHex(td && getComputedStyle(td).color), even_bg: "#2f2f2f", even_text: rgbHex(td && getComputedStyle(td).color), border: "#454545",
+    reset_on_bg: rgbHex(getComputedStyle($("c-rec")).backgroundColor), reset_on_text: "#4da3ff" };
   for (const [k, label] of TABLE_COLORS) {
     const r = document.createElement("div"); r.className = "urow";
     const l = document.createElement("label"); l.textContent = label; const i = document.createElement("input"); i.type = "color"; i.value = TBL[k] || dflt[k];

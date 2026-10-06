@@ -822,8 +822,36 @@ class StoreImportDialog(QDialog):
             return
         self._apply(sel, True)
 
+    def _ask_markers(self, sel: list[dict]) -> str:
+        """Markers that belong to recordings about to be deleted for good: 'delete' / 'keep' / 'cancel' (the user is asked)."""
+        try:
+            from ..core import markers as mk
+            rows = mk.default_store().with_recordings([s["id"] for s in sel])
+        except Exception:
+            return "keep"
+        if not rows:
+            return "keep"
+        box = QMessageBox(QMessageBox.Question, "Znaczniki nagrania", f"Do usuwanych nagrań należy <b>{len(rows)}</b> znaczników. Usunąć je "
+                          "razem z nagraniami? Jeśli zostaną, nie będzie dokąd przejść z listy znaczników.", parent=self)
+        box.setTextFormat(Qt.RichText)
+        yes = box.addButton("Usuń też znaczniki", QMessageBox.AcceptRole)
+        keep = box.addButton("Zostaw znaczniki", QMessageBox.DestructiveRole)
+        cancel = box.addButton("Anuluj", QMessageBox.RejectRole)
+        box.setDefaultButton(yes)
+        box.exec()
+        b = box.clickedButton()
+        self._marker_rows = rows
+        return "cancel" if b is cancel else ("delete" if b is yes else "keep")
+
     def _apply(self, sel: list[dict], permanent: bool) -> None:
         errs, now = [], int(time.time() * 1e6)
+        rows = []
+        if permanent:
+            ans = self._ask_markers(sel)
+            if ans == "cancel":
+                return
+            rows = list(getattr(self, "_marker_rows", [])) if ans == "delete" else []
+            self._marker_rows = []
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             for s in sel:
@@ -839,6 +867,13 @@ class StoreImportDialog(QDialog):
                     errs.append(str(e))
         finally:
             QApplication.restoreOverrideCursor()
+        if rows:
+            try:
+                from ..core import markers as mk
+                gone = {s["id"] for s in sel if s not in self.all}          # only for recordings that really went
+                mk.default_store().delete_many([m.id for m in rows if m.rec_id in gone])
+            except Exception as e:
+                errs.append(str(e))
         self._fill()
         self._status_line()
         if errs:

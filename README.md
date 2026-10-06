@@ -55,6 +55,8 @@ Typy: BOOL, BYTE, SINT, USINT, WORD, INT, UINT, DWORD, DINT, UDINT, REAL, LREAL.
 * **Znaczniki REC** (desktop i Web): wykres sam rysuje numerowane linie **Start REC (n)** / **Stop REC (n)** (kolor, grubość i rodzaj linii w *Znaczniki → Wygląd znaczników…*, można wyłączyć);
   prawy przycisk na wykresie → **Manual Start REC / Manual Stop REC** zaznacza obszar już zebranych danych, który **Zapis Manual REC** (albo okno *Zapisz znaczniki*) zapisuje jako osobne nagranie;
   **Przesuń Start REC** (pulsujący „duch”) zmienia początek nagrania w bazie: dopisuje brakujące dane z bufora albo usuwa starsze (SQLite, InfluxDB, TimescaleDB; nie CSV).
+* **Start po Stop kontynuuje wykres z przerwą** (zamiast go czyścić); nowy przycisk **Reset** (po lewej od REC) czyści wykres, a przytrzymany 4 s włącza **Auto-Reset** (każdy Start czyści wykres) – desktop i Web.
+* **Znacznik wie, do którego nagrania należy** (kolumna „Zapis” w liście znaczników, filtr, Web też). Znaczniki istniejące tylko dla bufora wykresu program proponuje usunąć, gdy bufor znika (zamknięcie karty / programu, Start, wczytanie nagrania); przy trwałym usunięciu nagrania pyta o jego znaczniki.
 * Zakładki = niezależne połączenia (dół okna, `+` dodaje). Kropka przy nazwie: zielona = praca, szara = stop.
 * Wykres przesuwa się w czasie rzeczywistym: najnowsze próbki po prawej, szerokość = „Okno czasu” (wpisana w sekundach albo wybrana z listy: 5 s … 24 godz.).
   Przeciągnięcie / zoom myszą wstrzymuje widok (zbieranie trwa); „Wznów” wraca do trybu na żywo.

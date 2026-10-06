@@ -128,6 +128,7 @@
     <div class="bar" id="c-ctl"><span id="c-trig" class="muted"></span>
       <button id="c-rearm" hidden>Wznów (uzbrój wyzwalacz)</button>
       <input id="c-title" placeholder="nazwa nagrania (opcjonalnie)" maxlength="200" hidden><input id="c-desc" placeholder="opis (opcjonalnie)" maxlength="500" hidden>
+      <button id="c-reset" hidden title="Reset: czyści bufor i wykres (kliknięcie). Przytrzymaj 4 s (odliczanie od 1. sekundy), aby załączyć „Auto-Reset” – wykres będzie czyszczony przy każdym Start. Puszczenie w trakcie odliczania anuluje. Kliknięcie „Auto-Reset” wyłącza go.">Reset</button>
       <button id="c-rec" hidden>● REC</button><span id="c-recinfo" class="muted"></span>
       <button id="c-addmark" title="Znacznik w ostatniej próbce (albo prawy przycisk myszy na wykresie)">+ Znacznik</button>
       <button id="c-live" hidden>Wróć do danych na żywo</button><button id="c-files">Pliki</button></div>
@@ -178,10 +179,11 @@
       <select id="mkl-group"><option value="*">Grupa: każda</option></select>
       <select id="mkl-author"><option value="">Autor: każdy</option></select>
       <select id="mkl-scope" title="Które połączenia: jak w programie okienkowym – lista ma domyślnie zakres bieżącego połączenia, gdy otwierasz ją z wykresu"><option value="">Zakres: wszystkie połączenia</option><option value="conn">Zakres: połączenie z wykresu</option></select>
+      <select id="mkl-rec" title="Zapis: nagranie w bazie, do którego należy znacznik; „bufor” = tylko dane wykresu, bez nagrania"><option value="">Zapis: każdy</option><option value="buffer">Tylko bufor (bez zapisu)</option><option value="rec">Tylko z nagraniem</option></select>
       <select id="mkl-order"><option value="at">wg czasu znacznika</option><option value="modified">wg ostatniej zmiany</option><option value="priority">wg priorytetu</option></select></div>
     <div class="bar"><label><input type="checkbox" id="mkl-range"> tylko od</label><input type="datetime-local" id="mkl-from" step="1"><span>do</span><input type="datetime-local" id="mkl-to" step="1">
-      <button id="mkl-refresh">Odśwież</button><button id="mkl-group-btn">Grupuj zaznaczone…</button><button id="mkl-ungroup-btn">Wyjmij z grupy</button><button id="mkl-save" class="warn">Zapisz znaczniki…</button><button id="mkl-look">Wygląd znaczników…</button><span id="mkl-msg" class="muted"></span></div>
-    <table id="t-mkl"><thead><tr><th></th><th>Czas</th><th>Tytuł</th><th>Rodzaj</th><th>Priorytet</th><th>Dotyczy</th><th>Grupa</th><th>Autor</th><th>Połączenie</th><th>Zmieniono</th><th></th></tr></thead><tbody></tbody></table>
+      <button id="mkl-refresh">Odśwież</button><button id="mkl-group-btn">Grupuj zaznaczone…</button><button id="mkl-ungroup-btn">Wyjmij z grupy</button><button id="mkl-save" class="warn">Zapisz znaczniki…</button><button id="mkl-orph" title="Usuwa zapisane znaczniki, które należą tylko do bufora wykresu (żadne nagranie ich nie obejmuje), a ich połączenie nie ma już danych w pamięci">Usuń bez zapisu…</button><button id="mkl-look">Wygląd znaczników…</button><span id="mkl-msg" class="muted"></span></div>
+    <table id="t-mkl"><thead><tr><th></th><th>Czas</th><th>Tytuł</th><th>Rodzaj</th><th>Priorytet</th><th>Dotyczy</th><th>Grupa</th><th>Autor</th><th>Połączenie</th><th>Zapis</th><th>Zmieniono</th><th></th></tr></thead><tbody></tbody></table>
   </section>
   <section id="targets" hidden>
     <h2>Cele zapisu nagrań (bazy danych)</h2>
@@ -237,7 +239,7 @@
   </section>
 </main>
 <dialog id="ui-dlg">
-  <h3>Ustawienia interfejsu – kolory tabel</h3>
+  <h3>Ustawienia interfejsu – kolory tabel i przycisku Reset</h3>
   <p class="muted">Te same ustawienia co w programie okienkowym (Widok → Interfejs). Zapisują się na koncie. „Domyślne” przywraca kolory strony.</p>
   <div id="ui-rows"></div>
   <div class="bar"><button id="ui-reset">Domyślne</button><span class="spacer"></span><button id="ui-close">Zamknij</button></div>

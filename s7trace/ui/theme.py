@@ -52,6 +52,8 @@ COLOR_KEYS: dict[str, tuple[str, str]] = {
     "rec_on_bg": ("REC załączony: tło", "#ff8c1a"),
     "rec_on_text": ("REC załączony: tekst", "#ffffff"),
     "rec_dot": ("REC: migająca kropka", "#ff2020"),
+    "reset_on_bg": ("Auto-Reset załączony: tło", "#3a3a3a"),
+    "reset_on_text": ("Auto-Reset załączony: tekst", "#4da3ff"),
     "mark_on_bg": ("V / H znacznik, Punkty załączone: tło", "#2a82da"),
     "mark_on_text": ("V / H znacznik, Punkty załączone: tekst", "#000000"),
     "help_on_bg": ("Przycisk „?” (tryb pomocy włączony): tło", "#ff9800"),
@@ -71,6 +73,7 @@ LIGHT.update(
     ctl_bg="#e1e1e1", ctl_text="#101010", start_on_bg="#e1e1e1", start_on_text="#8a6d00",
     stop_on_bg="#e1e1e1", stop_on_text="#a01010", pause_on_bg="#f2d600", pause_on_text="#000000",
     rec_on_bg="#ff8c1a", rec_on_text="#ffffff", rec_dot="#e01010", mark_on_bg="#2a82da", mark_on_text="#000000",
+    reset_on_bg="#e1e1e1", reset_on_text="#0a58c8",
     status_bg="#f0f0f0", status_text="#202020", profile="light")
 
 PRESETS = {"Ciemny (domyślny)": DARK, "Jasny": LIGHT}
@@ -248,6 +251,7 @@ QPushButton[role="stop"][on="true"], QPushButton[role="stop"][on="true"]:disable
     {{ background: {t['stop_on_bg']}; color: {t['stop_on_text']}; font-weight: bold; }}
 QPushButton[role="pause"][on="true"] {{ background: {t['pause_on_bg']}; color: {t['pause_on_text']}; }}
 QPushButton[role="rec"][on="true"] {{ background: {t['rec_on_bg']}; color: {t['rec_on_text']}; }}
+QPushButton[role="reset"][on="true"] {{ background: {t['reset_on_bg']}; color: {t['reset_on_text']}; font-weight: bold; }}
 QPushButton[role="mark"][on="true"] {{ background: {t['mark_on_bg']}; color: {t['mark_on_text']}; }}
 QSplitter::handle {{ background: rgba(128,128,128,70); }}
 QSplitter::handle:hover {{ background: {t['accent']}; }}

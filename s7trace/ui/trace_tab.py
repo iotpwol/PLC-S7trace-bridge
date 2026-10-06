@@ -42,6 +42,7 @@ from .fold_group import FoldGroup
 from .offset_edit import OffsetEdit
 from .fold_splitter import DEFAULT_BAR, FoldSplitter
 from .pan_label import PanLabel
+from .reset_button import ResetButton
 from .ip_edit import IpCombo
 
 RACK_SLOT_HELP = (
@@ -135,6 +136,7 @@ class TraceTab(QWidget):
         self.paused = False
         self.recorder: CsvRecorder | None = None
         self.start_wall = datetime.now()
+        self._continued = False          # the running connection continues the chart of the previous run (no reset, a gap in between)
         self._run_signals: list[Signal] = []
         self._pending: deque = deque()
         self.engine = trg.TriggerEngine(cfg.trigger)
@@ -431,6 +433,7 @@ class TraceTab(QWidget):
         self.btn_stop = QPushButton("Stop")
         self.btn_pause = QPushButton("Pauza")
         self.btn_pause.setCheckable(True)
+        self.btn_reset = ResetButton()                           # click = clear the chart; hold 4 s = 'Auto-Reset' (every Start clears it)
         self.btn_rec = QPushButton("REC")
         self.btn_rec.setCheckable(True)
         self.btn_rec.toggled.connect(lambda _on: self._blink_tick(reset=True))
@@ -450,7 +453,7 @@ class TraceTab(QWidget):
         self.btn_sig = QPushButton("Sygnały...")
         self.btn_diag = QPushButton("Diagnostyka…")
         self.btn_diag.setToolTip("Szczegółowa diagnostyka połączenia: opóźnienia, utracone cykle, ping, przepustowość")
-        for b in (self.btn_start, self.btn_stop, self.btn_pause, self.btn_rec):
+        for b in (self.btn_start, self.btn_stop, self.btn_pause, self.btn_reset, self.btn_rec):
             bar.addWidget(b)
         bar.addStretch()
         for b in (self.btn_sig, self.btn_diag):
@@ -488,12 +491,15 @@ class TraceTab(QWidget):
         self.sp_toff.valueChanged.connect(self._time_axis_changed)
 
         for b, role in ((self.btn_start, "start"), (self.btn_stop, "stop"), (self.btn_pause, "pause"),
-                        (self.btn_rec, "rec")):
+                        (self.btn_reset, "reset"), (self.btn_rec, "rec")):
             b.setProperty("ctl", True)
             b.setProperty("role", role)
             b.setProperty("on", False)
-        for b in (self.btn_pause, self.btn_rec):
+        for b in (self.btn_pause, self.btn_rec, self.btn_reset):
             b.toggled.connect(lambda on, w=b: self._set_on(w, on))
+        self.btn_reset.setMinimumWidth(self.btn_reset.fontMetrics().horizontalAdvance("Auto-Reset") + 28)
+        self.btn_reset.resetRequested.connect(self.reset_chart)
+        self.btn_reset.autoChanged.connect(self._auto_reset_changed)
 
         # ---- wiring
         self.btn_start.clicked.connect(self.start)
@@ -942,6 +948,7 @@ class TraceTab(QWidget):
         self.sp_ymin.setValue(c.y_min)
         self.sp_ymax.setValue(c.y_max)
         self.act_pts.setChecked(c.show_points)
+        self.btn_reset.set_auto(c.auto_reset)
         t = c.trigger
         self.chk_trig.setChecked(t.enabled)
         self.cb_tmode.setCurrentText(t.mode)
@@ -984,6 +991,7 @@ class TraceTab(QWidget):
         c.auto_y = self.chk_auto.isChecked()
         c.y_min, c.y_max = self.sp_ymin.value(), self.sp_ymax.value()
         c.show_points = self.act_pts.isChecked()
+        c.auto_reset = self.btn_reset.auto
         c.time_axis, c.time_offset = self.cb_taxis.currentData(), self.sp_toff.value()
         c.y_layout = self.cb_ylayout.currentData()
         c.rec_folder, c.rec_filename = self.ed_rfolder.text().strip(), self.ed_rname.text().strip()
@@ -1166,11 +1174,16 @@ class TraceTab(QWidget):
                                     "„Pobierz” w oknie 'Sygnały...'.")
             return
         self._warn_if_scanned_elsewhere(c.ip)
-        self.buffer.reset(len(run))
-        self.mk.rec.new_run()                            # the Start / Stop REC lines and Manual REC areas belong to the previous run
+        cont = self._can_continue(run)
+        if not cont:
+            if len(self.buffer) and not self.mk.confirm_buffer("start", self._key_shared()):   # markers that exist only for the old buffer
+                return
+            self.buffer.reset(len(run))
+            self.mk.rec.new_run()                        # the Start / Stop REC lines and Manual REC areas belong to the previous run
+            self.plot.clear_trigger_marks()
+        self._continued = cont
         self._run_signals = [Signal.from_dict(s.to_dict()) for s in run]
         self.plot.set_signals(run)
-        self.plot.clear_trigger_marks()
         self._pending.clear()
         self.engine = trg.TriggerEngine(c.trigger)
         self.trig_state = "armed" if c.trigger.enabled else "idle"
@@ -1182,14 +1195,55 @@ class TraceTab(QWidget):
             on_state=lambda s, m: self._stateRaw.emit(s, m),
             on_sample=lambda t, v: self._pending.append((t, list(v))),
             driver={"type": method, "opts": dict(c.conn)} if method != "s7" else None,
-            on_info=lambda d: self._infoRaw.emit(d))
-        self.plot.time_source = lambda a=acq: (time.perf_counter() - a.t0) if a.t0 else self.buffer.last_time()
+            on_info=lambda d: self._infoRaw.emit(d),
+            anchor_ts=self.start_wall.timestamp() if cont else None)
+        self.plot.time_source = lambda a=acq: (time.perf_counter() - a.t0 + a.time_offset) if a.t0 else self.buffer.last_time()
         self.loaded = None
         self.state = "connecting"
         self.status_msg = f"Łączenie z {c.ip}…"
         self._set_buttons()
         self.stateChanged.emit(self.state)
         acq.start()
+
+    # ------------------------------------------------- Reset / Auto-Reset
+    @staticmethod
+    def _signal_key(s: Signal) -> tuple:
+        """What decides which data a buffer column holds (colour, share, comment ... may change between runs)."""
+        return (s.name, s.source, s.dtype, s.db, s.byte, s.bit, s.node)
+
+    def _can_continue(self, run: list[Signal]) -> bool:
+        """A new Start keeps the chart (and puts a gap in it) unless 'Auto-Reset' is on, the tab shows a loaded recording,
+        there is nothing to continue or the signals are not the same as in the previous run."""
+        return (not self.btn_reset.auto and self.loaded is None and len(self.buffer) > 0 and bool(self._run_signals)
+                and [self._signal_key(s) for s in run] == [self._signal_key(s) for s in self._run_signals])
+
+    def _auto_reset_changed(self, on: bool) -> None:
+        self.cfg.auto_reset = on
+        self.status_msg = ("Auto-Reset włączony: każdy Start czyści wykres." if on else
+                           "Auto-Reset wyłączony: kolejny Start kontynuuje wykres (z przerwą w danych).")
+
+    def reset_chart(self) -> None:
+        """'Reset': clears the buffer and the chart. While the connection runs the time axis goes on (recordings and markers keep their
+        times); a stopped tab starts a fresh chart."""
+        if not len(self.buffer) and self.loaded is None:
+            self.status_msg = "Wykres jest już pusty."
+            return
+        if not self.mk.confirm_buffer("reset", self._key_shared()):          # markers that exist only for this buffer
+            return
+        self.buffer.reset()
+        if self.recorder is None:
+            self.mk.rec.new_run()
+        self.plot.clear_trigger_marks()
+        self._pending.clear()
+        if self.state == "stopped":
+            self.loaded = None
+            self.start_wall = datetime.now()
+            self._run_signals = []
+            self.apply_time_axis()
+        self.plot.set_follow(self.state == "running" and not self.paused)
+        self.plot.refresh(force=True)
+        self.mk.sync(True)
+        self.status_msg = "Wykres wyczyszczony (Reset)."
 
     def stop(self):
         if self.acq and self.state != "stopped":
@@ -1449,7 +1503,7 @@ class TraceTab(QWidget):
     def _on_state(self, state: str, msg: str):
         """Runs in GUI thread (queued from worker)."""
         if state == "running":
-            if self.state in ("connecting", "stopped"):
+            if self.state in ("connecting", "stopped") and not self._continued:
                 self.start_wall = datetime.now()
                 self.apply_time_axis()
             self.status_msg = msg
@@ -1711,7 +1765,15 @@ class TraceTab(QWidget):
         self.start_wall = csv_start_wall(path) or self.start_wall        # markers are tied to the wall-clock time
         self._show_loaded(sigs, t, v, f"Zaimportowano {len(t)} próbek z {os.path.basename(path)}")
 
+    def _key_shared(self) -> bool:
+        """Another tab of the window has the same connection name (so the same markers)."""
+        win = self.window()
+        tabs = getattr(win, "tabs", None)
+        return tabs is not None and any(tabs.widget(i) is not self and tabs.widget(i).mk.key() == self.mk.key() for i in range(tabs.count()))
+
     def _show_loaded(self, sigs, t, v, message: str, info: dict | None = None) -> None:
+        if len(self.buffer) and not self.mk.confirm_buffer("load", self._key_shared()):   # the old chart goes away
+            return
         self.loaded = info                                   # what the tab shows (tooltip of the tab); None = a live tab
         self.mk.rec.new_run()
         self.apply_time_axis()

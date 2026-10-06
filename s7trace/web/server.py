@@ -455,6 +455,15 @@ class Handler(BaseHTTPRequestHandler):
             if "trigger" in changed:
                 host.reload_trigger()
             host.version += 1
+        elif action == "reset":                        # 'Reset' clears the chart; {auto: true / false} switches 'Auto-Reset' (every Start clears it)
+            if not host.can_run(user, role):
+                return self._error(403, "Brak uprawnień do tego połączenia.")
+            if "auto" in d:
+                host.cfg.auto_reset = bool(d["auto"])
+                self.app.hosts.save(host.owner)
+                host.version += 1
+            else:
+                host.reset_chart()
         elif action == "read-device":                  # 'Pobierz dane sterownika': only the controller data + its clock, no acquisition
             if not host.can_run(user, role):
                 return self._error(403, "Brak uprawnień do tego połączenia.")
@@ -499,6 +508,8 @@ class Handler(BaseHTTPRequestHandler):
                 where = host.rec_save_range(user, d.get("a"), d.get("b"), str(d.get("title", "")), self.client_address[0])
             except (TypeError, ValueError) as e:
                 return self._error(400, str(e) or "Niepoprawny zakres.")
+            rid, a_us, b_us = getattr(host, "last_link", ("", 0, 0))
+            self.app.markers.link_range(host.id, rid, a_us, b_us)                  # markers inside the area belong to the new recording
             return self._json({"ok": True, "where": where})
         elif action == "rec-start":                    # 'Zmień Start REC (n)': move the start of a recording
             if not host.can_run(user, role):
@@ -509,6 +520,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._error(400, str(e) or "Niepoprawne dane.")
             except Exception as e:
                 return self._error(502, f"Nie udało się zmienić początku nagrania: {e}")
+            ln = res.pop("link", None)
+            if ln:                                                                  # the markers follow the data that moved in / out
+                self.app.markers.link_range(host.id, ln["rec_id"], ln["a_us"], ln["b_us"], unlink=not res["earlier"])
             return self._json({"ok": True, **res})
         elif action == "files":
             if not host.can_edit(user, role):

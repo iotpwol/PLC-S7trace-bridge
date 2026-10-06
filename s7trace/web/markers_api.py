@@ -47,7 +47,8 @@ class MarkerService:
 
     def _dict(self, m: mk.Marker, user: str, role: str) -> dict:
         h = self.hosts.get(m.conn) if m.conn else None
-        return {**m.to_dict(), "can_edit": self.can_edit(m, user, role), "conn_name": h.name if h is not None else ""}
+        return {**m.to_dict(), "can_edit": self.can_edit(m, user, role), "conn_name": h.name if h is not None else "",
+                "buffered": bool(h is not None and len(h.buffer))}      # the connection still holds its chart data in memory
 
     # ---- reading
     def listing(self, user: str, role: str, q: dict) -> dict:
@@ -63,9 +64,29 @@ class MarkerService:
             limit=min(max(num("limit") or 500, 1), 2000))
         if q.get("conns"):                                              # markers of connections (not of recordings): 'show also other connections'
             rows = [m for m in rows if m.conn]
+        if q.get("norec"):                                              # only the chart buffer: they belong to no recording
+            rows = [m for m in rows if m.conn and not m.rec_id]
         return {"markers": [self._dict(m, user, role) for m in rows],
                 "groups": [{"name": g, "count": n} for g, n in self.store.groups(vis)],
                 "authors": sorted({m.author for m in self.store.search(visible_to=vis, limit=2000) if m.author})}
+
+    def _stamp_rec(self, f: dict) -> None:
+        """A marker put on a live connection gets the recording that covers its time (empty = the chart buffer only)."""
+        conn = str(f.get("conn") or "")
+        h = self.hosts.get(conn) if conn else None
+        if h is not None and not f.get("rec_id") and "at_us" in f:
+            try:
+                f["rec_id"] = h.rec_id_at(int(f["at_us"]))
+            except (TypeError, ValueError):
+                pass
+
+    def link_range(self, conn: str, rec_id: str, a_us: int, b_us: int, unlink: bool = False) -> int:
+        """A recording of the connection now holds (or no longer holds, `unlink`) the time [a, b]: its markers follow."""
+        if not rec_id:
+            return 0
+        if unlink:
+            return self.store.unlink_recording(rec_id, a_us, b_us)
+        return self.store.link_recording(rec_id, a_us, b_us, conn=conn)
 
     # ---- changing
     def _get(self, mid, user: str, role: str, edit: bool = True) -> mk.Marker:
@@ -102,6 +123,7 @@ class MarkerService:
                 if h is None or not h.can_view(user, role):
                     raise mk.MarkerError("Nie ma takiego połączenia.")
             clean_adds.append({k: a[k] for k in EDITABLE + ("at_us", "conn", "rec_id") if k in a})
+            self._stamp_rec(clean_adds[-1])
             tmps.append(a.get("tmp"))
         updates = []
         for u in ups:
@@ -129,6 +151,7 @@ class MarkerService:
                     raise mk.MarkerError("Nie ma takiego połączenia.")
             if len(st.search(authors=[user], limit=MAX_PER_AUTHOR + 1)) > MAX_PER_AUTHOR:
                 raise mk.MarkerError("Za dużo znaczników tego konta – usuń niepotrzebne.")
+            self._stamp_rec(f)
             at = f.pop("at_us")
             m = st.add(at, author=user, computer=address, **f)
             return {"ok": True, "marker": self._dict(m, user, role)}

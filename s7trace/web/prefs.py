@@ -14,11 +14,12 @@ STATUS_LINES = (1, 2, 3, 4, 5, 6, 8, 10)
 _HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
-TABLE_KEYS = ("header_bg", "header_text", "odd_bg", "odd_text", "even_bg", "even_text", "border")
+TABLE_KEYS = ("header_bg", "header_text", "odd_bg", "odd_text", "even_bg", "even_text", "border", "reset_on_bg", "reset_on_text")
 
 
 def table_normalize(raw) -> dict:
-    """Colours of the tables in the browser ('' = the colour of the page): the same seven settings as the desktop 'Interfejs'."""
+    """Colours of the tables in the browser ('' = the colour of the page): the same seven settings as the desktop 'Interfejs', plus the
+    two of the engaged 'Auto-Reset' button."""
     raw = raw if isinstance(raw, dict) else {}
     return {k: (raw[k].lower() if isinstance(raw.get(k), str) and _HEX.match(raw[k]) else "") for k in TABLE_KEYS}
 

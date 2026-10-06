@@ -201,7 +201,7 @@ def main_window():
     win, tab = H["win"], H["tab"]
     shot(win, "okno_glowne")
     rect(win, [win.menuBar(), win.tabs.bar], "pasek_menu_karty", pad=0)
-    rect(win, [tab.btn_start, tab.btn_stop, tab.btn_pause, tab.btn_rec], "przyciski_sterujace", pad=6)
+    rect(win, [tab.btn_start, tab.btn_stop, tab.btn_pause, tab.btn_reset, tab.btn_rec], "przyciski_sterujace", pad=6)
     rect(win, [tab.btn_madd, tab.btn_mrk, tab.btn_msave, tab.btn_find], "przyciski_znacznikow", pad=6)
     rect(win, [tab.btn_sig, tab.btn_diag], "przyciski_sygnaly_diagnostyka", pad=6)
     rect(win, [tab.plot], "wykres", pad=0)               # a grab of the window part: the legend samples keep their colours
@@ -307,7 +307,7 @@ def trigger_state():
     pump(10, 100)
     rect(win, [tab.plot], "wykres_trigger", pad=0)               # a grab of the window part: the legend samples keep their colours
     shot(H["win"], "okno_glowne_trigger")
-    rect(H["win"], [tab.btn_start, tab.btn_stop, tab.btn_pause, tab.btn_rec], "przyciski_pauza", pad=6)
+    rect(H["win"], [tab.btn_start, tab.btn_stop, tab.btn_pause, tab.btn_reset, tab.btn_rec], "przyciski_pauza", pad=6)
     tab.btn_pause.setChecked(False)                        # back to live
     tab.chk_trig.setChecked(False)
     pump(10, 100)
@@ -428,6 +428,33 @@ def rec_marks():
     named("menu_rec_duch")
     ctl.rec._ghost_menu(QPoint(500, 400))
     ctl.rec.cancel_ghost()
+    # every marker knows its recording: the list with the 'Zapis' column and the question about markers that exist only for the buffer
+    st, made = ctl.store, []
+    for t, title in ((a[0]["t0"] + 0.4, "Pierwszy rozruch"), (a[1]["t0"] + 0.4, "Alarm temperatury"), (x0 + 0.2, "Obserwacja przed REC"),
+                     (x0 + 0.5, "Test zaworu")):
+        at = ctl.to_wall(t)
+        made.append(st.add(at, author=ctl._who(), computer="PC-STEROWNIA", conn=ctl.key(), rec_id=ctl.rec_id_at(at), title=title))
+    ctl.open_list()
+    pump(8)
+    shot(ctl.dlg, "okno_lista_znacznikow_zapis")
+    ctl.dlg.hide()
+    from PySide6.QtWidgets import QMessageBox
+    real_exec = QMessageBox.exec
+
+    def ask_shot(self):
+        self.show()
+        pump(8)
+        shot(self, "okno_znaczniki_bez_zapisu")
+        self.hide()
+        next(b for b in self.buttons() if b.text().startswith("Zostaw")).click()
+        return 0
+    QMessageBox.exec = ask_shot
+    try:
+        ctl.confirm_buffer("close")
+    finally:
+        QMessageBox.exec = real_exec
+    st.delete_many([m.id for m in made])
+    ctl._changed()
     tab.btn_rec.setChecked(False)
     pump(8, 100)
     for m in list(ctl.rec.m.manual):
@@ -482,7 +509,7 @@ def recordings():
         tab.btn_rec.setChecked(True)
         pump(50 if n else 40, 100)
         if n == 0:
-            rect(win, [tab.btn_start, tab.btn_stop, tab.btn_pause, tab.btn_rec], "przyciski_rec_aktywny", pad=6)
+            rect(win, [tab.btn_start, tab.btn_stop, tab.btn_pause, tab.btn_reset, tab.btn_rec], "przyciski_rec_aktywny", pad=6)
             shot(tab.lbl_status, "pasek_statusu_rec")
             shot(win, "okno_glowne_rec")
         tab.btn_rec.setChecked(False)
@@ -534,8 +561,17 @@ def button_states():
     tab, win = H["tab"], H["win"]
     tab.btn_pause.setChecked(True)
     pump(4)
-    rect(win, [tab.btn_start, tab.btn_stop, tab.btn_pause, tab.btn_rec], "przyciski_pauza", pad=6)
+    rect(win, [tab.btn_start, tab.btn_stop, tab.btn_pause, tab.btn_reset, tab.btn_rec], "przyciski_pauza", pad=6)
     tab.btn_pause.setChecked(False)
+    pump(3)
+    from s7trace.ui.reset_button import countdown_label
+    tab.btn_reset.setText(countdown_label(2.05))                         # held for 2 s: 'Reset (2s)'
+    pump(3)
+    rect(win, [tab.btn_start, tab.btn_stop, tab.btn_pause, tab.btn_reset, tab.btn_rec], "przyciski_reset_odliczanie", pad=6)
+    tab.btn_reset.set_auto(True)                                          # held for 4 s: latched as 'Auto-Reset' (blue text)
+    pump(3)
+    rect(win, [tab.btn_start, tab.btn_stop, tab.btn_pause, tab.btn_reset, tab.btn_rec], "przyciski_auto_reset", pad=6)
+    tab.btn_reset.set_auto(False)
     pump(3)
 
 

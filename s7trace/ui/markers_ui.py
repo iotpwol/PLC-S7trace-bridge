@@ -474,6 +474,91 @@ class TabMarkers:
         info = getattr(self.tab, "loaded", None)
         return str(info["meta"].get("id", "")) if info and info.get("meta") else ""
 
+    def rec_id_at(self, at_us: int) -> str:
+        """The recording a marker made at this time belongs to: the one loaded on the tab, else the REC of this run that covers the time
+        (the running one too; a CSV file is 'csv:<name>'), else '' = it belongs to the chart buffer only."""
+        loaded = self.rec_id()
+        if loaded:
+            return loaded
+        t = self.to_rel(int(at_us))
+        for a in self.rec.m.auto:
+            if a["t0"] <= t <= (a["t1"] if a["t1"] is not None else float("inf")):
+                return a["sid"] or ("csv:" + a["file"] if a.get("file") else "")
+        return ""
+
+    def link_range(self, rec_id: str, a_us: int, b_us: int) -> None:
+        """A recording now holds the time [a, b] of this chart (Manual REC saved, Start REC moved earlier): markers of the buffer only
+        that lie in it belong to it from now on (saved ones in the file, unsaved ones in the draft)."""
+        if not rec_id:
+            return
+        key = self.key()
+        st = self.store
+        if st is not None:
+            try:
+                st.link_recording(rec_id, a_us, b_us, conn=key)
+            except Exception:
+                pass
+        if self._draft is not None:
+            for d in (self._draft.new, self._draft.edited):
+                for m in d.values():
+                    if not m.rec_id and m.conn == key and a_us <= m.at_us <= b_us:
+                        m.rec_id = rec_id
+        self._changed()
+
+    def unlink_range(self, rec_id: str, a_us: int, b_us: int) -> None:
+        """The part [a, b) of a recording was deleted: its markers are only in the chart buffer again."""
+        st = self.store
+        if rec_id and st is not None:
+            try:
+                st.unlink_recording(rec_id, a_us, b_us)
+            except Exception:
+                pass
+        if rec_id and self._draft is not None:
+            for d in (self._draft.new, self._draft.edited):
+                for m in d.values():
+                    if m.rec_id == rec_id and a_us <= m.at_us < b_us:
+                        m.rec_id = ""
+        self._changed()
+
+    def buffer_markers(self) -> list[mk.Marker]:
+        """Saved markers of this tab's connection that belong to no recording (only to the chart buffer)."""
+        st = self.store
+        if st is None or self.rec_id():
+            return []
+        try:
+            return st.buffer_only(conn=self.key())
+        except Exception:
+            return []
+
+    def confirm_buffer(self, why: str = "close", shared: bool = False) -> bool:
+        """The chart buffer of this tab is about to go away (`why` 'close' = the tab / program is closed, 'start' = Start clears it):
+        saved markers that exist only for it would point at data nobody has any more, so the user is asked whether to delete them.
+        False = the user wants to stay. `shared`: another tab uses the same connection name (its markers stay)."""
+        rows = [] if shared else self.buffer_markers()
+        if not rows:
+            return True
+        what = {"close": "zamknięciu karty", "load": "wczytaniu nagrania (bufor wykresu zostanie zastąpiony)",
+                "reset": "wyczyszczeniu wykresu (Reset)"}.get(
+            why, "ponownym Starcie (bufor wykresu zostanie wyczyszczony)")
+        box = QMessageBox(QMessageBox.Question, "Znaczniki bez zapisu", f"Na tej karcie jest <b>{len(rows)}</b> zapisanych znaczników, które "
+                          f"należą tylko do bufora wykresu (żadne nagranie w bazie ich nie obejmuje). Po {what} nie będzie danych, do "
+                          "których można przejść.<br><br>Usunąć te znaczniki?", parent=self.tab)
+        box.setTextFormat(Qt.RichText)
+        yes = box.addButton("Usuń znaczniki", QMessageBox.AcceptRole)
+        keep = box.addButton("Zostaw", QMessageBox.DestructiveRole)
+        back = box.addButton({"close": "Wróć do wykresu", "load": "Anuluj wczytanie", "reset": "Anuluj Reset"}.get(why, "Anuluj Start"), QMessageBox.RejectRole)
+        box.setDefaultButton(yes)
+        box.exec()
+        if box.clickedButton() is back:
+            return False
+        if box.clickedButton() is yes:
+            try:
+                self.store.delete_many([m.id for m in rows])
+            except Exception as e:
+                QMessageBox.warning(self.tab, "S7Trace", f"Nie udało się usunąć znaczników: {e}")
+            self._changed()
+        return True
+
     def to_wall(self, t: float) -> int:
         return to_us(self.tab.start_wall, t)
 
@@ -550,13 +635,14 @@ class TabMarkers:
             return None
         m = mk.Marker(kind=kind or ("range" if end_us else "point"), at_us=int(at_us), end_us=int(end_us or 0), title=title,
                       description=description, signals=list(signals or []), group_name=group, author=self._who(),
-                      computer=platform.node(), conn=self.key(), rec_id=self.rec_id())
+                      computer=platform.node(), conn=self.key(), rec_id=self.rec_id_at(int(at_us)))
         d = MarkerEditDialog(m, True, self.tab, self.signal_names(), self.group_names())
         if not d.exec():
             return None
         try:
             vals = d.values()
-            new = dr.add(vals.pop("at_us"), author=m.author, computer=m.computer, conn=m.conn, rec_id=m.rec_id, **vals)
+            at = vals.pop("at_us")                                       # the time may have been changed in the window
+            new = dr.add(at, author=m.author, computer=m.computer, conn=m.conn, rec_id=self.rec_id_at(at), **vals)
         except mk.MarkerError as e:
             QMessageBox.warning(self.tab, "S7Trace", str(e))
             return None
@@ -924,10 +1010,21 @@ class TabMarkers:
 
 
 # ------------------------------------------------------------------------------------------------ the list window
+BUFFER_LABEL = "bufor (bez zapisu)"
+
+
+def rec_label(rec_id: str) -> str:
+    """What the 'Zapis' column shows: the recording the marker belongs to, or that it exists only for the chart buffer."""
+    if not rec_id:
+        return BUFFER_LABEL
+    return "plik " + rec_id[4:] if rec_id.startswith("csv:") else rec_id
+
+
 @dialog_info("Znaczniki", "Wszystkie znaczniki z tego komputera i konta: szukaj po tytule, opisie, uwagach, autorze; "
                           "dwuklik przechodzi do punktu na wykresie.")
 class MarkersDialog(QDialog):
-    COLS = ["Czas", "Tytuł", "Rodzaj", "Priorytet", "Dotyczy", "Grupa", "Autor", "Połączenie", "Zmieniono", "Stan"]
+    COLS = ["Czas", "Tytuł", "Rodzaj", "Priorytet", "Dotyczy", "Grupa", "Autor", "Połączenie", "Zapis", "Zmieniono", "Stan"]
+    COL_TIME, COL_MODIFIED = 0, 9
 
     def __init__(self, ctl: TabMarkers):
         super().__init__(ctl.tab)
@@ -952,11 +1049,15 @@ class MarkersDialog(QDialog):
         self.cb_scope.addItem("Ta karta (to połączenie)", "tab")
         self.cb_scope.addItem("Wszystkie połączenia", "all")
         self.cb_group = QComboBox()
+        self.cb_rec = QComboBox()
+        self.cb_rec.addItem("Zapis: każdy", "any")
+        self.cb_rec.addItem("Tylko bufor (bez zapisu)", "buffer")
+        self.cb_rec.addItem("Tylko z nagraniem", "rec")
         self.cb_order = QComboBox()
         for k, label in (("at", "wg czasu znacznika"), ("modified", "wg ostatniej zmiany"), ("priority", "wg priorytetu")):
             self.cb_order.addItem("Sortuj: " + label, k)
         lay.addWidget(self.ed_text)
-        for w in (self.cb_prio, self.cb_color, self.cb_author, self.cb_group, self.cb_scope, self.cb_order):
+        for w in (self.cb_prio, self.cb_color, self.cb_author, self.cb_group, self.cb_scope, self.cb_rec, self.cb_order):
             f.addWidget(w, 1)
         lay.addLayout(f)
         r = QHBoxLayout()
@@ -1005,8 +1106,11 @@ class MarkersDialog(QDialog):
         self.btn_undo = QPushButton("Cofnij zmianę")
         self.btn_undo.setToolTip("Cofa niezapisaną zmianę zaznaczonego znacznika (nowy znika, zmieniony i usunięty wracają do stanu zapisanego)")
         self.btn_save = QPushButton("Zapisz znaczniki…")
+        self.btn_orph = QPushButton("Usuń bez zapisu…")
+        self.btn_orph.setToolTip("Usuwa zapisane znaczniki, które należą tylko do bufora wykresu (żadne nagranie ich nie obejmuje) – np. po "
+                                 "zakończeniu programu przez system, zanim zdążył je usunąć sam")
         close = QPushButton("Zamknij")
-        for x in (self.btn_add, self.btn_go, self.btn_edit, self.btn_del, self.btn_grp, self.btn_ungrp, self.btn_undo, self.btn_save):
+        for x in (self.btn_add, self.btn_go, self.btn_edit, self.btn_del, self.btn_grp, self.btn_ungrp, self.btn_undo, self.btn_save, self.btn_orph):
             b.addWidget(x)
         b.addStretch()
         b.addWidget(close)
@@ -1019,13 +1123,14 @@ class MarkersDialog(QDialog):
         self.btn_ungrp.clicked.connect(lambda: self.ctl.leave_group(self._selected_ids()))
         self.btn_undo.clicked.connect(self.undo)
         self.btn_save.clicked.connect(lambda: self.ctl.save())
+        self.btn_orph.clicked.connect(self.delete_buffer_only)
         close.clicked.connect(self.close)
         self._timer = QTimer(self)                       # typing in the search box: query after a short pause
         self._timer.setSingleShot(True)
         self._timer.setInterval(250)
         self._timer.timeout.connect(self.refresh)
         self.ed_text.textChanged.connect(lambda *_: self._timer.start())
-        for w in (self.cb_prio, self.cb_color, self.cb_author, self.cb_group, self.cb_scope, self.cb_order):
+        for w in (self.cb_prio, self.cb_color, self.cb_author, self.cb_group, self.cb_scope, self.cb_rec, self.cb_order):
             w.currentIndexChanged.connect(lambda *_: self.refresh())
         for w in (self.chk_range, self.chk_vis):
             w.toggled.connect(lambda *_: self.refresh())
@@ -1087,6 +1192,10 @@ class MarkersDialog(QDialog):
         if self.cb_scope.currentData() == "tab":
             key = self.ctl.key()
             rows = [m for m in rows if m.conn in ("", key)]
+        if self.cb_rec.currentData() == "buffer":
+            rows = [m for m in rows if not m.rec_id]
+        elif self.cb_rec.currentData() == "rec":
+            rows = [m for m in rows if m.rec_id]
         self._rows = rows
         begin_fill(self.table)
         self.table.setRowCount(len(rows))
@@ -1095,9 +1204,12 @@ class MarkersDialog(QDialog):
             cells = [fmt_us(m.at_us), m.title or "(bez tytułu)",
                      mk.KINDS[m.kind] + (f" ({_dur((m.end_us - m.at_us) / 1e6)})" if m.kind in mk.SPAN_KINDS else ""),
                      mk.PRIORITIES.get(m.priority, str(m.priority)), ", ".join(m.signals) or "wszystkie", m.group_name,
-                     m.author, m.conn, fmt_us(m.modified_us, False), "zapisany" if not state else "* " + STATE_PL[state]]
+                     m.author, m.conn, rec_label(m.rec_id), fmt_us(m.modified_us, False), "zapisany" if not state else "* " + STATE_PL[state]]
             for j, text in enumerate(cells):
-                it = SortItem(text, m.at_us if j == 0 else (m.modified_us if j == 8 else None))
+                it = SortItem(text, m.at_us if j == self.COL_TIME else (m.modified_us if j == self.COL_MODIFIED else None))
+                if j == 8:
+                    it.setToolTip("Nagranie w bazie, do którego należy znacznik." if m.rec_id else
+                                  "Znacznik istnieje tylko dla bufora wykresu – po jego zamknięciu program proponuje go usunąć.")
                 if j == 1:
                     it.setIcon(color_icon(m.color))
                 if state:
@@ -1113,6 +1225,9 @@ class MarkersDialog(QDialog):
                          + (f" · <span style='color:#e0a030'><b>niezapisanych zmian: {n}</b></span>" if n else ""))
         self.btn_save.setEnabled(n > 0)
         self.btn_save.setText(f"Zapisz znaczniki ({n})…" if n else "Zapisz znaczniki…")
+        orph = len(st.buffer_only())
+        self.btn_orph.setEnabled(orph > 0)
+        self.btn_orph.setText(f"Usuń bez zapisu ({orph})…" if orph else "Usuń bez zapisu…")
         if keep is not None:
             self.select(keep)
         self._buttons()
@@ -1140,6 +1255,25 @@ class MarkersDialog(QDialog):
                 self.ctl.tab.open_recording_at(m.rec_id, m.at_us, m.last_us, self.ctl.tab.plot.window)
             else:
                 QMessageBox.information(self, "S7Trace", "Punkt leży poza danymi tej karty (nie ma ich na wykresie).")
+
+    def delete_buffer_only(self) -> None:
+        """Deletes the saved markers that belong to no recording - those of every connection (what a crash may have left behind)
+        except the ones whose chart is open on a tab right now."""
+        st = self.ctl.store
+        if st is None:
+            return
+        win = self.ctl.tab.window()
+        tabs = [win.tabs.widget(i) for i in range(win.tabs.count())] if hasattr(win, "tabs") else [self.ctl.tab]
+        live = {t.mk.key() for t in tabs if len(t.buffer)}
+        rows = [m for m in st.buffer_only() if m.conn not in live]
+        if not rows:
+            QMessageBox.information(self, "S7Trace", "Nie ma znaczników bez zapisu (poza tymi, których wykres jest teraz otwarty).")
+            return
+        r = QMessageBox.question(self, "Usuń znaczniki bez zapisu", f"Usunąć <b>{len(rows)}</b> zapisanych znaczników, które należą tylko do "
+                                 "bufora wykresu (żadne nagranie ich nie obejmuje)?<br><br>Tego nie można cofnąć.")
+        if r == QMessageBox.Yes:
+            st.delete_many([m.id for m in rows])
+            self.ctl._changed()
 
     def edit(self) -> None:
         m = self._current()

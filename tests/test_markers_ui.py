@@ -200,11 +200,11 @@ def test_list_shows_state_and_undo(tab, monkeypatch):
     assert ctl.draft.state(a.id) == "deleted" and a.id not in tab.plot.mitems and st.get(a.id) is not None
     ctl.open_list()
     d = ctl.dlg
-    assert d.table.rowCount() == 1 and "do usunięcia" in d.table.item(0, 9).text() and d.table.item(0, 1).font().strikeOut()
+    assert d.table.rowCount() == 1 and "do usunięcia" in d.table.item(0, 10).text() and d.table.item(0, 1).font().strikeOut()
     assert d.btn_save.isEnabled() and "1" in d.btn_save.text()
     d.table.selectRow(0)
     d.undo()                                                                     # 'Cofnij zmianę'
-    assert ctl.pending() == 0 and a.id in tab.plot.mitems and d.table.item(0, 9).text() == "zapisany"
+    assert ctl.pending() == 0 and a.id in tab.plot.mitems and d.table.item(0, 10).text() == "zapisany"
     d.shutdown()
 
 
@@ -218,7 +218,7 @@ def test_search_in_list_sees_unsaved_markers(tab, monkeypatch):
     d.ed_text.setText("pompa")
     d._timer.stop()
     d.refresh()
-    states = {d.table.item(i, 1).text(): d.table.item(i, 9).text() for i in range(d.table.rowCount())}
+    states = {d.table.item(i, 1).text(): d.table.item(i, 10).text() for i in range(d.table.rowCount())}
     assert states == {"Roboczy pompa": "* nowy", "Zapisany pompa": "zapisany"}
     _pending(monkeypatch, "save")
     d.btn_save.click()

@@ -30,6 +30,7 @@ class TabRecMarks:
         p.ghostMoved.connect(self._ghost_moved)
         p.ghostMenu.connect(self._ghost_menu)
         tab._recOpDone.connect(self._done)
+        self._linked: dict[int, tuple[str, int, str]] = {}
 
     # ---- helpers
     @property
@@ -71,7 +72,7 @@ class TabRecMarks:
     def rec_started(self) -> None:
         t = self.tab.buffer.last_time() if len(self.tab.buffer) else 0.0
         r = self.tab.recorder
-        self.m.started(t, r.session if isinstance(r, DbRecorder) else "")
+        self.m.started(t, r.session if isinstance(r, DbRecorder) else "", os.path.basename(getattr(r, "path", "") or "") if not isinstance(r, DbRecorder) else "")
         self._changed()
 
     def rec_stopped(self) -> None:
@@ -191,7 +192,8 @@ class TabRecMarks:
 
         def work():
             try:
-                where, _sid = rec_ops.save_range_recording(cfg, sigs, start_wall, t, v, a, b, meta, folder, csv_path)
+                where, sid = rec_ops.save_range_recording(cfg, sigs, start_wall, t, v, a, b, meta, folder, csv_path)
+                self._linked[n] = (sid or ("csv:" + os.path.basename(csv_path) if csv_path else ""), to_us(start_wall, a), to_us(start_wall, b))
                 err = ""
             except Exception as e:                               # database away / disk full: the area stays unsaved
                 where, err = "", str(e) or type(e).__name__
@@ -332,11 +334,21 @@ class TabRecMarks:
             else:
                 self.m.mark_saved(n, text)
                 self._say(f"Zapisano Manual REC ({n}) → {text}")
+                rid, a_us, b_us = self._linked.pop(n, ("", 0, 0))
+                self.tab.mk.link_range(rid, a_us, b_us)               # markers inside the area belong to the new recording
         elif kind == "start":
             if err:
                 self._warn(f"Nie udało się zmienić {RecMarks.name_start(n)}:\n{err}")
             else:
                 first = float(text)
+                span = self.m.span(n)
+                old, sid = (span["t0"], span["sid"] or ("csv:" + span.get("file", "") if span.get("file") else "")) if span else (first, "")
                 self.m.set_start(n, first)
+                if span is not None and sid:                                 # the markers follow the data that moved in / out of the recording
+                    t = self.tab
+                    if first < old:
+                        t.mk.link_range(sid, to_us(t.start_wall, first), to_us(t.start_wall, old))
+                    else:
+                        t.mk.unlink_range(sid, to_us(t.start_wall, old), to_us(t.start_wall, first))
                 self._say(f"{RecMarks.name_start(n)} przesunięty na {self._fmt(first)} (zmiana zapisana w bazie).")
         self._changed()
