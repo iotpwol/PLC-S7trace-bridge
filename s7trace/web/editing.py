@@ -6,7 +6,7 @@ import os
 import re
 
 from ..core import planner, store as store_mod, trigger as trig
-from ..core.config import TabConfig, conn_defaults
+from ..core.config import GAP_MODES, GAP_PX_MAX, GAP_PX_MIN, TabConfig, conn_defaults
 from ..core.drivers import CONN_TYPES, SOURCE_OF
 from ..core.types import ALL_SOURCES, DEFAULT_COLORS, FORMATS, TIME_OFFSET_MAX, TYPES, Signal
 from . import files
@@ -55,7 +55,7 @@ def view(cfg: TabConfig, web: dict | None = None, targets: list[str] | None = No
     t = cfg.trigger
     return {"name": cfg.name, "ip": cfg.ip, "rack": cfg.rack, "slot": cfg.slot, "cycle_ms": cfg.cycle_ms,
             "conn_type": cfg.conn_type, "conn": conn, "mode": cfg.mode, "window_s": cfg.window_s,
-            "legend_mode": cfg.legend_mode, "legend_style": cfg.legend_style, "time_axis": cfg.time_axis, "time_offset": cfg.time_offset, "y_layout": cfg.y_layout, "auto_y": cfg.auto_y, "y_min": cfg.y_min, "y_max": cfg.y_max, "show_points": cfg.show_points, "auto_reset": cfg.auto_reset, "gap_join": cfg.gap_join,
+            "legend_mode": cfg.legend_mode, "legend_style": cfg.legend_style, "time_axis": cfg.time_axis, "time_offset": cfg.time_offset, "y_layout": cfg.y_layout, "auto_y": cfg.auto_y, "y_min": cfg.y_min, "y_max": cfg.y_max, "show_points": cfg.show_points, "auto_reset": cfg.auto_reset, "gap_mode": cfg.gap_mode, "gap_px": cfg.gap_px,
             "signals": [s.to_dict() for s in cfg.signals],
             "trigger": {"enabled": t.enabled, "signal": t.signal, "mode": t.mode, "a": t.a, "b": t.b, "hysteresis": t.hysteresis,
                         "pretrigger": t.pretrigger, "action": t.action, "filename": t.filename,
@@ -146,7 +146,13 @@ def apply(cfg: TabConfig, patch: dict, running: bool, web: dict | None = None, r
         new["time_axis"] = patch["time_axis"]
     if "time_offset" in patch:
         new["time_offset"] = _num(patch, "time_offset", -TIME_OFFSET_MAX, TIME_OFFSET_MAX, "Offset osi czasu [s]", float)
-    for k in ("auto_y", "show_points", "auto_reset", "gap_join"):
+    if "gap_mode" in patch:                                   # pauses of the chart: empty stretch / cut out / band of gap_px pixels
+        if patch["gap_mode"] not in GAP_MODES:
+            raise EditError("Przerwy na wykresie: „full”, „join” albo „fixed”.")
+        new["gap_mode"] = patch["gap_mode"]
+    if "gap_px" in patch:
+        new["gap_px"] = int(_num(patch, "gap_px", GAP_PX_MIN, GAP_PX_MAX, "Szerokość przerwy [px]", float))
+    for k in ("auto_y", "show_points", "auto_reset"):
         if k in patch:
             new[k] = bool(patch[k])
     for k in ("y_min", "y_max"):

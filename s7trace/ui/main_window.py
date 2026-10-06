@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QInputDia
 
 from ..core import marker_look, panel_cfg, render_cfg, sessions, web_agent
 from ..core import symbols as sym
-from ..core.config import TabConfig, app_dir, load_app_config, save_app_config, symbols_path
+from ..core.config import GAP_PX_MAX, GAP_PX_MIN, TabConfig, app_dir, load_app_config, save_app_config, symbols_path
 from ..core.naming import suggest_config_name
 from ..core.types import LEGEND_STYLES
 from . import theme as th
@@ -225,10 +225,22 @@ class MainWindow(QMainWindow):
         self.menu_style.addSeparator()
         for key, label in LEGEND_STYLES:
             self._act(self.menu_style, "Wszystkie otwarte karty: " + label, lambda k=key: self._legend_style_all(k))
-        self.act_gapjoin = self._act(v, "Przerwy Stop → Start: wytnij z wykresu, jeden znacznik (ta karta)",
-                                     lambda on: self._cur(lambda t: t.set_gap_join(on)), checked=False)
-        self.act_gapjoin.setToolTip("Włączone: pauza między Stop a Start odczytu nie zajmuje miejsca na wykresie – linie się stykają, w tym miejscu stoi "
-                                    "jeden znacznik, a opisy osi czasu przeskakują (30 | 50). Wyłączone: pusta przerwa w pełnej długości.")
+        self.menu_gap = v.addMenu("Przerwy Stop → Start (ta karta)")
+        self.grp_gap = QActionGroup(self)
+        self.act_gap = {}
+        for key, label, tip in (
+                ("full", "Pusta przerwa w pełnej długości", "Pauza między Stop a Start odczytu to pusty odcinek wykresu tak długi, jak trwała."),
+                ("join", "Wytnij przerwę z wykresu (jeden znacznik)", "Pauza nie zajmuje miejsca: linie się stykają, w tym miejscu stoi jeden znacznik, a opisy osi czasu przeskakują (30 | 50)."),
+                ("fixed", "Przerwa o stałej szerokości (w pikselach)", "Pauza to pas o stałej szerokości w pikselach, niezależnie od czasu jej trwania (szerokość ustawiasz poniżej).")):
+            a = self.menu_gap.addAction(label)
+            a.setCheckable(True)
+            a.setToolTip(tip)
+            self.grp_gap.addAction(a)
+            a.triggered.connect(lambda _=False, k=key: self._cur(lambda t: t.set_gap_mode(k)))
+            self.act_gap[key] = a
+        self.act_gap["full"].setChecked(True)
+        self.menu_gap.addSeparator()
+        self._act(self.menu_gap, "Szerokość przerwy [px]…", lambda: self._cur(self._gap_px_dialog))
         self.menu_legend = v.addMenu("Położenie legendy (ta karta)")
         for label, pos in (("Lewy górny róg", (0, 0)), ("Prawy górny róg", (1, 0)),
                            ("Lewy dolny róg", (0, 1)), ("Prawy dolny róg", (1, 1))):
@@ -301,11 +313,9 @@ class MainWindow(QMainWindow):
         t = self.tabs.currentWidget()
         if hasattr(self, "act_style"):                          # the legend style of the current tab (or the interface default without a tab)
             self.act_style[t.plot.legend_style if t is not None else self.theme["legend_style"]].setChecked(True)
-        if hasattr(self, "act_gapjoin"):
-            self.act_gapjoin.blockSignals(True)
-            self.act_gapjoin.setChecked(bool(t is not None and t.cfg.gap_join))
-            self.act_gapjoin.setEnabled(t is not None)
-            self.act_gapjoin.blockSignals(False)
+        if hasattr(self, "act_gap"):                            # how the pauses of the current tab are shown
+            self.menu_gap.setEnabled(t is not None)
+            self.act_gap[t.cfg.gap_mode if t is not None else "full"].setChecked(True)
         for act, src in ((self.act_points, "act_pts"), (self.act_hlevel, "act_hlev")):
             act.blockSignals(True)
             act.setChecked(bool(t is not None and getattr(t, src).isChecked()))
@@ -453,6 +463,13 @@ class MainWindow(QMainWindow):
     def run_wizard(self, tab, page: int = 0) -> None:
         WizardDialog(tab, show_tab=page, parent=self).exec()
 
+    def _gap_px_dialog(self, tab) -> None:
+        """Width of a pause in the mode 'fixed' [px] (this tab); chooses that mode."""
+        v, ok = QInputDialog.getInt(self, "Szerokość przerwy", "Szerokość przerwy Stop → Start na wykresie [px]\n(8 – 300; stała, niezależna od czasu przerwy):",
+                                    tab.cfg.gap_px, GAP_PX_MIN, GAP_PX_MAX)
+        if ok:
+            tab.set_gap_mode("fixed", v)
+
     def _legend_style_all(self, style: str) -> None:
         """'Wszystkie otwarte karty': the same signal-name style in every open tab (each keeps it as its own setting)."""
         for i in range(self.tabs.count()):
@@ -535,7 +552,7 @@ class MainWindow(QMainWindow):
         tab.theme_edit = self._edit_theme
         tab.legend_style_all = self._legend_style_all
         tab.legendStyleChanged.connect(self._sync_tab_actions)
-        tab.gapJoinChanged.connect(self._sync_tab_actions)
+        tab.gapModeChanged.connect(self._sync_tab_actions)
         tab.new_tab_cb = self.new_tab
         i = self.tabs.addTab(tab, tab.title())
         tab.stateChanged.connect(lambda s, t=tab: self._tab_state(t, s))

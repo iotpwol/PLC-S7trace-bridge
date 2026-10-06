@@ -54,7 +54,7 @@ class TabRecMarks:
         return fmt_us(self.mk.to_wall(t))
 
     def items(self) -> list[dict]:
-        return self.m.items(self.tab.plot.mlook, self._fmt, self.tab.cfg.gap_join)
+        return self.m.items(self.tab.plot.mlook, self._fmt, self.tab.cfg.gap_mode == "join")
 
     def unsaved(self) -> list[dict]:
         return self.m.unsaved()
@@ -119,7 +119,7 @@ class TabRecMarks:
             if g is None:
                 return
             stop = kind == rmk.SCAN_STOP
-            if self.tab.cfg.gap_join:                                # one mark stands for both ends of the cut-out pause
+            if self.tab.cfg.gap_mode == "join":                      # one mark stands for both ends of the cut-out pause
                 menu.addAction(f"Stop odczytu ({n}): {self._fmt(g['t0'])}").setEnabled(False)
                 menu.addAction(f"Start odczytu ({n}): {self._fmt(g['t1'])}").setEnabled(False)
             else:

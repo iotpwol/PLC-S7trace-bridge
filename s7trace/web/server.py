@@ -401,7 +401,7 @@ class Handler(BaseHTTPRequestHandler):
         cfg = TabConfig()
         patch = {k: v for k, v in d.items() if k in ("name", "ip", "rack", "slot", "cycle_ms", "conn_type", "conn", "mode",
                                                    "window_s", "signals", "trigger", "rec", "y_layout", "auto_y", "y_min", "y_max",
-                                                   "show_points", "legend_mode", "legend_style", "gap_join", "time_axis", "time_offset")}
+                                                   "show_points", "legend_mode", "legend_style", "gap_mode", "gap_px", "time_axis", "time_offset")}
         try:
             web = {}
             editing.apply(cfg, patch, running=False, web=web, targets=self.app.targets.names())

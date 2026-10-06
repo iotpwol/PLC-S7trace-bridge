@@ -30,7 +30,7 @@ function recmPaint(g, cv, ds, geo) {   // called by drawChart after the markers
   const label = (text, x, c, row, left) => { g.fillStyle = c; g.textAlign = left ? "right" : "left"; g.fillText(text, x + (left ? -4 : 4), top + 12 + row * 12); };
   const vis = (x) => x >= pad.l - 1 && x <= W - pad.r + 1;
   if (MKLOOK.rec_show) for (const gp of recmGaps()) {                    // Stop / Start of the reading: the chart has a gap between them (cut out: one mark at the junction)
-    for (const [t, text] of geo.gm ? [[gp.t0, `Stop / Start odczytu (${gp.n})`]] : [[gp.t0, `Stop odczytu (${gp.n})`], [gp.t1, `Start odczytu (${gp.n})`]]) { const xs = X(t); if (vis(xs)) { vline(xs, col, lw, MK_STYLES.dot || [2, 3]); label(text, xs, col, 0, t === gp.t0); } }
+    for (const [t, text] of geo.gm && !(geo.gm.g > 0) ? [[gp.t0, `Stop / Start odczytu (${gp.n})`]] : [[gp.t0, `Stop odczytu (${gp.n})`], [gp.t1, `Start odczytu (${gp.n})`]]) { const xs = X(t); if (vis(xs)) { vline(xs, col, lw, MK_STYLES.dot || [2, 3]); label(text, xs, col, 0, t === gp.t0); } }
   }
   if (MKLOOK.rec_show) for (const a of recmAuto()) {
     if (a.t1 !== null && a.t1 !== undefined && a.t1 > a.t0) {            // the recorded stretch: a translucent area under the two lines (like a Manual REC area)

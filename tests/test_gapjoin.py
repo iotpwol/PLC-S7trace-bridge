@@ -74,8 +74,8 @@ def test_chart_cuts_the_pause_out_and_keeps_real_times_outside(app, tmp_path):
     pv = tab.plot
     pv.set_view(0, 70)
     assert pv.view_range() == (0.0, 70.0) and not pv.gm                              # off by default: the full axis
-    tab.set_gap_join(True)
-    assert tab.cfg.gap_join and pv.gm.n == 1
+    tab.set_gap_mode("join")
+    assert tab.cfg.gap_mode == "join" and pv.gm.n == 1
     pv.refresh(True)
     assert abs(pv._x[1] - (70 - 20.05)) < 0.06                                       # the chart is as long as the scanned time
     assert abs(pv.view_range()[1] - 70.0) < 1e-6                                     # ... and the rest of the program still sees real times
@@ -90,7 +90,7 @@ def test_chart_cuts_the_pause_out_and_keeps_real_times_outside(app, tmp_path):
 def test_markers_are_drawn_on_display_positions_and_reported_in_real_time(app, tmp_path):
     tab = gap_tab(tmp_path)
     pv = tab.plot
-    tab.set_gap_join(True)
+    tab.set_gap_mode("join")
     pv.set_view(0, 70)
     pv.refresh(True)
     item = {"id": 7, "kind": "point", "x0": 60.0, "x1": 60.0, "color": "#00ff00", "width": 1, "style": "solid", "opacity": 0,
@@ -110,7 +110,7 @@ def test_markers_are_drawn_on_display_positions_and_reported_in_real_time(app, t
 def test_axis_labels_jump_at_the_junction(app, tmp_path):
     tab = gap_tab(tmp_path)
     pv = tab.plot
-    tab.set_gap_join(True)
+    tab.set_gap_mode("join")
     ax = pv.plot.getAxis("bottom")
     j = float(pv.gm.j[0])
     ticks = ax.tickValues(0.0, 50.0, 800)[0][1]
@@ -123,27 +123,85 @@ def test_axis_labels_jump_at_the_junction(app, tmp_path):
 def test_rec_marks_follow_the_switch(app, tmp_path):
     tab = gap_tab(tmp_path)
     n_full = len([i for i in tab.mk.rec.items() if rmk.parse(i["id"])[0] in (rmk.SCAN_STOP, rmk.SCAN_START)])
-    tab.set_gap_join(True)
+    tab.set_gap_mode("join")
     n_join = len([i for i in tab.mk.rec.items() if rmk.parse(i["id"])[0] in (rmk.SCAN_STOP, rmk.SCAN_START)])
     assert (n_full, n_join) == (2, 1)
-    tab.set_gap_join(False)
+    tab.set_gap_mode("full")
     assert not tab.plot.gm
 
 
-def test_config_keeps_the_switch():
+def test_config_keeps_the_mode_and_reads_the_old_switch():
     from s7trace.core.config import TabConfig
     c = TabConfig()
-    assert c.gap_join is False
-    c.gap_join = True
-    assert TabConfig.from_dict(c.to_dict()).gap_join is True
+    assert (c.gap_mode, c.gap_px) == ("full", 40)
+    c.gap_mode, c.gap_px = "fixed", 55
+    d = TabConfig.from_dict(c.to_dict())
+    assert (d.gap_mode, d.gap_px) == ("fixed", 55)
+    assert TabConfig.from_dict({"gap_join": True}).gap_mode == "join"                                  # version 1.17 saved a switch
+    assert TabConfig.from_dict({"gap_mode": "zzz", "gap_px": 99999}).gap_mode == "full"
+    assert TabConfig.from_dict({"gap_px": 99999}).gap_px == 300 and TabConfig.from_dict({"gap_px": 1}).gap_px == 8
 
 
 def test_span_around_counts_scanned_time(app, tmp_path):
     tab = gap_tab(tmp_path)
     pv = tab.plot
     assert pv.span_around(40.0, 20.0) == (30.0, 50.0)                              # no pauses cut out: plain real times
-    tab.set_gap_join(True)
+    tab.set_gap_mode("join")
     x0, x1 = pv.span_around(60.0, 20.0)                                            # 20 s of scanned time around real 60 s
     assert abs(pv.gm.disp(x1) - pv.gm.disp(x0) - 20.0) < 1e-6 and x0 < 60.0 < x1
     pv.set_view(x0, x1)
     assert abs(pv.window - 20.0) < 1e-6
+
+
+# ------------------------------------------------------------------------------------------------ a band of a fixed width
+def test_gapmap_band_maps_the_pause_proportionally():
+    g = GapMap([(30, 50), (70, 90)], 6.0)
+    t = np.array([0, 29, 30, 40, 50, 51, 69, 70, 80, 90, 95.0])
+    d = g.disp(t)
+    assert d.tolist() == [0, 29, 30, 33, 36, 37, 55, 56, 59, 62, 67]                 # each pause is 6 units wide, the middle of it in the middle
+    assert np.allclose(g.real(d), t)                                                  # ... and back, also at the edges of a band
+    assert g.D.tolist() == [30, 56] and g.E.tolist() == [36, 62] and g.j.tolist() == [33, 59]
+    assert g.real(33.0) == 40.0 and g.real(34.5) == 45.0                              # a click in the band gives the proportional time
+    assert g.segments(0, 70) == [(0.0, 30.0), (50.0, 70.0), (90.0, 98.0)]
+    t2 = np.array([29.0, 30.001, 50.0, 51.0])                                         # the NaN rows inside the pause stay: they break the line
+    v2 = np.array([[1.0], [np.nan], [np.nan], [2.0]])
+    assert g.drop_gap_rows(t2, v2)[0].tolist() == t2.tolist()
+
+
+def test_gapmap_fit_gives_the_pause_the_wanted_pixels():
+    g = GapMap([(30, 50), (70, 90)])
+    w = g.fit(0, 100, 40, 800)                                                        # 100 s on 800 px, two pauses of 40 px
+    wv = 60 + 2 * w                                                                   # scanned 60 s + two bands (display units)
+    assert abs(w - 40 * wv / 800) < 1e-9
+    assert g.fit(0, 20, 40, 800) == 0.0 or g.fit(0, 20, 40, 800) == 40 * 20 / 800     # no pause in view: nothing to size
+    assert GapMap().fit(0, 10, 40, 800) == 0.0
+
+
+def test_chart_shows_a_pause_as_a_band_of_fixed_pixels(app, tmp_path):
+    tab = gap_tab(tmp_path)
+    pv = tab.plot
+    tab.show()
+    pump(lambda: False, 0.2)
+    pv.set_view(0, 70)
+    tab.set_gap_mode("fixed", 50)
+    pv.refresh(True)
+    assert pv.gap_px == 50 and pv.gm.g > 0 and len(pv._band_items) == 2             # a translucent band + its text
+    plot_px = float(pv.vb.width())
+    (x0, x1) = pv._x
+    assert abs(pv.gm.g / (x1 - x0) * plot_px - 50) < 0.5                              # 50 px whatever the zoom
+    pv.set_view(5, 35)                                                                # zoomed in: still 50 px
+    pv.refresh(True)
+    (x0, x1) = pv._x
+    assert abs(pv.gm.g / (x1 - x0) * plot_px - 50) < 0.5
+    xs, ys = pv.curves[0].getData()                                                   # the line is broken inside the band
+    inside = (xs > pv.gm.D[0] + 1e-9) & (xs < pv.gm.E[0] - 1e-9)
+    fin = xs[inside][np.isfinite(ys[inside])]
+    assert (fin < pv.gm.D[0] + 0.02 * pv.gm.g).all()                                  # only the last old value (held for 1 ms) - the rest of the band is empty
+    item = {"id": 7, "kind": "point", "x0": 40.0, "x1": 40.0, "color": "#00ff00", "width": 1, "style": "solid", "opacity": 0,
+            "priority": 1, "title": "m", "tip": "", "signals": []}                    # real 40 s is inside the pause (29.95 .. 50): in the middle of the band
+    pv.set_markers([item])
+    assert pv.gm.D[0] < pv.mitems[7]["main"].value() < pv.gm.E[0]
+    items = [i for i in tab.mk.rec.items() if rmk.parse(i["id"])[0] in (rmk.SCAN_STOP, rmk.SCAN_START)]
+    assert len(items) == 2                                                            # both marks stand at the edges of the band
+    tab.set_gap_mode("full")
+    assert not pv.gm and not pv._band_items

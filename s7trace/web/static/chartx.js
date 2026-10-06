@@ -10,31 +10,50 @@
 const CX_MIN_WINDOW = 0.1;
 const CX_NUM = (v) => String(+(+v).toPrecision(5));
 
-// ---- pauses cut out of the chart (the counterpart of core/gapmap.py): the data stay on the real chart time, the chart is drawn on display
-// positions where every pause (Stop -> Start of the reading) has zero width: the line before it and after it meet in one junction, one mark
-// stands there and the axis labels jump (30 | 50). gm = { a: [stop...], b: [start...], cum: [0, len1, len1 + len2...], j: [junction...] } or null (= the full axis).
-function gmMake(gaps) {
+// ---- pauses of the chart (the counterpart of core/gapmap.py): the data stay on the real chart time, the chart is drawn on display positions.
+// Width g = 0: every pause (Stop -> Start of the reading) is cut out: the line before it and after it meet in one junction, one mark stands there and the axis
+// labels jump (30 | 50). Width g > 0: a pause is a BAND of that width (gap_px pixels whatever its duration; the time inside is mapped proportionally).
+// gm = { a, b, L, cum, g, D, E, j } (a / b = Stop / Start, D / E = display start / end of the band, j = its centre) or null (= the full axis).
+function gmMake(gaps, width) {
   const g = (gaps || []).map((x) => [+x.t0, +x.t1]).filter((x) => x[1] - x[0] > 0.002).sort((p, q) => p[0] - q[0]), m = [];
   for (const x of g) { if (m.length && x[0] <= m[m.length - 1][1]) m[m.length - 1][1] = Math.max(m[m.length - 1][1], x[1]); else m.push([x[0], x[1]]); }
   if (!m.length) return null;
-  const a = m.map((x) => x[0]), b = m.map((x) => x[1]), cum = [0]; b.forEach((v, i) => cum.push(cum[i] + v - a[i]));
-  return { a, b, cum, j: a.map((v, i) => v - cum[i]) };
+  const w = Math.max(0, +width || 0), a = m.map((x) => x[0]), b = m.map((x) => x[1]), L = a.map((v, i) => b[i] - v), cum = [0]; L.forEach((v, i) => cum.push(cum[i] + v));
+  const D = a.map((v, i) => v - cum[i] + w * i);
+  return { a, b, L, cum, g: w, D, E: D.map((v) => v + w), j: D.map((v) => v + w / 2) };
 }
 function gmCount(arr, v, orEqual) { let lo = 0, hi = arr.length; while (lo < hi) { const mid = (lo + hi) >> 1; if (orEqual ? arr[mid] <= v : arr[mid] < v) lo = mid + 1; else hi = mid; } return lo; }
-function gmD(gm, t) {            // real time -> display position (a time inside a pause lands on its junction)
+function gmD(gm, t) {            // real time -> display position
   if (!gm) return t;
-  const k = gmCount(gm.a, t, true), rest = k > 0 ? Math.max(gm.b[k - 1] - t, 0) : 0;
-  return t - (gm.cum[k] - rest);
+  const k = gmCount(gm.a, t, true), p = k - 1;
+  if (k > 0 && t < gm.b[p]) return gm.D[p] + (gm.g > 0 ? gm.g * (t - gm.a[p]) / gm.L[p] : 0);
+  return t - gm.cum[k] + gm.g * k;
 }
-function gmR(gm, x, hi) {        // display position -> real time; at a junction: the Stop side, or the Start side (hi)
+function gmR(gm, x, hi) {        // display position -> real time; at a zero-width junction: the Stop side, or the Start side (hi)
   if (!gm) return x;
-  return x + gm.cum[gmCount(gm.j, x, !!hi)];
+  if (!(gm.g > 0)) return x + gm.cum[gmCount(gm.D, x, !!hi)];
+  const k = gmCount(gm.D, x, false), p = k - 1;
+  if (k > 0 && x < gm.E[p]) return gm.a[p] + (x - gm.D[p]) / gm.g * gm.L[p];
+  return x + gm.cum[k] - gm.g * k;
 }
-function gmIn(gm, t) { if (!gm) return false; const k = gmCount(gm.a, t, false); return k > 0 && t <= gm.b[k - 1]; }     // inside a pause (a < t <= b): the NaN rows the acquisition puts there
-function gmSeg(gm, d0, d1) {     // the real-time stretches visible between the display positions d0 .. d1
-  const edges = [d0, ...(gm ? gm.j.filter((c) => c > d0 && c < d1) : []), d1], out = [];
-  for (let i = 0; i < edges.length - 1; i++) out.push([gmR(gm, edges[i], i > 0), gmR(gm, edges[i + 1], false)]);
+// inside a zero-width pause (a < t <= b): the empty rows the acquisition puts there are skipped, so the line steps from the old value to the new one
+function gmJoinRow(gm, t) { if (!gm || gm.g > 0) return false; const k = gmCount(gm.a, t, false); return k > 0 && t <= gm.b[k - 1]; }
+function gmSeg(gm, d0, d1) {     // the real-time stretches visible between the display positions d0 .. d1 outside the pauses
+  const out = []; let pos = d0, any = false;
+  for (let i = 0; gm && i < gm.a.length; i++) {
+    if (!(gm.E[i] > d0 && gm.D[i] < d1)) continue; any = true;
+    if (gm.D[i] > pos) out.push([gmR(gm, pos, true), gmR(gm, gm.D[i], false)]);
+    pos = Math.max(pos, gm.E[i]);
+  }
+  if (d1 > pos) out.push([gmR(gm, pos, true), gmR(gm, d1, false)]);
+  if (!any && !out.length) out.push([gmR(gm, d0, false), gmR(gm, d1, false)]);
   return out;
+}
+function gmFit(gm, t0, t1, px, plotPx) {   // display width of one pause so that it takes px pixels on a plot plotPx wide showing the real stretch t0 .. t1
+  if (!gm || !(px > 0) || !(plotPx > 0) || !(t1 > t0)) return 0;
+  let ov = 0, c = 0; for (let i = 0; i < gm.a.length; i++) { const o = Math.max(Math.min(gm.b[i], t1) - Math.max(gm.a[i], t0), 0); ov += o; c += o / gm.L[i]; }
+  const room = Math.max(1 - c * px / plotPx, 0.05), wv = Math.max((t1 - t0) - ov, 1e-6) / room;
+  return px * wv / plotPx;
 }
 const cxPlotW = (geo) => geo.W - geo.pad.l - geo.pad.r;
 function cxX(geo, t) { const gm = geo.gm, d0 = gmD(gm, geo.t0), d1 = gmD(gm, geo.t1); return geo.pad.l + (gmD(gm, t) - d0) / ((d1 - d0) || 1) * cxPlotW(geo); }
@@ -42,14 +61,23 @@ function cxT(geo, px, clamp) {   // real time under the x pixel of the canvas
   const gm = geo.gm, d0 = gmD(gm, geo.t0), d1 = gmD(gm, geo.t1); let f = (px - geo.pad.l) / cxPlotW(geo); if (clamp) f = Math.min(Math.max(f, 0), 1);
   return gmR(gm, d0 + f * (d1 - d0));
 }
-// the pauses of a canvas: only the live chart has them; cut out when the viewer chose so, else when the connection says so
-function cxGapMap(cv, ds) {
-  const st = cv._cx || {}, on = st.gapjoin ? st.gapjoin === "join" : !!(ds && ds.layout && ds.layout.gap_join);
-  return on && cv.id === "canvas" && typeof recmGaps === "function" ? gmMake(recmGaps()) : null;
+// the pauses of a canvas: only the live chart has them. The viewer's choice (st.gapmode / st.gappx) wins over the connection's (layout.gap_mode / gap_px).
+// -> { gaps, px } (px 0 = cut out) or null (the full axis); `cxGm` makes the time map for a view (the width of a band follows the view)
+function cxGapSpec(cv, ds) {
+  const st = cv._cx || {}, d = (ds && ds.layout) || {}, mode = st.gapmode || d.gap_mode || "full";
+  if (mode === "full" || cv.id !== "canvas" || typeof recmGaps !== "function") return null;
+  const gaps = recmGaps(); if (!gmMake(gaps)) return null;
+  return { gaps, px: mode === "fixed" ? Math.max(8, Math.min(300, +(st.gappx || d.gap_px || 40))) : 0 };
+}
+function cxGm(spec, t0, t1, plotPx, followSec) {
+  if (!spec) return null;
+  const base = gmMake(spec.gaps, 0); if (!base || !(spec.px > 0)) return base;
+  const g = followSec > 0 ? spec.px * followSec / plotPx : gmFit(base, t0, t1, spec.px, plotPx);
+  return gmMake(spec.gaps, g);
 }
 
 function cxAttach(cv, cfg) {
-  const st = cv._cx = { hOn: false, h: [], layout: "", legend: "", lstyle: "", gapjoin: "", taxis: "", toff: null, points: null, cfg, drag: null, pan: null };
+  const st = cv._cx = { hOn: false, h: [], layout: "", legend: "", lstyle: "", gapmode: "", gappx: 0, taxis: "", toff: null, points: null, cfg, drag: null, pan: null };
   const px = (ev) => { const r = cv.getBoundingClientRect(); return [(ev.clientX - r.left) * cv.width / r.width, (ev.clientY - r.top) * cv.height / r.height]; };
   const geo = () => cv._geo;
   const tAt = (x) => cxT(geo(), x, true);
@@ -192,7 +220,7 @@ function cxPaint(g, cv) {
 function cxOpts(cv, ds) {
   const st = cv._cx || {}, d = (ds && ds.layout) || {};
   if (st.syncPoints && (st.points === null || st.points === undefined)) st.syncPoints(d.show_points);
-  return { layout: st.layout || d.y_layout || "lanes", autoY: d.auto_y !== false, yMin: d.y_min ?? 0, yMax: d.y_max ?? 10, clock: cxClock(cv, ds), gm: cxGapMap(cv, ds),
+  return { layout: st.layout || d.y_layout || "lanes", autoY: d.auto_y !== false, yMin: d.y_min ?? 0, yMax: d.y_max ?? 10, clock: cxClock(cv, ds), gaps: cxGapSpec(cv, ds),
            points: st.points === null || st.points === undefined ? !!d.show_points : st.points };
 }
 // legend text: the signal name or its address / OPC node (viewer's choice, else the connection's)
@@ -230,7 +258,8 @@ function cxToolbar(box, cv) {
     <label>Układ <select data-x="lay"><option value="">wg połączenia</option><option value="lanes">Pasma wg Share</option><option value="offset">Offset Y + wzmocnienie</option></select></label>
     <label>Legenda <select data-x="leg"><option value="">wg połączenia</option><option value="name">Nazwa</option><option value="address">Adres / węzeł OPC</option></select></label>
     <label title="Jak wykres pokazuje nazwy sygnałów: lista pod wykresem albo osobny opis w półprzezroczystej ramce przy każdym sygnale (po prawej stronie osi pionowej). Wybór zapisuje się przy tym połączeniu (jeśli możesz je edytować); „wg połączenia” = ustawienie połączenia lub domyślne konta.">Nazwy sygnałów <select data-x="lst"><option value="">wg połączenia</option><option value="legend">Legenda (lista)</option><option value="labels">Opisy przy sygnałach</option></select></label>
-    <label title="Pauza między Stop a Start odczytu: pusta przerwa w pełnej długości albo wycięta z wykresu (linie się stykają, w tym miejscu stoi jeden znacznik, a opisy osi czasu przeskakują, np. 30 s | 50 s). Wybór zapisuje się przy tym połączeniu (jeśli możesz je edytować); „wg połączenia” = ustawienie połączenia.">Przerwy Stop → Start <select data-x="gj"><option value="">wg połączenia</option><option value="full">Pełna przerwa</option><option value="join">Wytnij z wykresu</option></select></label>
+    <label title="Pauza między Stop a Start odczytu: pusta przerwa w pełnej długości albo wycięta z wykresu (linie się stykają, w tym miejscu stoi jeden znacznik, a opisy osi czasu przeskakują, np. 30 s | 50 s). Trzecia możliwość: pas o stałej szerokości w pikselach (pole „px”) niezależnie od czasu przerwy. Wybór zapisuje się przy tym połączeniu (jeśli możesz je edytować); „wg połączenia” = ustawienie połączenia.">Przerwy Stop → Start <select data-x="gj"><option value="">wg połączenia</option><option value="full">Pełna przerwa</option><option value="join">Wytnij z wykresu</option><option value="fixed">Pas o stałej szerokości</option></select></label>
+    <label title="Szerokość przerwy w pikselach (tryb „Pas o stałej szerokości”): stała, niezależna od czasu trwania przerwy (8 – 300). Puste = wg połączenia."><input type="number" min="8" max="300" step="1" data-x="gpx" style="width:4.5em" placeholder="px"> px</label>
     <label title="Opisy osi czasu: sekundy od startu albo zegar HH:MM:SS.mmm – serwera (aplikacji) lub sterownika PLC">Oś czasu <select data-x="tax"><option value="">wg połączenia</option><option value="rel">Względna</option><option value="app">Czas aplikacji</option><option value="plc">Czas PLC</option></select></label>
     <span title="Korekta czasu na osi zegarowej: znak, data (pełne doby) i godzina HH:MM:SS.mmm (puste = wg połączenia)">Offset
       <select data-x="toff-s"><option value="1">+</option><option value="-1">-</option></select>
@@ -246,7 +275,8 @@ function cxToolbar(box, cv) {
   q("lay").onchange = () => { st.layout = q("lay").value; st.cfg.redraw(); };
   q("leg").onchange = () => { st.legend = q("leg").value; st.cfg.redraw(); };
   q("lst").onchange = () => legendStyleThis(cv, q("lst").value);
-  q("gj").onchange = () => gapJoinThis(cv, q("gj").value);
+  q("gj").onchange = () => gapModeThis(cv, q("gj").value, q("gpx").value);
+  q("gpx").oninput = () => { st.gappx = Math.max(0, Math.min(300, Math.round(+q("gpx").value || 0))); if (q("gj").value === "fixed" || st.gapmode === "fixed") gapModeThis(cv, "fixed", q("gpx").value); };
   cv.addEventListener("contextmenu", (e) => {                                            // right click on a name box: what the names show, legend / labels style
     const tg = cxTagAt(cv, e); if (!tg) return;
     e.preventDefault(); e.stopImmediatePropagation();
@@ -294,7 +324,7 @@ function cxOverview(cv) {
     if (!fin.length) return; const a = Math.min(...fin), b = Math.max(...fin), s = b - a || 1;
     g.strokeStyle = (ds.colors || [])[k] || COLORS[k % COLORS.length]; g.globalAlpha = 0.8; g.lineWidth = 1; g.beginPath(); let pen = false, py = 0;
     for (let i = 0; i < ds.t.length; i++) {
-      const v = col[i]; if (v === null || v === undefined) { if (!gmIn(gm, ds.t[i])) pen = false; continue; }          // (the empty rows of a cut-out pause do not break the line)
+      const v = col[i]; if (v === null || v === undefined) { if (!gmJoinRow(gm, ds.t[i])) pen = false; continue; }          // (the empty rows of a cut-out pause do not break the line)
       const x = X(ds.t[i]), y = H - 4 - (v - a) / s * (H - 8);
       if (!pen) { g.moveTo(x, y); pen = true; } else { g.lineTo(x, py); g.lineTo(x, y); }
       py = y;

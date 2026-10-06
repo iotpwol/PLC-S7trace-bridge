@@ -374,7 +374,7 @@ function liveRange() {
   const ds = frozen || series, sec = +$("c-sec").value;
   if (frozen) return [frozen.x0, frozen.x1];
   if (liveView) return [liveView.x0, liveView.x1];
-  const t1 = ds.t.at(-1) ?? 0, gm = cxGapMap($("canvas"), ds); return [gm ? gmR(gm, gmD(gm, t1) - sec) : t1 - sec, t1];
+  const t1 = ds.t.at(-1) ?? 0, cv = $("canvas"), gm = cxGm(cxGapSpec(cv, ds), t1 - sec, t1, Math.max(cv.width - 70, 1), sec); return [gm ? gmR(gm, gmD(gm, t1) - sec) : t1 - sec, t1];
 }
 function paint() {
   if (!(frozen || series)) return;                                                   // (nothing loaded yet)
@@ -386,7 +386,7 @@ function paint() {
 // one lane per signal, scaled to its own min..max of the shown range; steps (the value holds until the next change).
 // o.layout "offset": one common area, value x gain + offset on one Y axis (auto min..max of all signals or o.yMin..o.yMax); o.points: sample points.
 function drawChart(cv, ds, t0, t1, o) {
-  const g = cv.getContext("2d"), W = cv.width, H = cv.height, pad = { l: 60, r: 10, t: 8, b: o.clock || o.gm ? 40 : 24 }, n = ds.names.length, gm = o.gm || null;
+  const g = cv.getContext("2d"), W = cv.width, H = cv.height, pad = { l: 60, r: 10, t: 8, b: o.clock || o.gm ? 40 : 24 }, n = ds.names.length, gm = cxGm(o.gaps, t0, t1, Math.max(W - 70, 1), 0);
   g.fillStyle = "#000"; g.fillRect(0, 0, W, H); g.font = "12px sans-serif"; g.strokeStyle = "#333"; g.fillStyle = "#aaa";
   cv._geo = null; cv._ds = ds; if (cv._cx) cv._cx.cfg.gm = gm;                      // (the zoom / pan / overview of this canvas work on the same display positions)
   if (!n || !ds.t.length) { g.fillText(o.empty || "Brak danych.", 70, 30); return; }
@@ -432,7 +432,7 @@ function drawChart(cv, ds, t0, t1, o) {
     let medY = null;
     const pts = [];
     for (let i = 0; i < ds.t.length; i++) {
-      const v = col[i]; if (v === null || v === undefined) { if (!gmIn(gm, ds.t[i])) pen = false; continue; }          // (the empty rows of a cut-out pause do not break the line)
+      const v = col[i]; if (v === null || v === undefined) { if (!gmJoinRow(gm, ds.t[i])) pen = false; continue; }          // (the empty rows of a cut-out pause do not break the line)
       const x = X(ds.t[i]), y = bot - (v - lo) / span * (bot - top - 6) - 3;
       if (!pen) { g.moveTo(x, y); pen = true; } else { g.lineTo(x, py); g.lineTo(x, y); }
       py = y;
@@ -445,6 +445,16 @@ function drawChart(cv, ds, t0, t1, o) {
     if (o.points && pts.length <= 6000) { g.fillStyle = c; for (let i = 0; i < pts.length; i += 2) g.fillRect(pts[i] - 2, pts[i + 1] - 2, 4, 4); }   // "Punkty": at most 3000 shown
   }
   cv._geo = { t0, t1, pad, W, H, lanes, offsetMode, gm };
+  if (gm && gm.g > 0) {                                                                // pauses as bands of a fixed width: a translucent strip with the length written in it
+    g.save(); g.beginPath(); g.rect(pad.l, pad.t, W - pad.l - pad.r, H - pad.t - pad.b); g.clip(); g.font = "11px sans-serif"; g.textAlign = "center";
+    for (let i = 0; i < gm.a.length; i++) {
+      const xa = X(gm.a[i]), xb = X(gm.b[i]); if (xb < pad.l || xa > W - pad.r) continue;
+      g.fillStyle = "rgba(150,150,150,0.15)"; g.fillRect(xa, pad.t, xb - xa, H - pad.t - pad.b);
+      g.fillStyle = "#a0a0a0"; g.save(); g.translate((xa + xb) / 2 + 4, (pad.t + H - pad.b) / 2); g.rotate(-Math.PI / 2);
+      g.fillText(gm.L[i] < 600 ? `przerwa ${gm.L[i].toFixed(1)} s` : `przerwa ${(gm.L[i] / 60).toFixed(1)} min`, 0, 0); g.restore();
+    }
+    g.restore();
+  }
   cv._tags = [];
   if (legStyle(cv, ds) === "labels") cxTags(g, cv, ds, lanes, colors, pad, H);                // a translucent box with the name beside every signal, right of the Y axis
   if (o.mk) mkPaint(g, cv, o.mk, cv._geo, lanes);                                    // markers (bookmarks) over the curves
@@ -542,7 +552,7 @@ async function loadMarks(ctx, qs) {
 }
 async function loadLiveMarks() {
   const id = $("c-conn").value, ds = frozen || series; if (!id || !ds.start_us) return;
-  const last = ds.t.at(-1) ?? 0, sec = +$("c-sec").value, gm = cxGapMap($("canvas"), ds), t0 = frozen ? frozen.x0 : gm ? gmR(gm, gmD(gm, last) - sec) : last - sec, t1 = frozen ? frozen.x1 : last;
+  const last = ds.t.at(-1) ?? 0, sec = +$("c-sec").value, cvl = $("canvas"), gm = cxGm(cxGapSpec(cvl, ds), last - sec, last, Math.max(cvl.width - 70, 1), sec), t0 = frozen ? frozen.x0 : gm ? gmR(gm, gmD(gm, last) - sec) : last - sec, t1 = frozen ? frozen.x1 : last;
   await loadMarks(MK.live, (MK.live.showAll ? "conns=1" : `conn=${encodeURIComponent(id)}`) + `&from=${Math.round(ds.start_us + t0 * 1e6)}&to=${Math.round(ds.start_us + t1 * 1e6)}&limit=500`);
   draw();
 }
@@ -941,11 +951,15 @@ const TABLE_COLORS = [["header_bg", "Kolor tła nagłówka tabeli", "--tb-head-b
 let legSave = null;
 // the style of one chart: the viewer's own choice (toolbar / menu), else the one saved with the connection (like the desktop tab), else the account default
 function legStyle(cv, ds) { const v = (cv && cv._cx && cv._cx.lstyle) || (ds && ds.layout && ds.layout.legend_style) || LEGSTYLE; return v === "labels" ? "labels" : "legend"; }
-function gapJoinApply() { const sel = $("c-tools")?.querySelector("[data-x=gj]"); if (sel) sel.value = $("canvas")?._cx?.gapjoin || ""; }
-async function gapJoinThis(cv, v) {   // this connection's chart: shown at once, and kept with the connection when the account may edit it
+function gapModeApply() { const q = (k) => $("c-tools")?.querySelector(`[data-x=${k}]`), st = $("canvas")?._cx; if (q("gj")) q("gj").value = st?.gapmode || ""; }
+async function gapModeThis(cv, v, px) {   // this connection's chart: shown at once, and kept with the connection when the account may edit it
   const st = cv._cx; if (!st) return;
-  st.gapjoin = v === "join" || v === "full" ? v : ""; gapJoinApply(); draw(); clearTimeout(liveRefresh); liveRefresh = setTimeout(loadLiveMarks, 100);
-  if (cv === $("canvas") && conn && conn.can_edit && st.gapjoin) { try { await api(`/api/connections/${conn.id}/config`, { gap_join: st.gapjoin === "join" }); } catch (e) { /* only the viewer's choice then */ } }
+  st.gapmode = v === "join" || v === "full" || v === "fixed" ? v : ""; if (px !== undefined && +px > 0) st.gappx = Math.max(8, Math.min(300, Math.round(+px)));
+  gapModeApply(); draw(); clearTimeout(liveRefresh); liveRefresh = setTimeout(loadLiveMarks, 100);
+  if (cv === $("canvas") && conn && conn.can_edit && st.gapmode) {
+    const body = { gap_mode: st.gapmode }; if (st.gappx) body.gap_px = st.gappx;
+    try { await api(`/api/connections/${conn.id}/config`, body); } catch (e) { /* only the viewer's choice then */ }
+  }
 }
 function legendStyleApply() { for (const [tools, cv] of [["c-tools", "canvas"], ["rv-tools", "rv-canvas"]]) { const sel = $(tools)?.querySelector("[data-x=lst]"); if (sel) sel.value = $(cv)?._cx?.lstyle || ""; } }
 function legendRedraw() { if (typeof draw === "function") draw(); if (typeof rv !== "undefined" && rv.data) drawRec(); }

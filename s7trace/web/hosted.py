@@ -527,7 +527,7 @@ class HostedConnection:
                 "offsets": [float(s.offset_y) for s in self.signals],
                 "addresses": [s.address for s in self.signals], "tips": [signal_tip_static(s) for s in self.signals],
                 "layout": {"legend_mode": self.cfg.legend_mode, "legend_style": self.cfg.legend_style, "time_axis": self.cfg.time_axis, "time_offset": self.cfg.time_offset, "y_layout": self.cfg.y_layout, "auto_y": self.cfg.auto_y, "y_min": self.cfg.y_min,
-                           "y_max": self.cfg.y_max, "show_points": self.cfg.show_points, "gap_join": self.cfg.gap_join},
+                           "y_max": self.cfg.y_max, "show_points": self.cfg.show_points, "gap_mode": self.cfg.gap_mode, "gap_px": self.cfg.gap_px},
                 "rec": [{"n": a["n"], "t0": a["t0"], "t1": a["t1"], "db": bool(a["sid"])} for a in self.rec_marks.auto],     # Start / Stop REC lines
                 "last": float(last), "state": self.state,
                 "plc_diff": (self.device or {}).get("time_diff_local"),            # PLC clock minus the server's [s] (axis "Czas PLC")

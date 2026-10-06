@@ -272,7 +272,10 @@ class PlotView(QWidget):
         self.rcfg = dict(render_cfg.DEFAULTS)            # Ustawienia -> Renderowanie wykresu
         self._ov_last = 0.0
         self._x = (0.0, 200.0)                           # visible range in DISPLAY positions (= real time while no pause is cut out)
-        self.gm = GapMap()                               # pauses cut out of the chart (zero width, see core.gapmap); empty = full time axis
+        self.gm = GapMap()                               # pauses cut out of the chart / shown as bands (see core.gapmap); empty = full time axis
+        self._gaps_raw: list[tuple[float, float]] = []   # the pauses as given to set_gaps
+        self.gap_px = 0                                  # > 0: every pause is a band of this many pixels
+        self._band_items: list = []
         self._mkeep: list[dict] = []                     # the items of the last set_markers (re-drawn when the pauses change)
         self._trig_t: float | None = None                # real time of the TRIG line
         self._ghost_t: float | None = None               # real time of the ghost
@@ -577,12 +580,20 @@ class PlotView(QWidget):
     def _r(self, x, side: str = "lo"):
         return self.gm.real(x, side) if self.gm else x
 
-    def set_gaps(self, gaps) -> None:
-        """Pauses (stop, start) of the chart [s] that are cut out: zero width, one junction with the Stop / Start mark; () = the full axis."""
-        gm = GapMap(gaps)
-        if gm.key() == self.gm.key():
+    def set_gaps(self, gaps, px: int = 0) -> None:
+        """Pauses (stop, start) of the chart [s]. () = the full axis. With `px` = 0 they are cut out (zero width, one junction with the Stop / Start
+        mark); with `px` > 0 every pause is a band of that many pixels whatever its duration (the width follows the zoom, see `_fit_gap_width`)."""
+        gaps = [(float(a), float(b)) for a, b in gaps]
+        px = max(0, int(px))
+        if gaps == self._gaps_raw and px == self.gap_px:
             return
         keep = self._r(self._x[0]), self._r(self._x[1], "hi")        # the view stays on the same real stretch
+        self._gaps_raw, self.gap_px = gaps, px
+        self._install_gm(GapMap(gaps, 0.0), keep)
+        self._fit_gap_width()
+
+    def _install_gm(self, gm: GapMap, keep) -> None:
+        """Use another time map: the view, the markers, the TRIG line, the ghost and the bands are placed again."""
         self.gm = gm
         for ax in (self.plot.getAxis("bottom"), self.ov.getAxis("bottom")):
             ax.set_gaps(gm)
@@ -593,12 +604,61 @@ class PlotView(QWidget):
             self.mark_trigger(self._trig_t)
         if self._ghost_t is not None and self.ghost is not None:
             self.ghost.setValue(self._d(self._ghost_t))
+        self._rebuild_bands()
         self._ov_version = -1
         self._dirty = True
+
+    def _fit_gap_width(self) -> None:
+        """Fixed-width pauses: the width in display units follows the zoom (px * view width / plot width). Called before every redraw and after
+        the user zoomed / moved the view; the real edges of the view are kept when the width changes."""
+        if self.gap_px <= 0 or not self.gm:
+            return
+        plot_px = max(float(self.vb.width()), 1.0)
+        if self.follow:
+            g = self.gap_px * self.window / plot_px
+        else:
+            r0, r1 = self._r(self._x[0]), self._r(self._x[1], "hi")
+            g = self.gm.fit(float(r0), float(r1), self.gap_px, plot_px)
+        if abs(g - self.gm.g) <= 1e-6 * max(1.0, self.gm.g):
+            return
+        keep = self._r(self._x[0]), self._r(self._x[1], "hi")
+        self._install_gm(GapMap(self._gaps_raw, g), keep)
+
+    def _rebuild_bands(self) -> None:
+        """Fixed-width pauses: a translucent band with the length of the pause written in it."""
+        for it in self._band_items:
+            self.plot.removeItem(it)
+        self._band_items = []
+        if self.gm.g <= 0:
+            return
+        for i in range(self.gm.n):
+            reg = pg.LinearRegionItem(values=(float(self.gm.D[i]), float(self.gm.E[i])), movable=False, brush=pg.mkBrush(150, 150, 150, 38), pen=pg.mkPen(None))
+            reg.setZValue(2)
+            reg.setAcceptedMouseButtons(Qt.NoButton)
+            for ln in reg.lines:
+                ln.setAcceptedMouseButtons(Qt.NoButton)
+                ln.setVisible(False)
+            L = float(self.gm.L[i])
+            txt = pg.TextItem(f"przerwa {L:.1f} s" if L < 600 else f"przerwa {L / 60:.1f} min", color="#a0a0a0", anchor=(0.5, 0.5), angle=90)
+            txt.setZValue(2)
+            txt.setPos(float(self.gm.j[i]), 0.5)
+            self.plot.addItem(reg, ignoreBounds=True)
+            self.plot.addItem(txt, ignoreBounds=True)
+            self._band_items += [reg, txt]
+            txt._band = True
+
+    def _place_band_text(self) -> None:
+        if not self._band_items:
+            return
+        (_, _), (y0, y1) = self.vb.viewRange()
+        for it in self._band_items:
+            if getattr(it, "_band", False):
+                it.setPos(it.pos().x(), (y0 + y1) / 2)
 
     def set_view(self, x0: float, x1: float) -> None:
         self._x = (float(self._d(x0)), float(self._d(x1)))
         self.window = max(self._x[1] - self._x[0], MIN_WINDOW)
+        self._fit_gap_width()
         self._dirty = True
 
     def span_around(self, t: float, width: float) -> tuple[float, float]:
@@ -775,6 +835,7 @@ class PlotView(QWidget):
         x0, x1 = self._clamp(x0, x1)
         self._x = (x0, x1)
         self.window = x1 - x0
+        self._fit_gap_width()
         if not self.auto_y and self.y_layout == "offset":
             self.y_range = (y0, y1)
         self.userMoved.emit()
@@ -797,6 +858,7 @@ class PlotView(QWidget):
                 self._busy = False
         self._x = (x0, x1)
         self.window = x1 - x0
+        self._fit_gap_width()
         self.userMoved.emit()
         self.windowChanged.emit(self.window)
         self._dirty = True
@@ -1323,6 +1385,7 @@ class PlotView(QWidget):
         return b + pad, t - pad
 
     def _redraw(self, ver: int) -> None:
+        self._fit_gap_width()
         if self.follow:
             now = float(self._d(self.time_source() if self.time_source else self.buffer.last_time()))
             self._x = (now - self.window, now)
@@ -1389,6 +1452,7 @@ class PlotView(QWidget):
         else:
             self.vb.setYRange(*self.y_range, padding=0)
         self._place_tags()
+        self._place_band_text()
         self._update_overview(x0, x1, ver)
         if self.mitems:
             self._delta_overlay()

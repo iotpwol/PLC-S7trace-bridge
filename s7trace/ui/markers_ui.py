@@ -579,7 +579,7 @@ class TabMarkers:
             return
         x0, x1 = self.tab.plot.view_range()
         sig = (round(x0, 3), round(x1, 3), st.version, st.data_version(), dr.version, self.tab.start_wall, self.show_all, self.key(),
-               self.rec.m.version, self.tab.cfg.gap_join)
+               self.rec.m.version, self.tab.cfg.gap_mode, self.tab.cfg.gap_px)
         if sig == self._sig and not force:
             return
         self._sig = sig

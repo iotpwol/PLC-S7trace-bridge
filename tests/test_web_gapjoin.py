@@ -40,7 +40,7 @@ def test_js_gapmap_matches_the_python_one():
 const gm = gmMake([{t0: 30, t1: 50}, {t0: 70, t1: 90}]);
 ({ disp: [0, 29, 30, 40, 50, 51, 69, 70, 80, 90, 95].map((t) => gmD(gm, t)),
    real: [0, 29, 30, 31, 50, 60, 80].map((x) => gmR(gm, x)), lo: gmR(gm, 30), hi: gmR(gm, 30, true), hi2: gmR(gm, 50, true),
-   segs: gmSeg(gm, 0, 60), inside: [29, 30, 40, 50, 51].map((t) => gmIn(gm, t)), none: gmMake([{t0: 5, t1: 5.001}]), same: gmD(null, 7) })""")
+   segs: gmSeg(gm, 0, 60), inside: [29, 30, 40, 50, 51].map((t) => gmJoinRow(gm, t)), none: gmMake([{t0: 5, t1: 5.001}]), same: gmD(null, 7) })""")
     assert out["disp"] == [0, 29, 30, 30, 30, 31, 49, 50, 50, 50, 55]
     assert out["real"] == [0, 29, 30, 51, 70, 100, 120]
     assert (out["lo"], out["hi"], out["hi2"]) == (30, 50, 90)
@@ -63,12 +63,13 @@ const w = 860 - 70;
     assert [round(t, 6) for t in out["back"]] == [10, 30, 60, 95]                                    # 40 s lies inside the pause: it comes back as the junction
 
 
-def test_js_gap_map_follows_the_viewer_and_the_connection():
+def test_js_gap_spec_follows_the_viewer_and_the_connection():
     out = run_js("""
-const ds = { layout: { gap_join: true } }, cv = { id: 'canvas', _cx: { gapjoin: '' } }, other = { id: 'rv-canvas', _cx: { gapjoin: '' } };
-const a = cxGapMap(cv, ds), b = cxGapMap(other, ds); cv._cx.gapjoin = 'full'; const c = cxGapMap(cv, ds); cv._cx.gapjoin = 'join'; const d = cxGapMap(cv, { layout: {} });
-({ conn: !!a, rec: !!b, full: !!c, join: !!d })""")
-    assert out == {"conn": True, "rec": False, "full": False, "join": True}                       # only the live chart has pauses; the viewer's choice wins
+const ds = { layout: { gap_mode: 'join' } }, cv = { id: 'canvas', _cx: { gapmode: '', gappx: 0 } }, other = { id: 'rv-canvas', _cx: { gapmode: '' } };
+const a = cxGapSpec(cv, ds), b = cxGapSpec(other, ds); cv._cx.gapmode = 'full'; const c = cxGapSpec(cv, ds); cv._cx.gapmode = 'fixed'; const d = cxGapSpec(cv, { layout: { gap_px: 55 } });
+cv._cx.gappx = 70; const e = cxGapSpec(cv, ds);
+({ conn: a && a.px, rec: !!b, full: !!c, fixed: d && d.px, own: e && e.px })""")
+    assert out == {"conn": 0, "rec": False, "full": False, "fixed": 55, "own": 70}                  # only the live chart has pauses; the viewer's choice wins
 
 
 def test_js_axis_jumps_at_the_junction():
@@ -101,15 +102,46 @@ const D = (t) => gmD(gm, t), w0 = D(60) - D(10), moved = range.slice(); WH.mouse
     assert out["range"][0] < 10 and out["range"][0] >= 0                                              # dragged to the right = earlier data
 
 
-def test_server_keeps_the_switch_per_connection():
+def test_server_keeps_the_mode_per_connection():
     cfg = TabConfig()
-    assert editing.view(cfg)["gap_join"] is False
-    editing.apply(cfg, {"gap_join": True}, running=True)                                             # a look setting: allowed while running
-    assert cfg.gap_join is True and editing.view(cfg)["gap_join"] is True
+    v = editing.view(cfg)
+    assert (v["gap_mode"], v["gap_px"]) == ("full", 40)
+    editing.apply(cfg, {"gap_mode": "fixed", "gap_px": 60}, running=True)                           # a look setting: allowed while running
+    assert (cfg.gap_mode, cfg.gap_px) == ("fixed", 60)
+    for bad in ({"gap_mode": "zzz"}, {"gap_px": 2}, {"gap_px": 5000}):
+        with pytest.raises(editing.EditError):
+            editing.apply(TabConfig(), bad, running=False)
 
 
-def test_front_end_wires_the_switch():
+def test_js_band_matches_the_python_map():
+    out = run_js("""
+const gm = gmMake([{t0: 30, t1: 50}, {t0: 70, t1: 90}], 6);
+({ disp: [0, 29, 30, 40, 50, 51, 69, 70, 80, 90, 95].map((t) => gmD(gm, t)), real: [0, 30, 33, 34.5, 36, 37, 55, 56, 59, 62, 67].map((x) => gmR(gm, x)),
+   D: gm.D, E: gm.E, j: gm.j, segs: gmSeg(gm, 0, 70), join: gmJoinRow(gm, 40),
+   fit: gmFit(gmMake([{t0: 30, t1: 50}, {t0: 70, t1: 90}]), 0, 100, 40, 800),
+   spec: (() => { const m = cxGm({ gaps: [{ t0: 30, t1: 50 }], px: 40 }, 0, 100, 800, 0), f = cxGm({ gaps: [{ t0: 30, t1: 50 }], px: 40 }, 0, 0, 800, 60); return [m.g, f.g]; })() })""")
+    assert out["disp"] == [0, 29, 30, 33, 36, 37, 55, 56, 59, 62, 67]
+    assert out["real"] == [0, 30, 40, 45, 50, 51, 69, 70, 80, 90, 95]
+    assert out["D"] == [30, 56] and out["E"] == [36, 62] and out["j"] == [33, 59]
+    assert out["segs"] == [[0, 30], [50, 70], [90, 98]] and out["join"] is False
+    assert abs(out["fit"] - 40 * (60 + 2 * out["fit"]) / 800) < 1e-9                                  # 40 px of 800
+    assert abs(out["spec"][1] - 40 * 60 / 800) < 1e-9                                                  # following the last 60 s: 40 px of the window
+    assert out["spec"][0] > 0
+
+
+def test_js_axis_in_a_band_has_one_double_label_in_its_middle():
+    out = run_js("""
+const texts = [], g = { save() {}, restore() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {}, fillText: (t, x, y) => texts.push([t, x]) };
+const gm = gmMake([{t0: 30, t1: 50}], 4), geo = { t0: 0, t1: 100, pad: { l: 60, r: 10, t: 8, b: 40 }, W: 860, H: 300, gm };
+cxAxis(g, geo, { mode: 'rel', shift: 0, tz: 0 });
+({ texts, x: cxX(geo, 30), x2: cxX(geo, 50), mid: (cxX(geo, 30) + cxX(geo, 50)) / 2 })""")
+    dbl = [t for t in out["texts"] if "|" in t[0]]
+    assert len(dbl) == 1 and dbl[0][0] == "30 s | 50 s" and abs(dbl[0][1] - out["mid"]) < 1e-6
+    assert out["x2"] > out["x"]                                                                       # the two ends of the pause are apart
+
+
+def test_front_end_wires_the_modes():
     js = open(os.path.join(STATIC, "chartx.js"), encoding="utf-8").read()
     app = open(os.path.join(STATIC, "app.js"), encoding="utf-8").read()
-    assert 'data-x="gj"' in js and "gapJoinThis" in js and "cxGapMap" in js
-    assert "gapJoinThis" in app and "gap_join" in app
+    assert 'data-x="gj"' in js and 'data-x="gpx"' in js and "cxGapSpec" in js and "cxGm" in js
+    assert "gapModeThis" in app and "gap_mode" in app and "gm.g > 0" in app

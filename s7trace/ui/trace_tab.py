@@ -23,7 +23,7 @@ from ..core.acq_process import ProcAcquirer
 from ..core.acquisition import parse_host
 from ..core.diagnostics import PingProbe
 from ..core.buffer import TraceBuffer
-from ..core.config import TabConfig, data_dir
+from ..core.config import GAP_MODES, GAP_PX_MAX, GAP_PX_MIN, TabConfig, data_dir
 from ..core.csvio import CsvRecorder, csv_start_wall, read_csv, write_csv
 from ..core.planner import MODES
 from ..core.symbols import Symbol
@@ -118,7 +118,7 @@ class TraceTab(QWidget):
     _stateRaw = QtSignal(str, str)     # from worker thread
     layoutChanged = QtSignal()         # splitters / legend moved -> main window syncs the other tabs
     legendStyleChanged = QtSignal()    # this tab's legend style was changed (the View menu follows it)
-    gapJoinChanged = QtSignal()        # this tab's 'cut out the pauses' switch was changed (the View menu follows it)
+    gapModeChanged = QtSignal()        # this tab's way of showing the pauses was changed (the View menu follows it)
     legendHideRequested = QtSignal()   # 'Ukryj legendę' in the legend's context menu (the setting is shared by all tabs)
     _dbProbe = QtSignal(str, str)      # (recording id, cause or "") - result of the connection test run when REC starts
     _infoRaw = QtSignal(object)        # device data from the acquisition process (worker thread)
@@ -676,16 +676,20 @@ class TraceTab(QWidget):
         self.legendStyleChanged.emit()
 
     def apply_gaps(self) -> None:
-        """The pauses of the chart (Stop -> Start of the reading) are cut out when this tab's 'gap_join' is on."""
+        """The pauses of the chart (Stop -> Start of the reading) as this tab's 'gap_mode' says: 'full' = an empty stretch of their length,
+        'join' = cut out (zero width), 'fixed' = a band of 'gap_px' pixels."""
         mk = getattr(self, "mk", None)
-        gaps = [(g["t0"], g["t1"]) for g in mk.rec.m.gaps] if (mk is not None and self.cfg.gap_join) else []
-        self.plot.set_gaps(gaps)
+        mode = self.cfg.gap_mode
+        gaps = [(g["t0"], g["t1"]) for g in mk.rec.m.gaps] if (mk is not None and mode != "full") else []
+        self.plot.set_gaps(gaps, self.cfg.gap_px if mode == "fixed" else 0)
 
-    def set_gap_join(self, on: bool) -> None:
-        """View -> pauses: cut out of the chart (one Stop / Start mark, jumping axis labels) or shown in their full length (per tab)."""
-        self.cfg.gap_join = bool(on)
+    def set_gap_mode(self, mode: str, px: int | None = None) -> None:
+        """View -> pauses: shown in their full length / cut out (one Stop / Start mark, jumping axis labels) / a band of a fixed width (per tab)."""
+        self.cfg.gap_mode = mode if mode in GAP_MODES else "full"
+        if px is not None:
+            self.cfg.gap_px = max(GAP_PX_MIN, min(GAP_PX_MAX, int(px)))
         self.mk.sync(True)
-        self.gapJoinChanged.emit()
+        self.gapModeChanged.emit()
 
     def set_legend_mode(self, mode: str) -> None:
         """Legend text: the signal name or its address / OPC node (per tab, saved in the tab's configuration)."""

@@ -43,6 +43,10 @@ def app_dir() -> str:
     return d
 
 
+GAP_MODES = ("full", "join", "fixed")      # pauses of the chart: empty stretch / cut out / band of a fixed width
+GAP_PX_MIN, GAP_PX_MAX = 8, 300
+
+
 @dataclass
 class TabConfig:
     name: str = ""                 # tab title; empty = use the IP
@@ -59,7 +63,8 @@ class TabConfig:
     y_min: float = 0.0
     y_max: float = 10.0
     show_points: bool = False
-    gap_join: bool = False         # True = a pause (Stop -> Start) is cut out of the chart: one Stop / Start mark, the axis labels jump
+    gap_mode: str = "full"         # a pause (Stop -> Start) on the chart: "full" = empty stretch of its length, "join" = cut out (one Stop / Start mark, labels jump), "fixed" = a band of gap_px pixels
+    gap_px: int = 40               # width [px] of a pause in the mode "fixed"
     auto_reset: bool = False       # True = every Start clears the chart (the 'Auto-Reset' button); False = a new Start continues it, with a gap
     autonumber: bool = True        # numbering of new signal names (D160B -> D160C)
     name_mode: str = "prev"        # "prev" = from previous signal, "own" = SIG1, SIG2, ...
@@ -91,7 +96,7 @@ class TabConfig:
         if isinstance(d.get("conn"), dict):
             c.conn = {**conn_defaults(), **d["conn"]}
         for k in ("name", "conf_name", "conn_type", "ip", "rack", "slot", "cycle_ms", "mode", "window_s", "auto_y",
-                  "y_min", "y_max", "show_points", "auto_reset", "gap_join", "autonumber", "name_mode", "own_name", "offset_step",
+                  "y_min", "y_max", "show_points", "auto_reset", "gap_mode", "gap_px", "autonumber", "name_mode", "own_name", "offset_step",
                   "y_layout", "legend_pos", "legend_mode", "legend_style", "time_axis", "time_offset", "rec_folder", "rec_filename"):
             if k in d:
                 setattr(c, k, d[k])
@@ -110,7 +115,14 @@ class TabConfig:
         if not (isinstance(c.legend_pos, (list, tuple)) and len(c.legend_pos) == 2):
             c.legend_pos = [0.0, 0.0]
         c.auto_reset = bool(c.auto_reset)
-        c.gap_join = bool(c.gap_join)
+        if "gap_mode" not in d and d.get("gap_join"):                 # version 1.17 kept a switch
+            c.gap_mode = "join"
+        if c.gap_mode not in GAP_MODES:
+            c.gap_mode = "full"
+        try:
+            c.gap_px = max(GAP_PX_MIN, min(GAP_PX_MAX, int(c.gap_px)))
+        except (TypeError, ValueError):
+            c.gap_px = 40
         if c.y_layout not in ("lanes", "offset"):
             c.y_layout = "lanes"
         if c.legend_mode not in ("name", "address"):
