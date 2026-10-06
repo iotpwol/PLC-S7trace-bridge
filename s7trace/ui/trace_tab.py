@@ -118,6 +118,7 @@ class TraceTab(QWidget):
     _stateRaw = QtSignal(str, str)     # from worker thread
     layoutChanged = QtSignal()         # splitters / legend moved -> main window syncs the other tabs
     legendStyleChanged = QtSignal()    # this tab's legend style was changed (the View menu follows it)
+    gapJoinChanged = QtSignal()        # this tab's 'cut out the pauses' switch was changed (the View menu follows it)
     legendHideRequested = QtSignal()   # 'Ukryj legendę' in the legend's context menu (the setting is shared by all tabs)
     _dbProbe = QtSignal(str, str)      # (recording id, cause or "") - result of the connection test run when REC starts
     _infoRaw = QtSignal(object)        # device data from the acquisition process (worker thread)
@@ -673,6 +674,18 @@ class TraceTab(QWidget):
         self.cfg.legend_style = "labels" if style == "labels" else "legend"
         self.plot.set_legend_style(self.cfg.legend_style)
         self.legendStyleChanged.emit()
+
+    def apply_gaps(self) -> None:
+        """The pauses of the chart (Stop -> Start of the reading) are cut out when this tab's 'gap_join' is on."""
+        mk = getattr(self, "mk", None)
+        gaps = [(g["t0"], g["t1"]) for g in mk.rec.m.gaps] if (mk is not None and self.cfg.gap_join) else []
+        self.plot.set_gaps(gaps)
+
+    def set_gap_join(self, on: bool) -> None:
+        """View -> pauses: cut out of the chart (one Stop / Start mark, jumping axis labels) or shown in their full length (per tab)."""
+        self.cfg.gap_join = bool(on)
+        self.mk.sync(True)
+        self.gapJoinChanged.emit()
 
     def set_legend_mode(self, mode: str) -> None:
         """Legend text: the signal name or its address / OPC node (per tab, saved in the tab's configuration)."""

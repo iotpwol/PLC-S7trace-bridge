@@ -162,8 +162,9 @@ class RecMarks:
         return sorted(out, key=lambda x: x[1])
 
     # ---- what the chart draws
-    def items(self, look: dict, fmt: Callable[[float], str] = lambda t: f"{t:.2f} s") -> list[dict]:
-        """Items for PlotView.set_markers: Start / Stop REC lines (when switched on in the marker look) and the manual areas."""
+    def items(self, look: dict, fmt: Callable[[float], str] = lambda t: f"{t:.2f} s", join: bool = False) -> list[dict]:
+        """Items for PlotView.set_markers: Start / Stop REC lines (when switched on in the marker look) and the manual areas.
+        join = the pauses are cut out of the chart: Stop and Start of the reading are ONE mark (at the junction)."""
         out: list[dict] = []
         col, width, style = look.get("rec_color", "#ff8c1a"), int(look.get("rec_width", 2)), look.get("rec_style", "solid")
 
@@ -174,6 +175,11 @@ class RecMarks:
         opacity = int(look.get("rec_opacity", 24))
         if look.get("rec_show", 1):
             for g in self.gaps:                                      # Stop / Start of the reading itself (not of the REC)
+                if join:                                             # the pause has no width on the chart: one mark for both
+                    out.append({**line(SCAN_STOP, g["n"], g["t0"], f"Stop / Start odczytu ({g['n']})",
+                                       f"<b>Stop / Start odczytu ({g['n']})</b><br>Stop: {fmt(g['t0'])}<br>Start: {fmt(g['t1'])}"
+                                       f"<br>przerwa wycięta z wykresu: {g['t1'] - g['t0']:.1f} s"), "style": "dot"})
+                    continue
                 out.append({**line(SCAN_STOP, g["n"], g["t0"], f"Stop odczytu ({g['n']})",
                                    f"<b>Stop odczytu ({g['n']})</b><br>{fmt(g['t0'])}<br>przerwa {g['t1'] - g['t0']:.1f} s"), "style": "dot"})
                 out.append({**line(SCAN_START, g["n"], g["t1"], f"Start odczytu ({g['n']})",

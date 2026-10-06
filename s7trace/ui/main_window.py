@@ -225,6 +225,10 @@ class MainWindow(QMainWindow):
         self.menu_style.addSeparator()
         for key, label in LEGEND_STYLES:
             self._act(self.menu_style, "Wszystkie otwarte karty: " + label, lambda k=key: self._legend_style_all(k))
+        self.act_gapjoin = self._act(v, "Przerwy Stop → Start: wytnij z wykresu, jeden znacznik (ta karta)",
+                                     lambda on: self._cur(lambda t: t.set_gap_join(on)), checked=False)
+        self.act_gapjoin.setToolTip("Włączone: pauza między Stop a Start odczytu nie zajmuje miejsca na wykresie – linie się stykają, w tym miejscu stoi "
+                                    "jeden znacznik, a opisy osi czasu przeskakują (30 | 50). Wyłączone: pusta przerwa w pełnej długości.")
         self.menu_legend = v.addMenu("Położenie legendy (ta karta)")
         for label, pos in (("Lewy górny róg", (0, 0)), ("Prawy górny róg", (1, 0)),
                            ("Lewy dolny róg", (0, 1)), ("Prawy dolny róg", (1, 1))):
@@ -297,6 +301,11 @@ class MainWindow(QMainWindow):
         t = self.tabs.currentWidget()
         if hasattr(self, "act_style"):                          # the legend style of the current tab (or the interface default without a tab)
             self.act_style[t.plot.legend_style if t is not None else self.theme["legend_style"]].setChecked(True)
+        if hasattr(self, "act_gapjoin"):
+            self.act_gapjoin.blockSignals(True)
+            self.act_gapjoin.setChecked(bool(t is not None and t.cfg.gap_join))
+            self.act_gapjoin.setEnabled(t is not None)
+            self.act_gapjoin.blockSignals(False)
         for act, src in ((self.act_points, "act_pts"), (self.act_hlevel, "act_hlev")):
             act.blockSignals(True)
             act.setChecked(bool(t is not None and getattr(t, src).isChecked()))
@@ -526,6 +535,7 @@ class MainWindow(QMainWindow):
         tab.theme_edit = self._edit_theme
         tab.legend_style_all = self._legend_style_all
         tab.legendStyleChanged.connect(self._sync_tab_actions)
+        tab.gapJoinChanged.connect(self._sync_tab_actions)
         tab.new_tab_cb = self.new_tab
         i = self.tabs.addTab(tab, tab.title())
         tab.stateChanged.connect(lambda s, t=tab: self._tab_state(t, s))

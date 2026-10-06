@@ -254,7 +254,7 @@ function mkDrawable(ctx) {   // marks with their times as seconds on the chart's
 }
 function mkPaint(g, cv, ctx, geo, lanes) {   // lanes: [{top, bot}] one per signal in order (same as drawChart)
   if (!ctx) return;
-  const items = mkDrawable(ctx), names = ctx.ds().names, { t0, t1, pad, W, H } = geo, X = (t) => pad.l + (t - t0) / ((t1 - t0) || 1) * (W - pad.l - pad.r);
+  const items = mkDrawable(ctx), names = ctx.ds().names, { t0, t1, pad, W, H } = geo, X = (t) => cxX(geo, t);
   const rgba = (hex, a) => { const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16},${n >> 8 & 255},${n & 255},${a})`; };
   g.save(); g.font = "11px sans-serif";
   items.forEach((it, idx) => {
@@ -280,7 +280,7 @@ function mkPaint(g, cv, ctx, geo, lanes) {   // lanes: [{top, bot}] one per sign
   g.restore();
 }
 function mkPaintDelta(g, ctx, geo, L, k, it, c, m) {   // 'Różnica sygnału': the level at both ends, an arrow between them and the difference of the values
-  const ds = ctx.ds(), gn = (ds.gains || [])[k] || 1, of = geo.offsetMode ? (ds.offsets || [])[k] || 0 : 0, { pad, W } = geo, X = (t) => pad.l + (t - geo.t0) / ((geo.t1 - geo.t0) || 1) * (W - pad.l - pad.r);
+  const ds = ctx.ds(), gn = (ds.gains || [])[k] || 1, of = geo.offsetMode ? (ds.offsets || [])[k] || 0 : 0, { pad, W } = geo, X = (t) => cxX(geo, t);
   const at = (t) => {
     const ts = ds.t; if (!ts.length || t < ts[0]) return null;
     let lo = 0, hi = ts.length - 1; while (lo < hi) { const q = (lo + hi + 1) >> 1; if (ts[q] <= t) lo = q; else hi = q - 1; }
@@ -298,7 +298,7 @@ function mkPaintDelta(g, ctx, geo, L, k, it, c, m) {   // 'Różnica sygnału': 
 }
 function mkHit(ctx, ev) {   // the marker (and its part) under the mouse
   const cv = ctx.cv, geo = cv._geo; if (!geo) return null;
-  const r = cv.getBoundingClientRect(), px = (ev.clientX - r.left) * cv.width / r.width, X = (t) => geo.pad.l + (t - geo.t0) / ((geo.t1 - geo.t0) || 1) * (geo.W - geo.pad.l - geo.pad.r);
+  const r = cv.getBoundingClientRect(), px = (ev.clientX - r.left) * cv.width / r.width, X = (t) => cxX(geo, t);
   let best = null;
   for (const it of mkDrawable(ctx).reverse()) {
     const a = X(it.x0), b = X(it.x1);
@@ -309,7 +309,7 @@ function mkHit(ctx, ev) {   // the marker (and its part) under the mouse
   }
   return best;
 }
-const mkTimeAt = (ctx, px) => { const g = ctx.cv._geo; return g.t0 + (px - g.pad.l) / (g.W - g.pad.l - g.pad.r) * (g.t1 - g.t0); };
+const mkTimeAt = (ctx, px) => cxT(ctx.cv._geo, px);
 const mkPx = (ctx, ev) => { const r = ctx.cv.getBoundingClientRect(); return (ev.clientX - r.left) * ctx.cv.width / r.width; };
 
 function mkAttach(ctx) {

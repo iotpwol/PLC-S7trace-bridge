@@ -59,6 +59,7 @@ class TabConfig:
     y_min: float = 0.0
     y_max: float = 10.0
     show_points: bool = False
+    gap_join: bool = False         # True = a pause (Stop -> Start) is cut out of the chart: one Stop / Start mark, the axis labels jump
     auto_reset: bool = False       # True = every Start clears the chart (the 'Auto-Reset' button); False = a new Start continues it, with a gap
     autonumber: bool = True        # numbering of new signal names (D160B -> D160C)
     name_mode: str = "prev"        # "prev" = from previous signal, "own" = SIG1, SIG2, ...
@@ -90,7 +91,7 @@ class TabConfig:
         if isinstance(d.get("conn"), dict):
             c.conn = {**conn_defaults(), **d["conn"]}
         for k in ("name", "conf_name", "conn_type", "ip", "rack", "slot", "cycle_ms", "mode", "window_s", "auto_y",
-                  "y_min", "y_max", "show_points", "auto_reset", "autonumber", "name_mode", "own_name", "offset_step",
+                  "y_min", "y_max", "show_points", "auto_reset", "gap_join", "autonumber", "name_mode", "own_name", "offset_step",
                   "y_layout", "legend_pos", "legend_mode", "legend_style", "time_axis", "time_offset", "rec_folder", "rec_filename"):
             if k in d:
                 setattr(c, k, d[k])
@@ -109,6 +110,7 @@ class TabConfig:
         if not (isinstance(c.legend_pos, (list, tuple)) and len(c.legend_pos) == 2):
             c.legend_pos = [0.0, 0.0]
         c.auto_reset = bool(c.auto_reset)
+        c.gap_join = bool(c.gap_join)
         if c.y_layout not in ("lanes", "offset"):
             c.y_layout = "lanes"
         if c.legend_mode not in ("name", "address"):

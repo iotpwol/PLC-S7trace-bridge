@@ -573,12 +573,13 @@ class TabMarkers:
 
     # ---- drawing
     def sync(self, force: bool = False) -> None:
+        self.tab.apply_gaps()                                            # the pauses cut out of the chart (before anything is drawn on it)
         st, dr = self.store, self.draft
         if st is None or dr is None:
             return
         x0, x1 = self.tab.plot.view_range()
         sig = (round(x0, 3), round(x1, 3), st.version, st.data_version(), dr.version, self.tab.start_wall, self.show_all, self.key(),
-               self.rec.m.version)
+               self.rec.m.version, self.tab.cfg.gap_join)
         if sig == self._sig and not force:
             return
         self._sig = sig
@@ -894,13 +895,11 @@ class TabMarkers:
             return False
         w = max(self.tab.plot.window, (b_us - a_us) / 1e6 * 1.6, 0.1)
         mid = (a_us + b_us) / 2
-        x0 = self.to_rel(int(mid)) - w / 2
         if self.tab.state in ("running", "reconnecting") and not self.tab.btn_pause.isChecked():
             self.tab.btn_pause.setChecked(True)                          # the live view would scroll away
-        x0, x1 = self.tab.plot.clamp_view(x0, x0 + w)
+        x0, x1 = self.tab.plot.clamp_view(*self.tab.plot.span_around(self.to_rel(int(mid)), w))      # (w counts scanned time: cut-out pauses take no width)
         self.tab.plot.set_view(x0, x1)
-        self.tab.plot.window = x1 - x0
-        self.tab._on_zoomed(x1 - x0)
+        self.tab._on_zoomed(self.tab.plot.window)
         self.sync(True)
         return True
 

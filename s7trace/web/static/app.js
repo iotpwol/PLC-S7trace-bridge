@@ -374,9 +374,10 @@ function liveRange() {
   const ds = frozen || series, sec = +$("c-sec").value;
   if (frozen) return [frozen.x0, frozen.x1];
   if (liveView) return [liveView.x0, liveView.x1];
-  const t1 = ds.t.at(-1) ?? 0; return [t1 - sec, t1];
+  const t1 = ds.t.at(-1) ?? 0, gm = cxGapMap($("canvas"), ds); return [gm ? gmR(gm, gmD(gm, t1) - sec) : t1 - sec, t1];
 }
 function paint() {
+  if (!(frozen || series)) return;                                                   // (nothing loaded yet)
   const ds = frozen || series, sec = +$("c-sec").value, [t0, t1] = liveRange();
   drawChart($("canvas"), ds, t0, t1, { ...cxOpts($("canvas"), ds), mk: MK.live, markers: (lastDesc?.trigger?.events || []).map((e) => e.t), left: frozen ? "okno zamrożone triggerem" : `-${sec} s`,
     right: frozen ? "" : liveView ? "" : "teraz", empty: "Brak danych – uruchom połączenie (Start) na stronie Przegląd.", legend: $("c-legend") });
@@ -385,13 +386,13 @@ function paint() {
 // one lane per signal, scaled to its own min..max of the shown range; steps (the value holds until the next change).
 // o.layout "offset": one common area, value x gain + offset on one Y axis (auto min..max of all signals or o.yMin..o.yMax); o.points: sample points.
 function drawChart(cv, ds, t0, t1, o) {
-  const g = cv.getContext("2d"), W = cv.width, H = cv.height, pad = { l: 60, r: 10, t: 8, b: o.clock ? 40 : 24 }, n = ds.names.length;
+  const g = cv.getContext("2d"), W = cv.width, H = cv.height, pad = { l: 60, r: 10, t: 8, b: o.clock || o.gm ? 40 : 24 }, n = ds.names.length, gm = o.gm || null;
   g.fillStyle = "#000"; g.fillRect(0, 0, W, H); g.font = "12px sans-serif"; g.strokeStyle = "#333"; g.fillStyle = "#aaa";
-  cv._geo = null; cv._ds = ds;
+  cv._geo = null; cv._ds = ds; if (cv._cx) cv._cx.cfg.gm = gm;                      // (the zoom / pan / overview of this canvas work on the same display positions)
   if (!n || !ds.t.length) { g.fillText(o.empty || "Brak danych.", 70, 30); return; }
   const colors = new Set(ds.colors).size < ds.colors.length ? ds.colors.map((_, k) => COLORS[k % COLORS.length]) : ds.colors;
   const sh = ds.names.map((_, k) => Math.max(+(ds.shares || [])[k] || 1, 0.01)), shSum = sh.reduce((a, b) => a + b, 0);   // lane height ~ Share (as in the program)
-  const X = (t) => pad.l + (t - t0) / ((t1 - t0) || 1) * (W - pad.l - pad.r), lanes = [], offsetMode = o.layout === "offset", num = (v) => String(+v.toPrecision(5));
+  const dA = gmD(gm, t0), dB = gmD(gm, t1), X = (t) => pad.l + (gmD(gm, t) - dA) / ((dB - dA) || 1) * (W - pad.l - pad.r), lanes = [], offsetMode = o.layout === "offset", num = (v) => String(+v.toPrecision(5));
   const gains = ds.gains || [], offs = ds.offsets || [], inRange = (i) => ds.t[i] >= t0 && ds.t[i] <= t1;
   // values as drawn: x gain (+ offset in the offset layout), like the program
   const cols = ds.names.map((_, k) => { const gn = gains[k] || 1, of = offsetMode ? (offs[k] || 0) : 0; return (ds.values[k] || []).map((x) => x === null || x === undefined ? null : x * gn + of); });
@@ -431,7 +432,7 @@ function drawChart(cv, ds, t0, t1, o) {
     let medY = null;
     const pts = [];
     for (let i = 0; i < ds.t.length; i++) {
-      const v = col[i]; if (v === null || v === undefined) { pen = false; continue; }
+      const v = col[i]; if (v === null || v === undefined) { if (!gmIn(gm, ds.t[i])) pen = false; continue; }          // (the empty rows of a cut-out pause do not break the line)
       const x = X(ds.t[i]), y = bot - (v - lo) / span * (bot - top - 6) - 3;
       if (!pen) { g.moveTo(x, y); pen = true; } else { g.lineTo(x, py); g.lineTo(x, y); }
       py = y;
@@ -443,7 +444,7 @@ function drawChart(cv, ds, t0, t1, o) {
     g.stroke();
     if (o.points && pts.length <= 6000) { g.fillStyle = c; for (let i = 0; i < pts.length; i += 2) g.fillRect(pts[i] - 2, pts[i + 1] - 2, 4, 4); }   // "Punkty": at most 3000 shown
   }
-  cv._geo = { t0, t1, pad, W, H, lanes, offsetMode };
+  cv._geo = { t0, t1, pad, W, H, lanes, offsetMode, gm };
   cv._tags = [];
   if (legStyle(cv, ds) === "labels") cxTags(g, cv, ds, lanes, colors, pad, H);                // a translucent box with the name beside every signal, right of the Y axis
   if (o.mk) mkPaint(g, cv, o.mk, cv._geo, lanes);                                    // markers (bookmarks) over the curves
@@ -451,7 +452,7 @@ function drawChart(cv, ds, t0, t1, o) {
   g.strokeStyle = "#ff4d4d"; g.fillStyle = "#ff4d4d"; g.lineWidth = 1; g.setLineDash([5, 4]);
   for (const t of o.markers || []) { if (t < t0 || t > t1) continue; const x = X(t); g.beginPath(); g.moveTo(x, pad.t); g.lineTo(x, H - pad.b); g.stroke(); g.fillText("T", x + 3, H - pad.b - 4); }
   g.setLineDash([]); g.fillStyle = "#aaa";
-  if (o.clock) cxAxis(g, cv._geo, o.clock);                                           // a clock axis (server / PLC time) replaces the "-200 s ... teraz" labels
+  if (o.clock || gm) cxAxis(g, cv._geo, o.clock || { mode: "rel", shift: 0, tz: 0 });   // a clock axis (server / PLC time) replaces the "-200 s ... teraz" labels; so do the ticks of a chart with cut-out pauses
   else { g.fillText(o.left || "", pad.l, H - 6); if (o.right) { const w = g.measureText(o.right).width; g.fillText(o.right, W - pad.r - w, H - 6); } }
   if (cv._cx) cxPaint(g, cv);                                                        // cursors V1/V2, H1/H2 and their read-out
   if (o.legend && legStyle(cv, ds) === "labels") o.legend.innerHTML = "";                     // the names are on the chart: no list under it
@@ -541,7 +542,7 @@ async function loadMarks(ctx, qs) {
 }
 async function loadLiveMarks() {
   const id = $("c-conn").value, ds = frozen || series; if (!id || !ds.start_us) return;
-  const last = ds.t.at(-1) ?? 0, sec = +$("c-sec").value, t0 = frozen ? frozen.x0 : last - sec, t1 = frozen ? frozen.x1 : last;
+  const last = ds.t.at(-1) ?? 0, sec = +$("c-sec").value, gm = cxGapMap($("canvas"), ds), t0 = frozen ? frozen.x0 : gm ? gmR(gm, gmD(gm, last) - sec) : last - sec, t1 = frozen ? frozen.x1 : last;
   await loadMarks(MK.live, (MK.live.showAll ? "conns=1" : `conn=${encodeURIComponent(id)}`) + `&from=${Math.round(ds.start_us + t0 * 1e6)}&to=${Math.round(ds.start_us + t1 * 1e6)}&limit=500`);
   draw();
 }
@@ -940,6 +941,12 @@ const TABLE_COLORS = [["header_bg", "Kolor tła nagłówka tabeli", "--tb-head-b
 let legSave = null;
 // the style of one chart: the viewer's own choice (toolbar / menu), else the one saved with the connection (like the desktop tab), else the account default
 function legStyle(cv, ds) { const v = (cv && cv._cx && cv._cx.lstyle) || (ds && ds.layout && ds.layout.legend_style) || LEGSTYLE; return v === "labels" ? "labels" : "legend"; }
+function gapJoinApply() { const sel = $("c-tools")?.querySelector("[data-x=gj]"); if (sel) sel.value = $("canvas")?._cx?.gapjoin || ""; }
+async function gapJoinThis(cv, v) {   // this connection's chart: shown at once, and kept with the connection when the account may edit it
+  const st = cv._cx; if (!st) return;
+  st.gapjoin = v === "join" || v === "full" ? v : ""; gapJoinApply(); draw(); clearTimeout(liveRefresh); liveRefresh = setTimeout(loadLiveMarks, 100);
+  if (cv === $("canvas") && conn && conn.can_edit && st.gapjoin) { try { await api(`/api/connections/${conn.id}/config`, { gap_join: st.gapjoin === "join" }); } catch (e) { /* only the viewer's choice then */ } }
+}
 function legendStyleApply() { for (const [tools, cv] of [["c-tools", "canvas"], ["rv-tools", "rv-canvas"]]) { const sel = $(tools)?.querySelector("[data-x=lst]"); if (sel) sel.value = $(cv)?._cx?.lstyle || ""; } }
 function legendRedraw() { if (typeof draw === "function") draw(); if (typeof rv !== "undefined" && rv.data) drawRec(); }
 async function legendStyleThis(cv, v) {   // this connection's chart: shown at once, and kept with the connection when the account may edit it

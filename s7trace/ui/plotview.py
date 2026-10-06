@@ -12,6 +12,7 @@ from PySide6.QtGui import QColor, QCursor, QFontMetricsF, QPen
 from PySide6.QtWidgets import QApplication, QGraphicsItem, QGraphicsTextItem, QLabel, QSplitter, QToolTip, QVBoxLayout, QWidget
 
 from ..core import marker_look, render, render_cfg
+from ..core.gapmap import GapMap
 from ..core.markers import SPAN_KINDS
 from ..core.types import legend_text
 from .fold_splitter import FoldSplitter
@@ -38,6 +39,13 @@ class TimeAxis(pg.AxisItem):
         super().__init__(*a, **k)
         self.mode = "rel"
         self.shift = 0.0
+        self.gm: GapMap | None = None          # pauses cut out of the chart (see core.gapmap): ticks are placed on the real time
+
+    def set_gaps(self, gm: GapMap | None) -> None:
+        if (gm.key() if gm else None) != (self.gm.key() if self.gm else None):
+            self.gm = gm or None
+            self.picture = None
+            self.update()
 
     def set_clock(self, mode: str, shift: float) -> None:
         if (mode, shift) != (self.mode, self.shift):
@@ -46,18 +54,42 @@ class TimeAxis(pg.AxisItem):
             self.update()
 
     def tickValues(self, minVal, maxVal, size):
-        if self.mode == "rel" and not self.shift:
+        gm = self.gm
+        if self.mode == "rel" and not self.shift and not gm:
             return super().tickValues(minVal, maxVal, size)
         span = maxVal - minVal
         if size <= 0 or span <= 0:
             return []
         sp = next((n for n in NICE_SPACING if span / n <= max(size / 120.0, 1.0)), NICE_SPACING[-1])
+        if gm:                                                       # the ticks sit on the real time of every visible piece; a pause = one junction
+            tz = time.localtime(self.shift + gm.real(minVal)).tm_gmtoff if self.mode != "rel" else 0
+            ticks: list[float] = []
+            for r0, r1 in gm.segments(minVal, maxVal):
+                first = math.ceil((r0 + self.shift + tz) / sp)
+                last = math.floor((r1 + self.shift + tz) / sp)
+                ticks += [float(gm.disp(k * sp - self.shift - tz)) for k in range(first, min(last, first + 400) + 1)]
+            js = [float(c) for c in gm.j if minVal <= c <= maxVal]
+            ticks = [x for x in ticks if all(abs(x - c) > sp * 0.9 for c in js)]          # room for the double label of a junction
+            return [(sp, sorted(set(ticks + js)))]
         tz = time.localtime(self.shift + minVal).tm_gmtoff if self.mode != "rel" else 0       # whole local hours / minutes
         first = math.ceil((minVal + self.shift + tz) / sp)
         last = math.floor((maxVal + self.shift + tz) / sp)
         return [(sp, [k * sp - self.shift - tz for k in range(first, min(last, first + 400) + 1)])]
 
     def tickStrings(self, values, scale, spacing):
+        gm = self.gm
+        if not gm:
+            return self._strings(values, spacing)
+        reals, ends = [], []
+        for v in values:
+            i = gm.junction_at(v)
+            reals.append(float(gm.real(v)) if i is None else float(gm.a[i]))
+            ends.append(None if i is None else float(gm.b[i]))
+        strs = self._strings(reals + [b for b in ends if b is not None], spacing)
+        late = iter(strs[len(reals):])
+        return [strs[k] if ends[k] is None else f"{strs[k]} | {next(late)}" for k in range(len(reals))]       # '30s | 50s' at a junction
+
+    def _strings(self, values, spacing):
         if self.mode != "rel":
             out = []
             for v in values:
@@ -239,7 +271,11 @@ class PlotView(QWidget):
         self.points_hidden = False                       # 'Punkty' is on but there are too many samples in the window to draw
         self.rcfg = dict(render_cfg.DEFAULTS)            # Ustawienia -> Renderowanie wykresu
         self._ov_last = 0.0
-        self._x = (0.0, 200.0)
+        self._x = (0.0, 200.0)                           # visible range in DISPLAY positions (= real time while no pause is cut out)
+        self.gm = GapMap()                               # pauses cut out of the chart (zero width, see core.gapmap); empty = full time axis
+        self._mkeep: list[dict] = []                     # the items of the last set_markers (re-drawn when the pauses change)
+        self._trig_t: float | None = None                # real time of the TRIG line
+        self._ghost_t: float | None = None               # real time of the ghost
         self._dirty = True
         self._last_version = -1
         self._ov_version = -1
@@ -534,13 +570,45 @@ class PlotView(QWidget):
         self.window = sec
         self._dirty = True
 
-    def set_view(self, x0: float, x1: float) -> None:
-        self._x = (x0, x1)
-        self.window = max(x1 - x0, MIN_WINDOW)
+    # ---- the time axis with cut-out pauses: the data and everything the program knows are on the real time, the chart on display positions
+    def _d(self, t):
+        return self.gm.disp(t) if self.gm else t
+
+    def _r(self, x, side: str = "lo"):
+        return self.gm.real(x, side) if self.gm else x
+
+    def set_gaps(self, gaps) -> None:
+        """Pauses (stop, start) of the chart [s] that are cut out: zero width, one junction with the Stop / Start mark; () = the full axis."""
+        gm = GapMap(gaps)
+        if gm.key() == self.gm.key():
+            return
+        keep = self._r(self._x[0]), self._r(self._x[1], "hi")        # the view stays on the same real stretch
+        self.gm = gm
+        for ax in (self.plot.getAxis("bottom"), self.ov.getAxis("bottom")):
+            ax.set_gaps(gm)
+        self._x = (float(self._d(keep[0])), float(self._d(keep[1])))
+        self.window = max(self._x[1] - self._x[0], MIN_WINDOW)
+        self.set_markers(self._mkeep)                                  # the markers stand on other positions now
+        if self._trig_t is not None:
+            self.mark_trigger(self._trig_t)
+        if self._ghost_t is not None and self.ghost is not None:
+            self.ghost.setValue(self._d(self._ghost_t))
+        self._ov_version = -1
         self._dirty = True
 
+    def set_view(self, x0: float, x1: float) -> None:
+        self._x = (float(self._d(x0)), float(self._d(x1)))
+        self.window = max(self._x[1] - self._x[0], MIN_WINDOW)
+        self._dirty = True
+
+    def span_around(self, t: float, width: float) -> tuple[float, float]:
+        """Real-time stretch whose display width is `width` (scanned time) with the real time `t` in its middle."""
+        d = float(self._d(t))
+        return float(self._r(d - width / 2)), float(self._r(d + width / 2, "hi"))
+
     def view_range(self) -> tuple[float, float]:
-        return self._x
+        """Visible stretch as real time (pauses inside it count)."""
+        return float(self._r(self._x[0])), float(self._r(self._x[1], "hi"))
 
     def set_auto_y(self, on: bool) -> None:
         self.auto_y = on
@@ -683,11 +751,16 @@ class PlotView(QWidget):
 
     # ----------------------------------------------------------- events
     def clamp_view(self, x0: float, x1: float) -> tuple[float, float]:
+        """`_clamp` for real times (what the rest of the program uses)."""
+        c0, c1 = self._clamp(float(self._d(x0)), float(self._d(x1)))
+        return float(self._r(c0)), float(self._r(c1, "hi"))
+
+    def _clamp(self, x0: float, x1: float) -> tuple[float, float]:
         """The view dragged / zoomed by the user stays inside the collected data: it cannot go past the newest
-        sample, before the oldest one, or become wider than everything that was collected."""
+        sample, before the oldest one, or become wider than everything that was collected (display positions)."""
         if len(self.buffer) == 0:
             return x0, x1
-        a, b = self.buffer.first_time(), self.buffer.last_time()
+        a, b = float(self._d(self.buffer.first_time())), float(self._d(self.buffer.last_time()))
         w = min(max(x1 - x0, MIN_WINDOW), max(b - a, MIN_WINDOW))
         if x1 > b:
             x0, x1 = b - w, b
@@ -699,7 +772,7 @@ class PlotView(QWidget):
         if self._busy:
             return
         (x0, x1), (y0, y1) = self.vb.viewRange()
-        x0, x1 = self.clamp_view(x0, x1)
+        x0, x1 = self._clamp(x0, x1)
         self._x = (x0, x1)
         self.window = x1 - x0
         if not self.auto_y and self.y_layout == "offset":
@@ -715,7 +788,7 @@ class PlotView(QWidget):
         if x1 - x0 < MIN_WINDOW:
             return
         r0, r1 = x0, x1
-        x0, x1 = self.clamp_view(x0, x1)
+        x0, x1 = self._clamp(x0, x1)
         if abs(x0 - r0) > 1e-9 or abs(x1 - r1) > 1e-9:         # the yellow window cannot leave the data either
             self._busy = True
             try:
@@ -756,7 +829,7 @@ class PlotView(QWidget):
                 x = float(self.vb.mapSceneToView(ev.scenePos()).x())
                 self.end_marker_placement()
                 ev.accept()
-                self.markerPlaced.emit(mid, x)
+                self.markerPlaced.emit(mid, float(self._r(x)))
             elif ev.button() == Qt.RightButton:
                 self.end_marker_placement()
                 ev.accept()
@@ -766,7 +839,7 @@ class PlotView(QWidget):
         if ev.button() == Qt.RightButton and self.vb.sceneBoundingRect().contains(ev.scenePos()):
             ev.accept()
             self.ctx_y = float(self.vb.mapSceneToView(ev.scenePos()).y())          # height of the click: which plot a level marker is for
-            self.markerRequested.emit(float(self.vb.mapSceneToView(ev.scenePos()).x()), ev.screenPos().toPoint())
+            self.markerRequested.emit(float(self._r(float(self.vb.mapSceneToView(ev.scenePos()).x()))), ev.screenPos().toPoint())
             return
         if ev.button() != Qt.LeftButton or ev.double():
             return
@@ -822,6 +895,8 @@ class PlotView(QWidget):
         style ('solid' / 'dash' / 'dot' / 'dashdot'), opacity [%] of the area of a range, title, tip (html), signals (names;
         empty = all plots). Markers that are not listed any more are removed, the others
         are updated in place (rebuilt when their look changes)."""
+        self._mkeep = list(items)
+        items = [{**it, "rx0": it["x0"], "rx1": it["x1"], "x0": float(self._d(it["x0"])), "x1": float(self._d(it["x1"]))} for it in items]
         want = {it["id"]: it for it in items}
         for mid in [m for m in self.mitems if m not in want]:
             self._marker_remove(mid)
@@ -996,7 +1071,7 @@ class PlotView(QWidget):
             k = next((i for i, sg in enumerate(self.signals) if sg.name == it["signals"][0] and sg.plot), None)
             if k is None or k >= len(self.curves):
                 continue
-            a, b = self._level_at(k, it["x0"]), self._level_at(k, it["x1"])
+            a, b = self._level_at(k, it["rx0"]), self._level_at(k, it["rx1"])
             if a is None or b is None:
                 continue
             col = QColor(it["color"])
@@ -1106,9 +1181,10 @@ class PlotView(QWidget):
             return
         if cur["data"]["kind"] in SPAN_KINDS:
             a, b = item.getRegion()
-            self.markerMoved.emit(mid, float(a), float(b))
+            self.markerMoved.emit(mid, float(self._r(float(a))), float(self._r(float(b), "hi")))
         else:
-            self.markerMoved.emit(mid, float(item.value()), float(item.value()))
+            t = float(self._r(float(item.value())))
+            self.markerMoved.emit(mid, t, t)
 
     def _marker_clicked(self, mid: int, ev) -> None:
         if self.place_marker is not None:
@@ -1132,15 +1208,18 @@ class PlotView(QWidget):
             if self.ghost is not None:
                 self.plot.removeItem(self.ghost)
                 self.ghost = None
+            self._ghost_t = None
             self._ghost_timer.stop()
             return
+        self._ghost_t = t
+        t = float(self._d(t))
         self._ghost_color, self._ghost_width = color, width
         if self.ghost is None:
             g = pg.InfiniteLine(pos=t, angle=90, movable=True, pen=pg.mkPen(color, width=width + 1, style=Qt.DashLine),
                                 hoverPen=pg.mkPen("#ffffff", width=width + 2), label=text,
                                 labelOpts={"color": color, "position": 0.8, "rotateAxis": (1, 0), "anchors": [(1, 1), (1, 1)]})
             g.setZValue(12)
-            g.sigPositionChangeFinished.connect(lambda l: self.ghostMoved.emit(float(l.value())))
+            g.sigPositionChangeFinished.connect(lambda l: self.ghostMoved.emit(float(self._r(float(l.value())))))
             g.sigClicked.connect(self._ghost_clicked)
             self.plot.addItem(g, ignoreBounds=True)
             self.ghost = g
@@ -1172,13 +1251,15 @@ class PlotView(QWidget):
     def mark_trigger(self, t: float) -> None:
         for ln in self.trigger_lines:
             self.plot.removeItem(ln)
-        ln = pg.InfiniteLine(pos=t, angle=90, movable=False,
+        self._trig_t = t
+        ln = pg.InfiniteLine(pos=float(self._d(t)), angle=90, movable=False,
                              pen=pg.mkPen("#ff4040", width=1, style=Qt.DotLine),
                              label="TRIG", labelOpts={"color": "#ff6060", "position": 0.92})
         self.plot.addItem(ln, ignoreBounds=True)
         self.trigger_lines = [ln]
 
     def clear_trigger_marks(self) -> None:
+        self._trig_t = None
         for ln in self.trigger_lines:
             self.plot.removeItem(ln)
         self.trigger_lines = []
@@ -1243,10 +1324,13 @@ class PlotView(QWidget):
 
     def _redraw(self, ver: int) -> None:
         if self.follow:
-            now = self.time_source() if self.time_source else self.buffer.last_time()
+            now = float(self._d(self.time_source() if self.time_source else self.buffer.last_time()))
             self._x = (now - self.window, now)
         x0, x1 = self._x
-        t, v = self.buffer.snapshot(x0, x1)
+        t, v = self.buffer.snapshot(float(self._r(x0)), float(self._r(x1, "hi")))
+        if self.gm:                                                   # the pauses are cut out: the data go to display positions
+            t, v = self.gm.drop_gap_rows(t, v)
+            t = self.gm.disp(t)
         lanes = self.y_layout == "lanes"
         vis = (t >= x0) & (t <= x1) if len(t) else None
         if vis is not None and not vis.any():
@@ -1314,13 +1398,16 @@ class PlotView(QWidget):
             self.ov.vb.setXRange(x0, x1, padding=0)
             self.region.setRegion((x0, x1))
             return
-        a, b = self.buffer.first_time(), self.buffer.last_time()
+        a, b = float(self._d(self.buffer.first_time())), float(self._d(self.buffer.last_time()))
         lo_x, hi_x = min(a, x0), max(b, x1)
         now = time.monotonic()
         if ver != self._ov_version and (now - self._ov_last >= self.rcfg["overview_s"] or self._ov_version == -1
                                         or not self.follow):
             self._ov_last = now
             t, v = self.buffer.snapshot()
+            if self.gm:
+                t, v = self.gm.drop_gap_rows(t, v)
+                t = self.gm.disp(t)
             lanes = self.y_layout == "lanes"
             lo = hi = None
             for k, s in enumerate(self.signals):

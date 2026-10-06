@@ -10,17 +10,56 @@
 const CX_MIN_WINDOW = 0.1;
 const CX_NUM = (v) => String(+(+v).toPrecision(5));
 
+// ---- pauses cut out of the chart (the counterpart of core/gapmap.py): the data stay on the real chart time, the chart is drawn on display
+// positions where every pause (Stop -> Start of the reading) has zero width: the line before it and after it meet in one junction, one mark
+// stands there and the axis labels jump (30 | 50). gm = { a: [stop...], b: [start...], cum: [0, len1, len1 + len2...], j: [junction...] } or null (= the full axis).
+function gmMake(gaps) {
+  const g = (gaps || []).map((x) => [+x.t0, +x.t1]).filter((x) => x[1] - x[0] > 0.002).sort((p, q) => p[0] - q[0]), m = [];
+  for (const x of g) { if (m.length && x[0] <= m[m.length - 1][1]) m[m.length - 1][1] = Math.max(m[m.length - 1][1], x[1]); else m.push([x[0], x[1]]); }
+  if (!m.length) return null;
+  const a = m.map((x) => x[0]), b = m.map((x) => x[1]), cum = [0]; b.forEach((v, i) => cum.push(cum[i] + v - a[i]));
+  return { a, b, cum, j: a.map((v, i) => v - cum[i]) };
+}
+function gmCount(arr, v, orEqual) { let lo = 0, hi = arr.length; while (lo < hi) { const mid = (lo + hi) >> 1; if (orEqual ? arr[mid] <= v : arr[mid] < v) lo = mid + 1; else hi = mid; } return lo; }
+function gmD(gm, t) {            // real time -> display position (a time inside a pause lands on its junction)
+  if (!gm) return t;
+  const k = gmCount(gm.a, t, true), rest = k > 0 ? Math.max(gm.b[k - 1] - t, 0) : 0;
+  return t - (gm.cum[k] - rest);
+}
+function gmR(gm, x, hi) {        // display position -> real time; at a junction: the Stop side, or the Start side (hi)
+  if (!gm) return x;
+  return x + gm.cum[gmCount(gm.j, x, !!hi)];
+}
+function gmIn(gm, t) { if (!gm) return false; const k = gmCount(gm.a, t, false); return k > 0 && t <= gm.b[k - 1]; }     // inside a pause (a < t <= b): the NaN rows the acquisition puts there
+function gmSeg(gm, d0, d1) {     // the real-time stretches visible between the display positions d0 .. d1
+  const edges = [d0, ...(gm ? gm.j.filter((c) => c > d0 && c < d1) : []), d1], out = [];
+  for (let i = 0; i < edges.length - 1; i++) out.push([gmR(gm, edges[i], i > 0), gmR(gm, edges[i + 1], false)]);
+  return out;
+}
+const cxPlotW = (geo) => geo.W - geo.pad.l - geo.pad.r;
+function cxX(geo, t) { const gm = geo.gm, d0 = gmD(gm, geo.t0), d1 = gmD(gm, geo.t1); return geo.pad.l + (gmD(gm, t) - d0) / ((d1 - d0) || 1) * cxPlotW(geo); }
+function cxT(geo, px, clamp) {   // real time under the x pixel of the canvas
+  const gm = geo.gm, d0 = gmD(gm, geo.t0), d1 = gmD(gm, geo.t1); let f = (px - geo.pad.l) / cxPlotW(geo); if (clamp) f = Math.min(Math.max(f, 0), 1);
+  return gmR(gm, d0 + f * (d1 - d0));
+}
+// the pauses of a canvas: only the live chart has them; cut out when the viewer chose so, else when the connection says so
+function cxGapMap(cv, ds) {
+  const st = cv._cx || {}, on = st.gapjoin ? st.gapjoin === "join" : !!(ds && ds.layout && ds.layout.gap_join);
+  return on && cv.id === "canvas" && typeof recmGaps === "function" ? gmMake(recmGaps()) : null;
+}
+
 function cxAttach(cv, cfg) {
-  const st = cv._cx = { hOn: false, h: [], layout: "", legend: "", lstyle: "", taxis: "", toff: null, points: null, cfg, drag: null, pan: null };
+  const st = cv._cx = { hOn: false, h: [], layout: "", legend: "", lstyle: "", gapjoin: "", taxis: "", toff: null, points: null, cfg, drag: null, pan: null };
   const px = (ev) => { const r = cv.getBoundingClientRect(); return [(ev.clientX - r.left) * cv.width / r.width, (ev.clientY - r.top) * cv.height / r.height]; };
   const geo = () => cv._geo;
-  const tAt = (x) => { const g = geo(); return g.t0 + Math.min(Math.max((x - g.pad.l) / (g.W - g.pad.l - g.pad.r), 0), 1) * (g.t1 - g.t0); };
-  const xOf = (t) => { const g = geo(); return g.pad.l + (t - g.t0) / ((g.t1 - g.t0) || 1) * (g.W - g.pad.l - g.pad.r); };
+  const tAt = (x) => cxT(geo(), x, true);
+  const xOf = (t) => cxX(geo(), t);
   const yOf = (f) => { const g = geo(); return g.pad.t + f * (g.H - g.pad.t - g.pad.b); };
-  const clampRange = (a, b) => {
-    const [lo, hi] = cfg.limits(); let w = Math.max(b - a, CX_MIN_WINDOW);
-    if (w >= hi - lo) return [lo, Math.max(hi, lo + CX_MIN_WINDOW)];
-    a = Math.min(Math.max(a, lo), hi - w); return [a, a + w];
+  const clampRange = (a, b) => {                              // in display positions (the pauses cut out take no width), the result in real times
+    const gm = cfg.gm || null, lim = cfg.limits(), lo = gmD(gm, lim[0]), hi = gmD(gm, lim[1]); a = gmD(gm, a); b = gmD(gm, b);
+    const w = Math.max(b - a, CX_MIN_WINDOW);
+    if (w >= hi - lo) return [lim[0], Math.max(lim[1], gmR(gm, lo + CX_MIN_WINDOW, true))];
+    a = Math.min(Math.max(a, lo), hi - w); return [gmR(gm, a), gmR(gm, a + w, true)];
   };
   const hit = (x, y) => {                                    // a cursor line under the mouse
     const g = geo(), tol = 6 * cv.width / cv.getBoundingClientRect().width;
@@ -45,8 +84,8 @@ function cxAttach(cv, cfg) {
     if (Math.abs(x - p.x0) > 3) p.moved = true;
     if (!p.moved || cfg.busy()) return;
     if (p.shift) { p.x1 = x; return; }                      // Shift: the range is taken on release
-    const dt = (x - p.x0) / (g.W - g.pad.l - g.pad.r) * (p.r[1] - p.r[0]);
-    const [a, b] = clampRange(p.r[0] - dt, p.r[1] - dt); cfg.setRange(a, b);
+    const gm = g.gm, da = gmD(gm, p.r[0]), db = gmD(gm, p.r[1]), dd = (x - p.x0) / cxPlotW(g) * (db - da);
+    const [a, b] = clampRange(gmR(gm, da - dd), gmR(gm, db - dd, true)); cfg.setRange(a, b);
   });
   window.addEventListener("mouseup", (e) => {
     if (st.drag) { st.drag = null; cfg.redraw(); return; }
@@ -70,8 +109,8 @@ function cxAttach(cv, cfg) {
   });
   cv.addEventListener("wheel", (e) => {
     if (!geo() || !(e.ctrlKey || e.metaKey)) return; e.preventDefault();      // Ctrl + wheel: plain wheel keeps scrolling the page
-    const [x] = px(e), [a, b] = cfg.range(), tc = tAt(x), f = e.deltaY < 0 ? 0.8 : 1.25;
-    const [na, nb] = clampRange(tc - (tc - a) * f, tc + (b - tc) * f); cfg.setRange(na, nb);
+    const [x] = px(e), [a, b] = cfg.range(), gm = geo().gm, f = e.deltaY < 0 ? 0.8 : 1.25, da = gmD(gm, a), db = gmD(gm, b), dc = gmD(gm, tAt(x));
+    const [na, nb] = clampRange(gmR(gm, dc - (dc - da) * f), gmR(gm, dc + (db - dc) * f, true)); cfg.setRange(na, nb);
   }, { passive: false });
   if (cfg.overview) cxAttachOverview(cfg, clampRange);
   return st;
@@ -101,16 +140,26 @@ function cxClock(cv, ds) {
            tz: ds.tz_offset === null || ds.tz_offset === undefined ? null : -ds.tz_offset };   // the server's zone (a recording: the browser's)
 }
 function cxAxis(g, geo, clock) {   // ticks on whole clock seconds / minutes; only as many parts of the time as the zoom needs
-  const { t0, t1, pad, W, H } = geo, span = t1 - t0, wpx = W - pad.l - pad.r; if (!(span > 0)) return;
-  const sp = CX_NICE.find((n) => span / n <= Math.max(wpx / 120, 1)) || 86400, tz = clock.tz ?? new Date((clock.shift + t0) * 1000).getTimezoneOffset() * 60;
-  const first = Math.ceil((t0 + clock.shift - tz) / sp), last = Math.min(Math.floor((t1 + clock.shift - tz) / sp), first + 400), p = (n, l = 2) => String(n).padStart(l, "0");
+  // clock.mode "rel" = the same ticks in seconds of the chart time (used when pauses are cut out); a junction of a cut-out pause carries both times: "30 s | 50 s"
+  const { t0, t1, pad, W, H, gm } = geo, d0 = gmD(gm, t0), d1 = gmD(gm, t1), span = d1 - d0, wpx = W - pad.l - pad.r; if (!(span > 0)) return;
+  const rel = clock.mode === "rel", sh = rel ? 0 : clock.shift;
+  const sp = CX_NICE.find((n) => span / n <= Math.max(wpx / 120, 1)) || 86400, tz = rel ? 0 : clock.tz ?? new Date((clock.shift + t0) * 1000).getTimezoneOffset() * 60;
+  const p = (n, l = 2) => String(n).padStart(l, "0"), dec = sp < 1 ? Math.min(6, Math.ceil(-Math.log10(sp))) : 0;
+  const label = (tr) => {                                                                              // the label of the real chart time tr
+    if (rel) { const v = +tr.toFixed(dec); return Math.abs(v) >= 3600 ? `${Math.floor(v / 3600)}:${p(Math.floor(v % 3600 / 60))}:${p(Math.floor(v % 60))}` : `${v} s`; }
+    const d = new Date(Math.round((tr + sh - tz) * 1000)), hm = `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`;       // (the local clock read with the UTC getters)
+    return sp >= 60 ? hm : sp >= 1 ? `${hm}:${p(d.getUTCSeconds())}` : `${hm}:${p(d.getUTCSeconds())}.${p(d.getUTCMilliseconds(), 3)}`;
+  };
+  const dx = (d) => pad.l + (d - d0) / span * wpx, jx = (gm ? gm.j : []).filter((c) => c >= d0 && c <= d1).map((c, i) => ({ c, x: dx(c), i: gm.j.indexOf(c) }));
   g.save(); g.font = "11px sans-serif"; g.fillStyle = "#aaa"; g.strokeStyle = "#777"; g.textAlign = "center"; g.lineWidth = 1;
-  for (let k = first; k <= last; k++) {
-    const x = pad.l + (k * sp - clock.shift + tz - t0) / span * wpx, d = new Date(Math.round(k * sp * 1000));        // (the local clock read with the UTC getters)
-    const hm = `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`;
-    g.beginPath(); g.moveTo(x, H - pad.b); g.lineTo(x, H - pad.b + 4); g.stroke();
-    g.fillText(sp >= 60 ? hm : sp >= 1 ? `${hm}:${p(d.getUTCSeconds())}` : `${hm}:${p(d.getUTCSeconds())}.${p(d.getUTCMilliseconds(), 3)}`, x, H - pad.b + 16);
+  for (const [r0, r1] of gmSeg(gm, d0, d1)) {
+    const first = Math.ceil((r0 + sh - tz) / sp), last = Math.min(Math.floor((r1 + sh - tz) / sp), first + 400);
+    for (let k = first; k <= last; k++) {
+      const tr = k * sp - sh + tz, x = dx(gmD(gm, tr)); if (jx.some((q) => Math.abs(q.x - x) < 90)) continue;           // room for the double label of a junction
+      g.beginPath(); g.moveTo(x, H - pad.b); g.lineTo(x, H - pad.b + 4); g.stroke(); g.fillText(label(tr), x, H - pad.b + 16);
+    }
   }
+  for (const q of jx) { g.beginPath(); g.moveTo(q.x, H - pad.b); g.lineTo(q.x, H - pad.b + 6); g.stroke(); g.fillText(`${label(gm.a[q.i])} | ${label(gm.b[q.i])}`, q.x, H - pad.b + 18); }
   if (clock.noPlc) { g.fillStyle = "#e0a030"; g.fillText("brak czasu PLC – pokazano czas serwera", pad.l + wpx / 2, H - 4); }
   g.restore();
 }
@@ -143,7 +192,7 @@ function cxPaint(g, cv) {
 function cxOpts(cv, ds) {
   const st = cv._cx || {}, d = (ds && ds.layout) || {};
   if (st.syncPoints && (st.points === null || st.points === undefined)) st.syncPoints(d.show_points);
-  return { layout: st.layout || d.y_layout || "lanes", autoY: d.auto_y !== false, yMin: d.y_min ?? 0, yMax: d.y_max ?? 10, clock: cxClock(cv, ds),
+  return { layout: st.layout || d.y_layout || "lanes", autoY: d.auto_y !== false, yMin: d.y_min ?? 0, yMax: d.y_max ?? 10, clock: cxClock(cv, ds), gm: cxGapMap(cv, ds),
            points: st.points === null || st.points === undefined ? !!d.show_points : st.points };
 }
 // legend text: the signal name or its address / OPC node (viewer's choice, else the connection's)
@@ -181,6 +230,7 @@ function cxToolbar(box, cv) {
     <label>Układ <select data-x="lay"><option value="">wg połączenia</option><option value="lanes">Pasma wg Share</option><option value="offset">Offset Y + wzmocnienie</option></select></label>
     <label>Legenda <select data-x="leg"><option value="">wg połączenia</option><option value="name">Nazwa</option><option value="address">Adres / węzeł OPC</option></select></label>
     <label title="Jak wykres pokazuje nazwy sygnałów: lista pod wykresem albo osobny opis w półprzezroczystej ramce przy każdym sygnale (po prawej stronie osi pionowej). Wybór zapisuje się przy tym połączeniu (jeśli możesz je edytować); „wg połączenia” = ustawienie połączenia lub domyślne konta.">Nazwy sygnałów <select data-x="lst"><option value="">wg połączenia</option><option value="legend">Legenda (lista)</option><option value="labels">Opisy przy sygnałach</option></select></label>
+    <label title="Pauza między Stop a Start odczytu: pusta przerwa w pełnej długości albo wycięta z wykresu (linie się stykają, w tym miejscu stoi jeden znacznik, a opisy osi czasu przeskakują, np. 30 s | 50 s). Wybór zapisuje się przy tym połączeniu (jeśli możesz je edytować); „wg połączenia” = ustawienie połączenia.">Przerwy Stop → Start <select data-x="gj"><option value="">wg połączenia</option><option value="full">Pełna przerwa</option><option value="join">Wytnij z wykresu</option></select></label>
     <label title="Opisy osi czasu: sekundy od startu albo zegar HH:MM:SS.mmm – serwera (aplikacji) lub sterownika PLC">Oś czasu <select data-x="tax"><option value="">wg połączenia</option><option value="rel">Względna</option><option value="app">Czas aplikacji</option><option value="plc">Czas PLC</option></select></label>
     <span title="Korekta czasu na osi zegarowej: znak, data (pełne doby) i godzina HH:MM:SS.mmm (puste = wg połączenia)">Offset
       <select data-x="toff-s"><option value="1">+</option><option value="-1">-</option></select>
@@ -196,6 +246,7 @@ function cxToolbar(box, cv) {
   q("lay").onchange = () => { st.layout = q("lay").value; st.cfg.redraw(); };
   q("leg").onchange = () => { st.legend = q("leg").value; st.cfg.redraw(); };
   q("lst").onchange = () => legendStyleThis(cv, q("lst").value);
+  q("gj").onchange = () => gapJoinThis(cv, q("gj").value);
   cv.addEventListener("contextmenu", (e) => {                                            // right click on a name box: what the names show, legend / labels style
     const tg = cxTagAt(cv, e); if (!tg) return;
     e.preventDefault(); e.stopImmediatePropagation();
@@ -214,19 +265,21 @@ function cxToolbar(box, cv) {
 function cxAttachOverview(cfg, clampRange) {
   const ov = cfg.overview.cv; let drag = null;
   const px = (ev) => { const r = ov.getBoundingClientRect(); return (ev.clientX - r.left) * ov.width / r.width; };
-  const span = () => cfg.limits(), tOf = (x) => { const [lo, hi] = span(); return lo + Math.min(Math.max(x / ov.width, 0), 1) * (hi - lo); };
+  const gmo = () => cfg.gm || null, D = (t) => gmD(gmo(), t), R = (x, hi) => gmR(gmo(), x, hi);          // the strip is drawn on display positions too
+  const span = () => cfg.limits(), tOf = (x) => { const [lo, hi] = span(), d0 = D(lo); return R(d0 + Math.min(Math.max(x / ov.width, 0), 1) * (D(hi) - d0)); };
+  const shift = (r, dd) => clampRange(R(D(r[0]) + dd), R(D(r[1]) + dd, true));
   ov.addEventListener("mousedown", (e) => {
-    const [lo, hi] = span(); if (!(hi > lo)) return;
-    const x = px(e), t = tOf(x), [a, b] = cfg.range(), xa = (a - lo) / (hi - lo) * ov.width, xb = (b - lo) / (hi - lo) * ov.width;
+    const [lo, hi] = span(); if (!(D(hi) > D(lo))) return;
+    const x = px(e), t = tOf(x), [a, b] = cfg.range(), sp = D(hi) - D(lo), xa = (D(a) - D(lo)) / sp * ov.width, xb = (D(b) - D(lo)) / sp * ov.width;
     if (Math.abs(x - xa) < 7) drag = { part: "a" }; else if (Math.abs(x - xb) < 7) drag = { part: "b" };
     else if (x > xa && x < xb) drag = { part: "body", t0: t, r: [a, b] };
-    else { const w = b - a, [na, nb] = clampRange(t - w / 2, t + w / 2); cfg.setRange(na, nb); drag = { part: "body", t0: t, r: [na, nb] }; }
+    else { const w = D(b) - D(a), [na, nb] = clampRange(R(D(t) - w / 2), R(D(t) + w / 2, true)); cfg.setRange(na, nb); drag = { part: "body", t0: t, r: [na, nb] }; }
   });
   window.addEventListener("mousemove", (e) => {
     if (!drag) return; const t = tOf(px(e)), [a, b] = cfg.range();
-    if (drag.part === "a") cfg.setRange(...clampRange(Math.min(t, b - CX_MIN_WINDOW), b));
-    else if (drag.part === "b") cfg.setRange(...clampRange(a, Math.max(t, a + CX_MIN_WINDOW)));
-    else { const dt = t - drag.t0; cfg.setRange(...clampRange(drag.r[0] + dt, drag.r[1] + dt)); }
+    if (drag.part === "a") cfg.setRange(...clampRange(R(Math.min(D(t), D(b) - CX_MIN_WINDOW)), b));
+    else if (drag.part === "b") cfg.setRange(...clampRange(a, R(Math.max(D(t), D(a) + CX_MIN_WINDOW), true)));
+    else cfg.setRange(...shift(drag.r, D(t) - D(drag.t0)));
   });
   window.addEventListener("mouseup", () => { drag = null; });
 }
@@ -235,13 +288,13 @@ function cxOverview(cv) {
   const o = ovc.cv, ds = ovc.ds(), g = o.getContext("2d"), W = o.width, H = o.height;
   g.fillStyle = "#0a0a0a"; g.fillRect(0, 0, W, H);
   if (!ds || !ds.t.length) return;
-  const [lo, hi] = st.cfg.limits(), sp = (hi - lo) || 1, X = (t) => (t - lo) / sp * W;
+  const gm = st.cfg.gm || null, [lo, hi] = st.cfg.limits(), sp = (gmD(gm, hi) - gmD(gm, lo)) || 1, X = (t) => (gmD(gm, t) - gmD(gm, lo)) / sp * W;
   ds.names.forEach((_, k) => {
     const col = ds.values[k] || [], fin = col.filter((x) => x !== null && x !== undefined);
     if (!fin.length) return; const a = Math.min(...fin), b = Math.max(...fin), s = b - a || 1;
     g.strokeStyle = (ds.colors || [])[k] || COLORS[k % COLORS.length]; g.globalAlpha = 0.8; g.lineWidth = 1; g.beginPath(); let pen = false, py = 0;
     for (let i = 0; i < ds.t.length; i++) {
-      const v = col[i]; if (v === null || v === undefined) { pen = false; continue; }
+      const v = col[i]; if (v === null || v === undefined) { if (!gmIn(gm, ds.t[i])) pen = false; continue; }          // (the empty rows of a cut-out pause do not break the line)
       const x = X(ds.t[i]), y = H - 4 - (v - a) / s * (H - 8);
       if (!pen) { g.moveTo(x, y); pen = true; } else { g.lineTo(x, py); g.lineTo(x, y); }
       py = y;

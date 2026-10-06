@@ -54,7 +54,7 @@ class TabRecMarks:
         return fmt_us(self.mk.to_wall(t))
 
     def items(self) -> list[dict]:
-        return self.m.items(self.tab.plot.mlook, self._fmt)
+        return self.m.items(self.tab.plot.mlook, self._fmt, self.tab.cfg.gap_join)
 
     def unsaved(self) -> list[dict]:
         return self.m.unsaved()
@@ -119,7 +119,11 @@ class TabRecMarks:
             if g is None:
                 return
             stop = kind == rmk.SCAN_STOP
-            menu.addAction(f"{'Stop' if stop else 'Start'} odczytu ({n}): {self._fmt(g['t0'] if stop else g['t1'])}").setEnabled(False)
+            if self.tab.cfg.gap_join:                                # one mark stands for both ends of the cut-out pause
+                menu.addAction(f"Stop odczytu ({n}): {self._fmt(g['t0'])}").setEnabled(False)
+                menu.addAction(f"Start odczytu ({n}): {self._fmt(g['t1'])}").setEnabled(False)
+            else:
+                menu.addAction(f"{'Stop' if stop else 'Start'} odczytu ({n}): {self._fmt(g['t0'] if stop else g['t1'])}").setEnabled(False)
             menu.addAction(f"przerwa w odczycie: {g['t1'] - g['t0']:.1f} s").setEnabled(False)
         elif kind == rmk.AUTO_STOP:
             menu.addAction(f"Stop REC ({n}): {self._fmt(self.m.span(n)['t1'])}").setEnabled(False)

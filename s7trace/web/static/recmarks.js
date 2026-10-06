@@ -21,7 +21,7 @@ function recmRun(ds) {   // a new run of the connection (another start time): th
   if (ds.start_us) RECM.run.set(id, ds.start_us);
 }
 function recmPaint(g, cv, ds, geo) {   // called by drawChart after the markers
-  const { t0, t1, pad, W, H } = geo, X = (t) => pad.l + (t - t0) / ((t1 - t0) || 1) * (W - pad.l - pad.r);
+  const { t0, t1, pad, W, H } = geo, X = (t) => cxX(geo, t);
   const col = MKLOOK.rec_color, lw = MKLOOK.rec_width, dash = MK_STYLES[MKLOOK.rec_style] || [], top = pad.t, bot = H - pad.b;
   const rgba = (hex, a) => { const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16},${n >> 8 & 255},${n & 255},${a})`; };
   recmRun(ds); cv._recHits = [];
@@ -29,8 +29,8 @@ function recmPaint(g, cv, ds, geo) {   // called by drawChart after the markers
   const vline = (x, c, w, d) => { g.setLineDash(d); g.strokeStyle = c; g.lineWidth = w; g.beginPath(); g.moveTo(x, top); g.lineTo(x, bot); g.stroke(); g.setLineDash([]); };
   const label = (text, x, c, row, left) => { g.fillStyle = c; g.textAlign = left ? "right" : "left"; g.fillText(text, x + (left ? -4 : 4), top + 12 + row * 12); };
   const vis = (x) => x >= pad.l - 1 && x <= W - pad.r + 1;
-  if (MKLOOK.rec_show) for (const gp of recmGaps()) {                    // Stop / Start of the reading: the chart has a gap between them
-    for (const [t, text] of [[gp.t0, `Stop odczytu (${gp.n})`], [gp.t1, `Start odczytu (${gp.n})`]]) { const xs = X(t); if (vis(xs)) { vline(xs, col, lw, MK_STYLES.dot || [2, 3]); label(text, xs, col, 0, t === gp.t0); } }
+  if (MKLOOK.rec_show) for (const gp of recmGaps()) {                    // Stop / Start of the reading: the chart has a gap between them (cut out: one mark at the junction)
+    for (const [t, text] of geo.gm ? [[gp.t0, `Stop / Start odczytu (${gp.n})`]] : [[gp.t0, `Stop odczytu (${gp.n})`], [gp.t1, `Start odczytu (${gp.n})`]]) { const xs = X(t); if (vis(xs)) { vline(xs, col, lw, MK_STYLES.dot || [2, 3]); label(text, xs, col, 0, t === gp.t0); } }
   }
   if (MKLOOK.rec_show) for (const a of recmAuto()) {
     if (a.t1 !== null && a.t1 !== undefined && a.t1 > a.t0) {            // the recorded stretch: a translucent area under the two lines (like a Manual REC area)
@@ -156,8 +156,8 @@ function recmPlaces() {   // every REC mark that can be shown: [name, chart time
   return out.sort((x, y) => x[1] - y[1]).map(([name, t]) => ({ label: `${name} – ${recmClock(ds, t)}`, fn: () => recmShow(t) }));
 }
 function recmShow(t) {   // 'Pokaż…': the view stops scrolling (like Pauza in the program) and moves to the mark
-  const cv = $("canvas"), [x0, x1] = liveRange(), w = x1 - x0;
-  if (cv && cv._cx && cv._cx.cfg.setRange) cv._cx.cfg.setRange(t - w / 2, t + w / 2);
+  const cv = $("canvas"), [x0, x1] = liveRange(), gm = cv?._geo?.gm || null, w = gmD(gm, x1) - gmD(gm, x0), dc = gmD(gm, t);          // (the width counts scanned time)
+  if (cv && cv._cx && cv._cx.cfg.setRange) cv._cx.cfg.setRange(gmR(gm, dc - w / 2), gmR(gm, dc + w / 2, true));
   MK.live.redraw();
 }
 function recmChartItems(t) {   // the REC part of the menu of the empty chart
