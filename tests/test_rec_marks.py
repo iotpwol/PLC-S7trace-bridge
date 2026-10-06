@@ -51,7 +51,7 @@ def test_auto_marks_are_numbered_and_follow_the_look():
     rm.stopped(9.0)
     assert rm.started(12.0, "s2") == 2
     look = marker_look.normalize({})
-    items = rm.items(look)
+    items = [it for it in rm.items(look) if not it.get("passive")]                  # (the translucent area between Start and Stop is passive)
     titles = [it["title"] for it in items]
     assert titles == ["Start REC (1)", "Stop REC (1)", "Start REC (2)"]               # the second recording is still running
     assert all(it["color"] == "#ff8c1a" and it["width"] == 2 and it["kind"] == "point" for it in items)

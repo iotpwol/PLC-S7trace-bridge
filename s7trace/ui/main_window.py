@@ -13,11 +13,12 @@ from ..core import marker_look, panel_cfg, render_cfg, sessions, web_agent
 from ..core import symbols as sym
 from ..core.config import TabConfig, app_dir, load_app_config, save_app_config, symbols_path
 from ..core.naming import suggest_config_name
+from ..core.types import LEGEND_STYLES
 from . import theme as th
 from .help_dialog import HelpDialog
 from .conn_dialog import ConnectionDialog
 from ..version import about_lines
-from . import help_mode
+from . import help_mode, tray
 from .interface_dialog import InterfaceDialog
 from .render_dialog import RenderDialog
 from .marker_look_dialog import MarkerLookDialog
@@ -140,7 +141,9 @@ class MainWindow(QMainWindow):
         lay.addWidget(bar)
         lay.addWidget(plus)
         lay.addWidget(self.help_btn)
+        self.tray = tray.TrayController(self)                    # the program's icon in the notification area (optional)
         self._build_menu()
+        self.set_app_icon(self.ui.get("app_icon", "taskbar"))
         self._corner, self._plus = corner, plus       # keep the Python wrappers alive
         self.menuBar().setCornerWidget(corner, Qt.TopRightCorner)
 
@@ -209,16 +212,19 @@ class MainWindow(QMainWindow):
         self.act_points = self._act(v, "Punkty (znaczniki próbek na krzywych, ta karta)",
                                     lambda on: self._cur(lambda t: t.act_pts.setChecked(on)), checked=False)
         v.addSeparator()
-        self.menu_style = v.addMenu("Nazwy sygnałów na wykresie")
+        self.menu_style = v.addMenu("Nazwy sygnałów na wykresie (ta karta)")
         self.grp_style = QActionGroup(self)
         self.act_style = {}
-        for key, label in (("legend", "Legenda (ramka z listą w rogu)"), ("labels", "Opisy przy sygnałach (po prawej stronie osi Y)")):
+        for key, label in LEGEND_STYLES:
             a = self.menu_style.addAction(label)
             a.setCheckable(True)
             a.setChecked(key == self.ui.get("theme", {}).get("legend_style", "legend"))
             self.grp_style.addAction(a)
-            a.triggered.connect(lambda _=False, k=key: self._edit_theme({"legend_style": k}))
+            a.triggered.connect(lambda _=False, k=key: self._cur(lambda t: t.set_legend_style(k)))
             self.act_style[key] = a
+        self.menu_style.addSeparator()
+        for key, label in LEGEND_STYLES:
+            self._act(self.menu_style, "Wszystkie otwarte karty: " + label, lambda k=key: self._legend_style_all(k))
         self.menu_legend = v.addMenu("Położenie legendy (ta karta)")
         for label, pos in (("Lewy górny róg", (0, 0)), ("Prawy górny róg", (1, 0)),
                            ("Lewy dolny róg", (0, 1)), ("Prawy dolny róg", (1, 1))):
@@ -259,6 +265,15 @@ class MainWindow(QMainWindow):
         self._act(st, "Interfejs (kolory, czcionki)…", self.edit_interface)
         self._act(st, "Renderowanie wykresu (odświeżanie, punkty, obciążenie CPU)…", self.edit_render)
         self._act(st, "Serwer Web (zgłaszanie sesji i wspólny rejestr)…", self.edit_web_server)
+        self.menu_icon = st.addMenu("Ikona programu (pasek zadań / przy zegarze)")
+        self.grp_icon = QActionGroup(self)
+        self.act_icon = {}
+        for key, label in tray.MODES:
+            a = self.menu_icon.addAction(label)
+            a.setCheckable(True)
+            self.grp_icon.addAction(a)
+            a.triggered.connect(lambda _=False, k=key: self.set_app_icon(k))
+            self.act_icon[key] = a
         self.menu_saved = st.addMenu("Zapisane konfiguracje interfejsu")
         self.menu_saved.aboutToShow.connect(self._fill_saved_menu)
         self.menu_profile = st.addMenu("Profil kolorów")
@@ -280,6 +295,8 @@ class MainWindow(QMainWindow):
     def _sync_tab_actions(self) -> None:
         """The checkable menu items (Punkty, Znacznik poziomu sygnału) show the state of the current tab."""
         t = self.tabs.currentWidget()
+        if hasattr(self, "act_style"):                          # the legend style of the current tab (or the interface default without a tab)
+            self.act_style[t.plot.legend_style if t is not None else self.theme["legend_style"]].setChecked(True)
         for act, src in ((self.act_points, "act_pts"), (self.act_hlevel, "act_hlev")):
             act.blockSignals(True)
             act.setChecked(bool(t is not None and getattr(t, src).isChecked()))
@@ -373,8 +390,8 @@ class MainWindow(QMainWindow):
         for i in range(self.tabs.count()):
             self.tabs.widget(i).apply_plot_theme(self.theme["plot_bg"], self.theme["plot_fg"])
             self.tabs.widget(i).apply_ctl_theme(self.theme)
-        if hasattr(self, "act_style"):
-            self.act_style[self.theme["legend_style"]].setChecked(True)
+        if hasattr(self, "act_hlevel"):                          # (not yet while the menus are being built)
+            self._sync_tab_actions()
         self._relayout_tabs()
 
     # ------------------------------------------------- tab bar sizing / layout sync
@@ -426,6 +443,11 @@ class MainWindow(QMainWindow):
 
     def run_wizard(self, tab, page: int = 0) -> None:
         WizardDialog(tab, show_tab=page, parent=self).exec()
+
+    def _legend_style_all(self, style: str) -> None:
+        """'Wszystkie otwarte karty': the same signal-name style in every open tab (each keeps it as its own setting)."""
+        for i in range(self.tabs.count()):
+            self.tabs.widget(i).set_legend_style(style)
 
     def _edit_theme(self, changes: dict) -> None:
         """A change of the interface configuration made outside the 'Interfejs' window (e.g. the status bar menu)."""
@@ -502,6 +524,8 @@ class MainWindow(QMainWindow):
         tab.other_tabs = self._other_tabs(tab)
         tab.panel_src = lambda: self.theme["panel"]
         tab.theme_edit = self._edit_theme
+        tab.legend_style_all = self._legend_style_all
+        tab.legendStyleChanged.connect(self._sync_tab_actions)
         tab.new_tab_cb = self.new_tab
         i = self.tabs.addTab(tab, tab.title())
         tab.stateChanged.connect(lambda s, t=tab: self._tab_state(t, s))
@@ -703,6 +727,18 @@ class MainWindow(QMainWindow):
         SessionsDialog(self.registry, self).exec()
 
     # ---------------------------------------------------------- close
+    def set_app_icon(self, mode: str) -> None:
+        """Ustawienia -> Ikona programu: taskbar / notification area next to the clock / both (saved in the interface section)."""
+        mode = tray.normalize(mode)
+        self.ui["app_icon"] = mode
+        self.act_icon[mode].setChecked(True)
+        self.tray.set_mode(mode)
+
+    def changeEvent(self, e):
+        super().changeEvent(e)
+        if e.type() == QEvent.WindowStateChange and self.isMinimized() and hasattr(self, "tray"):
+            self.tray.minimized()
+
     def closeEvent(self, e):
         for i in range(self.tabs.count()):                        # unsaved markers of any tab: remind before anything is closed
             tab = self.tabs.widget(i)
@@ -718,6 +754,7 @@ class MainWindow(QMainWindow):
                 if not tab.mk.confirm_buffer("close", tab._key_shared()):
                     e.ignore()
                     return
+        self.tray.icon.setVisible(False)                          # no ghost icon left in the notification area
         self._heartbeat.stop()
         if self._reporter is not None:
             self._reporter.stop()

@@ -51,6 +51,8 @@ def test_start_stop_start_continues_with_a_gap_and_auto_reset_starts_over(sim, m
         t, v = h.buffer.snapshot()
         assert np.isnan(v[:, 0]).any() and np.all(np.diff(t) >= 0)
         first_new = t[n1:][~np.isnan(v[n1:, 0])][0]
+        gaps = h.describe("ola", "admin")["rec"]["gaps"]                       # Stop / Start of the reading, drawn by the browser
+        assert len(gaps) == 1 and gaps[0]["t1"] - gaps[0]["t0"] >= 1.0 and abs(gaps[0]["t1"] - gaps[0]["t0"] - (first_new - gaps[0]["t0"])) < 6.0
         assert 1.2 <= first_new - last1 < 6.0
         h.stop()
         assert _wait(lambda: h.state == "stopped")
@@ -73,6 +75,7 @@ def test_reset_while_running_keeps_the_time_axis_and_stopped_starts_afresh(mgr):
     wall = h.start_wall
     h.reset_chart()
     assert len(h.buffer) == 0 and h.start_wall == wall and h.signals
+    assert h.reset_chart(restart_axis=True) is False                         # (no acquirer here: the axis cannot restart)
     fill(h)
     h.state = "stopped"
     h.reset_chart()

@@ -10,7 +10,8 @@ from __future__ import annotations
 from typing import Callable
 
 BASE = 1_000_000
-AUTO_START, AUTO_STOP, MANUAL = 1, 2, 3        # kinds of pseudo marker
+SCAN_STOP, SCAN_START = 5, 6                    # the pause of a connection: where the reading stopped / began again (a gap in the chart)
+AUTO_START, AUTO_STOP, MANUAL, AUTO_AREA = 1, 2, 3, 4        # kinds of pseudo marker (AUTO_AREA = the area between Start and Stop, not clickable)
 
 
 def pid(kind: int, n: int) -> int:
@@ -37,10 +38,18 @@ class RecMarks:
 
     def reset(self) -> None:
         self.auto: list[dict] = []          # {n, t0, t1 (None while recording), sid (database recording), file (CSV file name)}
+        self.gaps: list[dict] = []          # {n, t0 (last sample before a pause), t1 (first sample after it)}: Stop / Start of the reading
         self.manual: list[dict] = []        # {n, a, b (None until the stop is placed), saved (text of where it went or "")}
         self.ghost: dict | None = None      # {n, t}: the moved Start REC
         self.hold = False                   # True while a recorder is re-opened for the same recording (new signals added)
         self.version += 1
+
+    def add_gap(self, t0: float, t1: float) -> int:
+        """The connection was stopped and started again with the chart kept: a Stop / Start pair with the empty stretch between them."""
+        n = max((g["n"] for g in self.gaps), default=0) + 1
+        self.gaps.append({"n": n, "t0": float(t0), "t1": float(t1)})
+        self.version += 1
+        return n
 
     # ---- automatic marks (driven by the recorder)
     def started(self, t: float, sid: str = "", file: str = "") -> int:
@@ -72,8 +81,9 @@ class RecMarks:
             self.version += 1
 
     # ---- ghost of a Start REC being moved
-    def set_ghost(self, n: int | None, t: float = 0.0) -> None:
-        self.ghost = None if n is None else {"n": n, "t": float(t)}
+    def set_ghost(self, n: int | None, t: float = 0.0, kind: str = "start") -> None:
+        """kind 'start' = the twin of a Start REC being moved, 'manual' = the twin of the start of a Manual REC area / its open start."""
+        self.ghost = None if n is None else {"n": n, "t": float(t), "kind": kind}
         self.version += 1
 
     # ---- manual areas
@@ -135,6 +145,22 @@ class RecMarks:
     def name_manual(n: int) -> str:
         return f"Manual REC ({n})"
 
+    def places(self) -> list[tuple[str, float]]:
+        """(name, chart time) of every REC mark that can be shown: Start / Stop REC, the Manual REC edges, Stop / Start of the reading; by time."""
+        out: list[tuple[str, float]] = []
+        for a in self.auto:
+            out.append((self.name_start(a["n"]), a["t0"]))
+            if a["t1"] is not None:
+                out.append((self.name_stop(a["n"]), a["t1"]))
+        for m in self.manual:
+            out.append((f"Manual Start REC ({m['n']})", m["a"]))
+            if m["b"] is not None:
+                out.append((f"Manual Stop REC ({m['n']})", m["b"]))
+        for g in self.gaps:
+            out.append((f"Stop odczytu ({g['n']})", g["t0"]))
+            out.append((f"Start odczytu ({g['n']})", g["t1"]))
+        return sorted(out, key=lambda x: x[1])
+
     # ---- what the chart draws
     def items(self, look: dict, fmt: Callable[[float], str] = lambda t: f"{t:.2f} s") -> list[dict]:
         """Items for PlotView.set_markers: Start / Stop REC lines (when switched on in the marker look) and the manual areas."""
@@ -145,15 +171,23 @@ class RecMarks:
             return {"id": pid(kind, n), "kind": "point", "x0": t, "x1": t, "color": col, "width": width, "style": style, "opacity": 0,
                     "priority": 3, "title": title, "tip": tip, "signals": []}
 
+        opacity = int(look.get("rec_opacity", 24))
         if look.get("rec_show", 1):
+            for g in self.gaps:                                      # Stop / Start of the reading itself (not of the REC)
+                out.append({**line(SCAN_STOP, g["n"], g["t0"], f"Stop odczytu ({g['n']})",
+                                   f"<b>Stop odczytu ({g['n']})</b><br>{fmt(g['t0'])}<br>przerwa {g['t1'] - g['t0']:.1f} s"), "style": "dot"})
+                out.append({**line(SCAN_START, g["n"], g["t1"], f"Start odczytu ({g['n']})",
+                                   f"<b>Start odczytu ({g['n']})</b><br>{fmt(g['t1'])}<br>po przerwie {g['t1'] - g['t0']:.1f} s"), "style": "dot"})
             for a in self.auto:
+                if a["t1"] is not None and a["t1"] > a["t0"]:        # the recorded stretch: a translucent area under the two lines
+                    out.append({"id": pid(AUTO_AREA, a["n"]), "kind": "range", "x0": a["t0"], "x1": a["t1"], "color": col, "width": 1,
+                                "style": "solid", "opacity": opacity, "priority": 1, "title": "", "tip": "", "signals": [], "passive": True})
                 out.append(line(AUTO_START, a["n"], a["t0"], self.name_start(a["n"]),
                                 f"<b>{self.name_start(a['n'])}</b><br>{fmt(a['t0'])}" + ("" if a["t1"] is not None else "<br>nagrywanie trwa")))
                 if a["t1"] is not None:
                     dur = a["t1"] - a["t0"]
                     out.append(line(AUTO_STOP, a["n"], a["t1"], self.name_stop(a["n"]),
                                     f"<b>{self.name_stop(a['n'])}</b><br>{fmt(a['t1'])}<br>czas nagrywania {dur:.1f} s"))
-        opacity = int(look.get("rec_opacity", 24))
         for m in self.manual:
             n = m["n"]
             saved = f"<br><i>zapisano: {m['saved']}</i>" if m["saved"] else "<br>niezapisany – prawy przycisk → „Zapis Manual REC”"

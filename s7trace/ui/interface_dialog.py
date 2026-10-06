@@ -81,8 +81,9 @@ class InterfaceDialog(QDialog):
         self.legend_style.addItem("Legenda (ramka z listą)", "legend")
         self.legend_style.addItem("Opisy przy sygnałach", "labels")
         self.legend_style.setToolTip("Jak wykres pokazuje nazwy sygnałów: jedna legenda w rogu albo osobny opis (nazwa w półprzezroczystej ramce) "
-                                     "przy każdym sygnale, po prawej stronie osi pionowej. To samo: Widok → Opis sygnałów na wykresie.")
-        form.addRow("Nazwy sygnałów na wykresie:", self.legend_style)
+                                     "przy każdym sygnale, po prawej stronie osi pionowej. To jest ustawienie DOMYŚLNE: karta, której styl wybrano osobno "
+                                     "(Widok → Nazwy sygnałów na wykresie albo prawy przycisk myszy na legendzie), zachowuje własny.")
+        form.addRow("Nazwy sygnałów (domyślnie):", self.legend_style)
         self.chk_bar = QCheckBox("Belki zmiany rozmiaru zawsze widoczne")
         self.chk_bar.setToolTip("Belka między panelem ustawień a wykresem oraz nad wykresem przeglądowym służy do zmiany "
                                 "rozmiaru (przeciąganie) i do schowania / pokazania panelu (dwukrotne kliknięcie). "

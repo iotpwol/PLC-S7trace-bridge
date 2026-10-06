@@ -401,7 +401,7 @@ class Handler(BaseHTTPRequestHandler):
         cfg = TabConfig()
         patch = {k: v for k, v in d.items() if k in ("name", "ip", "rack", "slot", "cycle_ms", "conn_type", "conn", "mode",
                                                    "window_s", "signals", "trigger", "rec", "y_layout", "auto_y", "y_min", "y_max",
-                                                   "show_points", "legend_mode", "time_axis", "time_offset")}
+                                                   "show_points", "legend_mode", "legend_style", "time_axis", "time_offset")}
         try:
             web = {}
             editing.apply(cfg, patch, running=False, web=web, targets=self.app.targets.names())
@@ -463,7 +463,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.app.hosts.save(host.owner)
                 host.version += 1
             else:
-                host.reset_chart()
+                host.reset_chart(bool(d.get("axis")))             # {axis: true}: the time axis of a running connection starts from 0 again
         elif action == "read-device":                  # 'Pobierz dane sterownika': only the controller data + its clock, no acquisition
             if not host.can_run(user, role):
                 return self._error(403, "Brak uprawnień do tego połączenia.")
@@ -510,7 +510,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._error(400, str(e) or "Niepoprawny zakres.")
             rid, a_us, b_us = getattr(host, "last_link", ("", 0, 0))
             self.app.markers.link_range(host.id, rid, a_us, b_us)                  # markers inside the area belong to the new recording
-            return self._json({"ok": True, "where": where})
+            return self._json({"ok": True, "where": where, "rec_id": rid, "a_us": a_us, "b_us": b_us})
         elif action == "rec-start":                    # 'Zmień Start REC (n)': move the start of a recording
             if not host.can_run(user, role):
                 return self._error(403, "Brak uprawnień do tego połączenia.")

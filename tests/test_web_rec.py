@@ -358,12 +358,14 @@ def test_http_help_version_and_legend_data(srv, sim):
     assert anon.get("/api/version")[1]["version"] == version.VERSION and anon.get("/api/version")[1]["author"] == "PWOL79 & CLAUDE"
     h = anon.get("/api/help")[1]["help"]
     assert "cykl [ms]" in h and "Do czego służy" in h["start"] and "pobierz" in h
-    st, d = ola.post("/api/connections", {"name": "L", "ip": f"127.0.0.1:{PORT}", "slot": 2, "cycle_ms": 25, "window_s": 2, "legend_mode": "address", "time_axis": "plc", "time_offset": 1.5,
+    st, d = ola.post("/api/connections", {"name": "L", "ip": f"127.0.0.1:{PORT}", "slot": 2, "cycle_ms": 25, "window_s": 2, "legend_mode": "address", "legend_style": "labels", "time_axis": "plc", "time_offset": 1.5,
                                           "signals": [{"name": "b0", "dtype": "BOOL", "db": 1, "byte": 100, "bit": 0, "comment": "pierwszy"}]})
     assert st == 200
     cid = d["id"]
     try:
         assert ola.get(f"/api/connections/{cid}/config")[1]["legend_mode"] == "address"
+        assert ola.get(f"/api/connections/{cid}/config")[1]["legend_style"] == "labels"                 # signal names on the chart: kept per connection
+        assert ola.post("/api/connections", {"name": "X", "ip": "127.0.0.1", "legend_style": "nope"})[0] == 400
         cfg = ola.get(f"/api/connections/{cid}/config")[1]
         assert "plc_diff" in cfg and cfg["server_now"] > 1.7e9 and isinstance(cfg["server_tz"], int)
         assert cfg["time_axis"] == "plc" and cfg["time_offset"] == 1.5                       # the time axis of the connection (editor)
@@ -377,6 +379,9 @@ def test_http_help_version_and_legend_data(srv, sim):
         s = ola.get(f"/api/connections/{cid}/series?seconds=5")[1]
         assert s["addresses"] == ["DB1.DBX100.0"] and s["layout"]["legend_mode"] == "address"
         assert s["layout"]["time_axis"] == "plc" and s["layout"]["time_offset"] == 1.5 and "plc_diff" in s and s["start_us"] > 0 and isinstance(s["tz_offset"], int)
+        assert s["layout"]["legend_style"] == "labels"
+        assert ola.post(f"/api/connections/{cid}/config", {"legend_style": "legend"})[0] == 200               # allowed while running
+        assert ola.get(f"/api/connections/{cid}/series?seconds=5")[1]["layout"]["legend_style"] == "legend"
         assert "Adres: DB1.DBX100.0" in s["tips"][0] and "Opis: pierwszy" in s["tips"][0] and "Aktualna wartość" not in s["tips"][0]
         assert any(a == "Model CPU" for a, _ in ola.get(f"/api/connections/{cid}/config")[1]["device"])
     finally:

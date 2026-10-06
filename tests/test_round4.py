@@ -173,12 +173,12 @@ def test_lane_xf_maps_min_max_to_lane_edges(app):
 
 def test_y_layout_switch_and_axis_labels(app):
     tab, _ = _loaded_tab()
-    ax = tab.plot.plot.getAxis
-    assert ax("left").labelText == "Sygnały" and ax("bottom").labelText == "Czas"
+    pv = tab.plot
+    assert pv.title_y.toPlainText() == "Sygnały" and pv.title_x.toPlainText() == "Czas"        # titles drawn behind the numbers, no room of their own
     assert not tab.chk_auto.isEnabled() and not tab.sp_ymin.isEnabled()         # Auto Y / Y min / Y max: not in lanes
     tab.cb_ylayout.setCurrentIndex(tab.cb_ylayout.findData("offset"))
     tab.plot.refresh(force=True)
-    assert ax("left").labelText == "Offset" and tab.cfg.y_layout == "offset"
+    assert pv.title_y.toPlainText() == "Offset" and tab.cfg.y_layout == "offset"
     assert tab.chk_auto.isEnabled()
     tab.shutdown()
 

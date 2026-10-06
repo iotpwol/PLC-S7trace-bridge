@@ -918,21 +918,49 @@ class TabMarkers:
         a = m.addAction("Dodaj znacznik różnicy poziomu…", lambda: self.add_at_us(self.to_wall(t), end_us=self.to_wall(t + w),
                                                                                  signals=[sig], kind="delta"))
         a.setEnabled(bool(sig))
-        self.rec.chart_menu(m, t)
+        self.rec.chart_menu(m, t)                                  # (its own group, separated above)
         if self.hi_group:
+            m.addSeparator()
             m.addAction(f"Wyłącz podświetlenie grupy „{self.hi_group}”", lambda: self.highlight_group(""))
         m.addSeparator()
         n = self.pending()
         a = m.addAction(f"Zapisz znaczniki ({n})…" if n else "Zapisz znaczniki")
         a.setEnabled(n > 0)
         a.triggered.connect(lambda: self.save())
+        m.addSeparator()
+        self._show_menu(m)
         m.addAction("Lista znaczników…", self.open_list)
         m.addAction("Szukaj w danych…", self.open_search)
+        m.addSeparator()
         a = m.addAction("Pokaż też znaczniki z innych połączeń")
         a.setCheckable(True)
         a.setChecked(self.show_all)
         a.toggled.connect(self._set_show_all)
         self._run_menu(m, pos)
+
+    SHOW_LIMIT = 40
+
+    def _show_menu(self, m: QMenu) -> None:
+        """'Pokaż znacznik…': the markers of this chart by time; a choice pauses the chart and shows it in the middle (the list window has the rest)."""
+        sub = m.addMenu("Pokaż znacznik…")
+        dr = self.draft
+        found = [x for x in (dr.search(limit=5000) if dr else []) if x.conn in ("", self.key()) or self.show_all]
+        found.sort(key=lambda x: (x.at_us, x.id))
+        sub.setEnabled(bool(found))
+        for x in found[:self.SHOW_LIMIT]:
+            label = f"{fmt_us(x.at_us)} – {x.blurb()}"
+            sub.addAction(label if len(label) <= 70 else label[:69] + "…", lambda x=x: self._show_marker(x))
+        if len(found) > self.SHOW_LIMIT:
+            sub.addSeparator()
+            sub.addAction(f"…jeszcze {len(found) - self.SHOW_LIMIT} (okno „Lista znaczników”)", self.open_list)
+
+    def _show_marker(self, x) -> None:
+        if not self.goto_us(x.at_us, x.last_us):
+            if x.rec_id and x.id > 0:
+                self.tab.open_recording_at(x.rec_id, x.at_us, x.last_us, self.tab.plot.window)
+            else:
+                self.tab.status_msg = "Ten znacznik leży poza danymi tej karty."
+                self.tab._update_status()
 
     def level_signal(self) -> str:
         """The plot a level / difference marker set at the last right click is for: the lane under the click (lane layout),

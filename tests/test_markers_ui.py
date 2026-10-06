@@ -616,6 +616,9 @@ def test_double_click_on_a_marker_opens_the_editor(tab, monkeypatch):
 
         def double(self):
             return self._d
+
+        def scenePos(self):
+            return QPointF(-9999, -9999)               # far from the legend and the name labels
     tab.plot._marker_clicked(m.id, Ev(False))
     assert seen == []
     tab.plot._marker_clicked(m.id, Ev(True))
@@ -1489,3 +1492,37 @@ def test_signal_names_as_labels_instead_of_legend(app, tmp_path):
     assert pl.legend.isVisible() and not any(t.isVisible() for t in pl.tags)
     assert th.normalize({"legend_style": "x"})["legend_style"] == "legend"
     w.close()
+
+
+def test_signal_names_style_per_tab_and_for_all_tabs(app, tmp_path):
+    """The legend / labels style is a setting of every tab (saved in its configuration); the interface value is only the default."""
+    from s7trace.core.config import TabConfig
+    from s7trace.ui.main_window import MainWindow
+    w = MainWindow(config_file=str(tmp_path / "c.json"))
+    w.show()
+    t1 = w.tabs.widget(0)
+    t2 = w.new_tab()
+    assert t1.plot.legend_style == t2.plot.legend_style == "legend"
+    t2.set_legend_style("labels")                                              # one tab only
+    assert t1.plot.legend_style == "legend" and t2.plot.legend_style == "labels"
+    assert t2.cfg.legend_style == "labels" and t1.cfg.legend_style == ""
+    w.tabs.setCurrentIndex(w.tabs.indexOf(t2))
+    assert w.act_style["labels"].isChecked()                                   # the View menu shows the current tab
+    w.tabs.setCurrentIndex(w.tabs.indexOf(t1))
+    assert w.act_style["legend"].isChecked()
+    w._edit_theme({"legend_style": "labels"})                                  # the default: only the tab without a style of its own follows
+    assert t1.plot.legend_style == "labels" and t2.plot.legend_style == "labels"
+    t2.set_legend_style("legend")
+    w._edit_theme({"legend_style": "legend"})
+    w._edit_theme({"legend_style": "labels"})
+    assert t1.plot.legend_style == "labels" and t2.plot.legend_style == "legend"
+    menu = t1._build_legend_menu()                                             # 'all open tabs' sits in the legend / label menu
+    sub = next(a for a in menu.actions() if a.menu() and a.text().startswith("Nazwy sygnałów")).menu()
+    all_items = [a for a in sub.actions() if a.text().startswith("Wszystkie otwarte karty")]
+    assert len(all_items) == 2
+    next(a for a in all_items if "Legenda" in a.text()).trigger()
+    assert t1.plot.legend_style == t2.plot.legend_style == "legend" and t1.cfg.legend_style == t2.cfg.legend_style == "legend"
+    w._legend_style_all("labels")                                              # the View menu item
+    assert t1.plot.legend_style == t2.plot.legend_style == "labels"
+    assert TabConfig.from_dict(t1.cfg.to_dict()).legend_style == "labels"       # saved with the tab
+    assert TabConfig.from_dict({"legend_style": "rubbish"}).legend_style == ""

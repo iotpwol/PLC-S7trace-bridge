@@ -118,6 +118,7 @@ class ProcAcquirer:
         self.anchor_ts = anchor_ts
         self.time_offset = 0.0            # seconds added to the times of the samples (set when the child reports its start)
         self.gap_marked = False
+        self.gap: tuple[float, float] | None = None   # (chart time of the last sample before the pause, of the first one after it); read once by the owner
         self.on_info = on_info
         self.on_state = on_state or (lambda *_: None)
         self.on_sample = on_sample
@@ -187,7 +188,11 @@ class ProcAcquirer:
                         if self.anchor_ts is not None and not self.gap_marked:         # continuing a chart: keep its time axis
                             self.time_offset = time.time() - self.anchor_ts - (time.perf_counter() - t0)
                             if len(self.buffer):
-                                self.buffer.append(self.time_offset, [float("nan")] * self.buffer.n)     # the break between the runs
+                                last, nan = self.buffer.last_time(), [float("nan")] * self.buffer.n
+                                if self.time_offset - last > 0.002:        # the pause: the old values must not be held across it
+                                    self.buffer.append(last + 0.001, nan)
+                                self.buffer.append(self.time_offset, nan)  # ... and the break ends where the new run begins
+                                self.gap = (last, self.time_offset)          # (Stop, Start) on the chart: the owner draws the two marks
                             self.gap_marked = True
                     self.diag.note_state(state)
                     self.on_state(state, text)

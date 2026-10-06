@@ -11,7 +11,7 @@ const CX_MIN_WINDOW = 0.1;
 const CX_NUM = (v) => String(+(+v).toPrecision(5));
 
 function cxAttach(cv, cfg) {
-  const st = cv._cx = { hOn: false, h: [], layout: "", legend: "", taxis: "", toff: null, points: null, cfg, drag: null, pan: null };
+  const st = cv._cx = { hOn: false, h: [], layout: "", legend: "", lstyle: "", taxis: "", toff: null, points: null, cfg, drag: null, pan: null };
   const px = (ev) => { const r = cv.getBoundingClientRect(); return [(ev.clientX - r.left) * cv.width / r.width, (ev.clientY - r.top) * cv.height / r.height]; };
   const geo = () => cv._geo;
   const tAt = (x) => { const g = geo(); return g.t0 + Math.min(Math.max((x - g.pad.l) / (g.W - g.pad.l - g.pad.r), 0), 1) * (g.t1 - g.t0); };
@@ -180,7 +180,7 @@ function cxToolbar(box, cv) {
     <label title="Pokazuje punkty próbek na krzywych"><input type="checkbox" data-x="pts"> Punkty</label>
     <label>Układ <select data-x="lay"><option value="">wg połączenia</option><option value="lanes">Pasma wg Share</option><option value="offset">Offset Y + wzmocnienie</option></select></label>
     <label>Legenda <select data-x="leg"><option value="">wg połączenia</option><option value="name">Nazwa</option><option value="address">Adres / węzeł OPC</option></select></label>
-    <label title="Jak wykres pokazuje nazwy sygnałów: lista pod wykresem albo osobny opis w półprzezroczystej ramce przy każdym sygnale (po prawej stronie osi pionowej). Zapamiętywane w ustawieniach konta.">Nazwy sygnałów <select data-x="lst"><option value="legend">Legenda (lista)</option><option value="labels">Opisy przy sygnałach</option></select></label>
+    <label title="Jak wykres pokazuje nazwy sygnałów: lista pod wykresem albo osobny opis w półprzezroczystej ramce przy każdym sygnale (po prawej stronie osi pionowej). Wybór zapisuje się przy tym połączeniu (jeśli możesz je edytować); „wg połączenia” = ustawienie połączenia lub domyślne konta.">Nazwy sygnałów <select data-x="lst"><option value="">wg połączenia</option><option value="legend">Legenda (lista)</option><option value="labels">Opisy przy sygnałach</option></select></label>
     <label title="Opisy osi czasu: sekundy od startu albo zegar HH:MM:SS.mmm – serwera (aplikacji) lub sterownika PLC">Oś czasu <select data-x="tax"><option value="">wg połączenia</option><option value="rel">Względna</option><option value="app">Czas aplikacji</option><option value="plc">Czas PLC</option></select></label>
     <span title="Korekta czasu na osi zegarowej: znak, data (pełne doby) i godzina HH:MM:SS.mmm (puste = wg połączenia)">Offset
       <select data-x="toff-s"><option value="1">+</option><option value="-1">-</option></select>
@@ -195,14 +195,15 @@ function cxToolbar(box, cv) {
   q("pts").onchange = () => { st.points = q("pts").checked; st.cfg.redraw(); };
   q("lay").onchange = () => { st.layout = q("lay").value; st.cfg.redraw(); };
   q("leg").onchange = () => { st.legend = q("leg").value; st.cfg.redraw(); };
-  q("lst").onchange = () => legendStyleSet(q("lst").value);
+  q("lst").onchange = () => legendStyleThis(cv, q("lst").value);
   cv.addEventListener("contextmenu", (e) => {                                            // right click on a name box: what the names show, legend / labels style
     const tg = cxTagAt(cv, e); if (!tg) return;
     e.preventDefault(); e.stopImmediatePropagation();
     const mode = st.legend || cv._ds?.layout?.legend_mode || "name";
     ctxMenu(e.clientX, e.clientY, [["Legenda pokazuje", null, undefined, [["Nazwę sygnału", () => { st.legend = "name"; q("leg").value = "name"; st.cfg.redraw(); }, mode !== "address"],
         ["Adres / węzeł OPC", () => { st.legend = "address"; q("leg").value = "address"; st.cfg.redraw(); }, mode === "address"]]],
-      ["Nazwy sygnałów na wykresie", null, undefined, [["Legenda (lista)", () => legendStyleSet("legend"), LEGSTYLE !== "labels"], ["Opisy przy sygnałach", () => legendStyleSet("labels"), LEGSTYLE === "labels"]]]]);
+      ["Nazwy sygnałów na wykresie (to połączenie)", null, undefined, [["Legenda (lista)", () => legendStyleThis(cv, "legend"), legStyle(cv, cv._ds) !== "labels"], ["Opisy przy sygnałach", () => legendStyleThis(cv, "labels"), legStyle(cv, cv._ds) === "labels"],
+        "-", ["Wszystkie połączenia: Legenda (lista)", () => legendStyleAll("legend")], ["Wszystkie połączenia: Opisy przy sygnałach", () => legendStyleAll("labels")]]]]);
   }, true);
   cv.addEventListener("mousemove", (e) => { const tg = cxTagAt(cv, e); const nt = tg ? (cv._ds?.tips?.[tg.k] || cv._ds?.names?.[tg.k] || "") : ""; if (cv.title !== nt && (tg || cv.title)) cv.title = nt; });
   st.syncPoints = (def) => { if (st.points === null) q("pts").checked = !!def; };

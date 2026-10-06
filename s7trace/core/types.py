@@ -132,6 +132,7 @@ def signal_tip_static(s: "Signal") -> str:
     return signal_tip(s, None, reading=True).rsplit(chr(10), 1)[0]
 
 
+LEGEND_STYLES = (("legend", "Legenda (ramka z listą w rogu)"), ("labels", "Opisy przy sygnałach (po prawej stronie osi Y)"))
 LEGEND_MODES = {"name": "Nazwa", "address": "Adres / węzeł OPC"}
 TIME_AXES = {"rel": "Względna [s] (od startu)", "app": "Czas aplikacji (zegar komputera)", "plc": "Czas PLC (zegar sterownika)"}
 TIME_OFFSET_MAX = 3650 * 86400.0               # [s] largest correction of the time axis (10 years: a PLC whose date was never set)

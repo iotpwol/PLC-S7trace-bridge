@@ -169,7 +169,7 @@ def test_right_click_on_legend_opens_menu(app, monkeypatch):
     assert len(seen) == 1
     menu = seen[0]
     texts = [a.text() for a in menu.actions() if not a.isSeparator()]
-    assert texts == ["Sygnały…", "Legenda pokazuje", "Nazwy sygnałów na wykresie", "Położenie legendy (ta karta)", "Ukryj legendę"]
+    assert texts == ["Sygnały…", "Legenda pokazuje", "Nazwy sygnałów na wykresie (ta karta)", "Położenie legendy (ta karta)", "Ukryj legendę"]
     corners = next(a for a in menu.actions() if a.menu() and a.text().startswith("Położenie")).menu()
     next(a for a in corners.actions() if a.text() == "Prawy dolny róg").trigger()
     assert tab.cfg.legend_pos == [1.0, 1.0]

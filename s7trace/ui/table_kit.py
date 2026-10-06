@@ -42,8 +42,11 @@ class _Fit(QObject):
             self.manual = True
 
     def eventFilter(self, obj, ev):
+        hv = getattr(self, "hv", None)
+        if hv is None:                                        # the Python part is gone (its wrapper was collected): nothing to do
+            return False
         t = ev.type()
-        if obj is self.hv:
+        if obj is hv:
             if t == QEvent.MouseButtonPress:
                 self.pressed = True
             elif t in (QEvent.MouseButtonRelease, QEvent.Leave):

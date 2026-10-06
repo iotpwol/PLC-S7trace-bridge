@@ -153,6 +153,13 @@ function mkMenu(x, y, items) {
   const box = $("ctx"); box.innerHTML = "";
   for (const it of items) {
     if (it === "-") { box.appendChild(document.createElement("hr")); continue; }
+    if (it.sub) {   // a submenu: the list opens under the item (a click on a row picks it, the menu closes)
+      const b = document.createElement("button"), list = document.createElement("div"); b.textContent = it.label + " ▾"; b.disabled = !it.sub.length;
+      list.style.cssText = "margin-left:14px;max-height:260px;overflow-y:auto"; list.hidden = true;
+      for (const s of it.sub) { const r = document.createElement("button"); r.textContent = s.label; r.onclick = () => { mkMenuClose(); s.fn(); }; list.appendChild(r); }
+      b.onclick = (e) => { e.stopPropagation(); list.hidden = !list.hidden; box.style.top = Math.min(parseFloat(box.style.top), innerHeight - box.offsetHeight - 8) + "px"; };
+      box.appendChild(b); box.appendChild(list); continue;
+    }
     const b = document.createElement("button"); b.textContent = it.label; b.onclick = () => { mkMenuClose(); it.fn(); }; box.appendChild(b);
   }
   box.hidden = false; box.style.left = Math.min(x, innerWidth - 260) + "px"; box.style.top = Math.min(y, innerHeight - box.offsetHeight - 8) + "px";
@@ -355,6 +362,7 @@ function mkAttach(ctx) {
     mkdUpdate(m, body);
   });
   cv.addEventListener("contextmenu", (e) => {
+    if (typeof cxTagAt === "function" && cxTagAt(cv, e)) return;      // a name label over a marker: its menu (chartx.js) comes first
     e.preventDefault(); mkBubble("");
     if (ctx.place) { ctx.place = null; cv.style.cursor = ""; ctx.redraw(); return; }
     const h = ctx.marks.length ? mkHit(ctx, e) : null;
@@ -370,11 +378,18 @@ function mkAttach(ctx) {
       ...(ctx.kind === "live" && typeof recmChartItems === "function" ? recmChartItems(t) : []),
       ...(ctx.hi.size ? ["-", { label: "Wyłącz podświetlenie grupy", fn: () => { ctx.hi = new Set(); ctx.hiGroup = ""; ctx.redraw(); } }] : []),
       "-", { label: mkdCount() ? `Zapisz znaczniki (${mkdCount()})…` : "Zapisz znaczniki (brak zmian)", fn: () => mkSave() },
+      "-", { label: "Pokaż znacznik…", sub: mkShowItems(ctx) },
       { label: "Lista znaczników…", fn: () => mkOpenList(ctx) },
       { label: "Szukaj w danych…", fn: () => mkOpenSearch(ctx) },
-      ...(ctx.kind === "live" ? [{ label: (ctx.showAll ? "✓ " : "") + "Pokaż też znaczniki z innych połączeń", fn: () => { ctx.showAll = !ctx.showAll; ctx.reload(); } }] : []),
+      ...(ctx.kind === "live" ? ["-", { label: (ctx.showAll ? "✓ " : "") + "Pokaż też znaczniki z innych połączeń", fn: () => { ctx.showAll = !ctx.showAll; ctx.reload(); } }] : []),
       { label: "Wygląd znaczników (linie, REC)…", fn: mkLookOpen }]);
   });
+}
+function mkShowItems(ctx) {   // 'Pokaż znacznik…': the markers of this chart by time (at most 40); a choice shows it (gotoMarker)
+  const list = [...ctx.marks].sort((a, b) => a.at_us - b.at_us || a.id - b.id);
+  const it = list.slice(0, 40).map((m) => { const lab = `${new Date(m.at_us / 1000).toLocaleTimeString("pl-PL")} – ${m.title || m.description || "znacznik"}`; return { label: lab.length > 70 ? lab.slice(0, 69) + "…" : lab, fn: () => gotoMarker(m) }; });
+  if (list.length > 40) it.push({ label: `…jeszcze ${list.length - 40} (widok „Znaczniki”)`, fn: () => mkOpenList(ctx) });
+  return it;
 }
 async function mkAdd(ctx, m) {   // the marker joins the draft (see above); nothing is sent to the server yet
   await mkOpenDialog({ ...m, ...ctx.target() }, { names: ctx.ds().names, groups: await mkGroups() });

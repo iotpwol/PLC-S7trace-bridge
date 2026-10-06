@@ -8,7 +8,7 @@ from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from s7trace.core import markers as mk
+from s7trace.core import markers as mk, rec_marks as rmk
 from s7trace.core.acq_process import ProcAcquirer
 from s7trace.core.buffer import TraceBuffer
 from s7trace.core.config import TabConfig
@@ -177,9 +177,11 @@ def test_continuing_run_keeps_the_time_axis_and_marks_the_gap():
     tt, vv = buf.snapshot()
     assert abs(acq.time_offset - 30.0) < 0.5
     k = len(t)
-    assert len(tt) == k + 3 and np.isnan(vv[k]).all() and abs(tt[k] - 30.0) < 0.5            # the break between the runs
-    assert abs(tt[k + 1] - 30.1) < 0.5 and abs(got[0] - tt[k + 1]) < 1e-9
-    assert tt[k - 1] < tt[k] < tt[k + 1]
+    assert len(tt) == k + 4 and np.isnan(vv[k]).all() and np.isnan(vv[k + 1]).all()           # the break between the runs: NaN right after the old data ...
+    assert abs(tt[k] - (tt[k - 1] + 0.001)) < 1e-9 and abs(tt[k + 1] - 30.0) < 0.5             # ... (the old value is not held across the pause) and where the new run begins
+    assert abs(tt[k + 2] - 30.1) < 0.5 and abs(got[0] - tt[k + 2]) < 1e-9
+    assert tt[k - 1] < tt[k] < tt[k + 1] < tt[k + 2]
+    assert acq.gap is not None and abs(acq.gap[0] - tt[k - 1]) < 1e-9 and abs(acq.gap[1] - tt[k + 1]) < 1e-9     # the owner draws Stop / Start from it
     # a new chart (no anchor): times as before
     buf2 = TraceBuffer(2)
     acq2 = ProcAcquirer("127.0.0.1", 0, 1, 100, [Signal(name="A"), Signal(name="B")], "all", buf2)
@@ -233,10 +235,16 @@ def test_stop_and_start_continues_the_chart_with_a_gap_and_auto_reset_starts_ove
         assert tab.start_wall == wall                                        # the same time axis
         t, v = tab.buffer.snapshot()
         gap = np.where(np.isnan(v[:, 0]))[0]
-        assert len(gap) >= 1 and np.all(np.diff(t) >= 0)
+        bad = np.where(np.diff(t) < 0)[0]
+        assert len(gap) >= 1 and not len(bad), (gap, bad, [(i, t[i-1:i+3].tolist(), v[i-1:i+3, 0].tolist()) for i in bad[:3]], n1, last1)
         first_new = t[n1:][~np.isnan(v[n1:, 0])][0]
         assert first_new - last1 >= 1.2                                      # the break is as long as the pause (+ the connect time)
         assert first_new - last1 < 6.0
+        assert len(tab.mk.rec.m.gaps) == 1                                   # 'Stop odczytu (1)' / 'Start odczytu (1)' marks
+        g = tab.mk.rec.m.gaps[0]
+        assert abs(g["t0"] - last1) < 1e-6 and g["t1"] - g["t0"] >= 1.2
+        titles = sorted(c["data"]["title"] for mid, c in tab.plot.mitems.items() if rmk.is_rec(mid) and not c["data"].get("passive"))
+        assert titles == ["Start odczytu (1)", "Stop odczytu (1)"]
         tab.stop()
         assert _pump(lambda: tab.state == "stopped")
         tab.btn_reset.set_auto(True, emit=True)                              # Auto-Reset: the next Start begins a new chart
@@ -246,10 +254,59 @@ def test_stop_and_start_continues_the_chart_with_a_gap_and_auto_reset_starts_ove
         # Reset while running clears the buffer, the connection goes on and the time axis too
         tab.btn_reset.set_auto(False, emit=True)
         before = tab.buffer.last_time()
+        answers = []
+        tab._ask_reset = lambda: answers.pop(0)
+        answers.append(None)                                                 # the user backs out: nothing is cleared
+        tab.reset_chart()
+        assert len(tab.buffer) > 5 and tab.buffer.last_time() >= before
+        answers.append("keep")                                               # clear, the time axis goes on
         tab.reset_chart()
         assert _pump(lambda: len(tab.buffer) > 3)
         assert tab.buffer.first_time() >= before - 0.2
+        wall2 = tab.start_wall
+        answers.append("axis")                                               # clear and start the time axis from 0
+        tab.reset_chart()
+        assert tab.start_wall > wall2
+        assert _pump(lambda: len(tab.buffer) > 3)
+        assert tab.buffer.first_time() < 1.0 and tab.buffer.last_time() < 5.0
         tab.stop()
         assert _pump(lambda: tab.state == "stopped")
     finally:
         tab.shutdown()
+
+
+def test_reset_while_running_asks_and_rec_keeps_the_axis(app, monkeypatch):
+    """The dialog of 'Reset' during a reading: clear + restart the axis / clear only / cancel; with REC running there is no 'restart' button."""
+    from s7trace.ui.trace_tab import TraceTab
+    tab = _tab()
+    seen = []
+
+    class Box:
+        def __init__(self, *a, **k):
+            self.btns, self.text = [], a[2] if len(a) > 2 else ""
+            seen.append(self)
+
+        def addButton(self, text, role):
+            self.btns.append(text)
+            return text
+
+        def setDefaultButton(self, b):
+            pass
+
+        def exec(self):
+            pass
+
+        def clickedButton(self):
+            return self.pick(self.btns)
+    monkeypatch.setattr("s7trace.ui.trace_tab.QMessageBox", Box)
+    Box.Question = Box.AcceptRole = Box.RejectRole = 0
+    Box.pick = staticmethod(lambda b: b[0])
+    assert tab._ask_reset() == "axis" and seen[-1].btns == ["Wyczyść i zeruj oś czasu", "Wyczyść (oś czasu biegnie dalej)", "Anuluj"]
+    Box.pick = staticmethod(lambda b: b[1])
+    assert tab._ask_reset() == "keep"
+    Box.pick = staticmethod(lambda b: b[2])
+    assert tab._ask_reset() is None
+    tab.recorder = object()                                                  # REC runs: the axis must go on
+    Box.pick = staticmethod(lambda b: b[0])
+    assert tab._ask_reset() == "keep" and "Wyczyść i zeruj oś czasu" not in seen[-1].btns and "REC trwa" in seen[-1].text
+    tab.recorder = None

@@ -181,7 +181,7 @@ def menus():
     for title, file in names.items():
         H["shot_menu"](H["menu_by_title"](win, title), file)
     H["shot_menu"](H["sub_menu"](H["menu_by_title"](win, "Widok"), "Położenie legendy (ta karta)"), "menu_widok_legenda")
-    H["shot_menu"](H["sub_menu"](H["menu_by_title"](win, "Widok"), "Nazwy sygnałów na wykresie"), "menu_widok_nazwy")
+    H["shot_menu"](H["sub_menu"](H["menu_by_title"](win, "Widok"), "Nazwy sygnałów na wykresie (ta karta)"), "menu_widok_nazwy")
     st = H["menu_by_title"](win, "Ustawienia")
     H["shot_menu"](H["sub_menu"](st, "Zapisane konfiguracje interfejsu"), "menu_ustawienia_zapisane")
     H["shot_menu"](H["sub_menu"](st, "Profil kolorów"), "menu_ustawienia_profil")

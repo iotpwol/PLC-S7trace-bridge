@@ -9,7 +9,7 @@ import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import QObject, QPointF, QRectF, Qt, QTimer, Signal as QtSignal
 from PySide6.QtGui import QColor, QCursor, QFontMetricsF, QPen
-from PySide6.QtWidgets import QApplication, QLabel, QSplitter, QToolTip, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QGraphicsItem, QGraphicsTextItem, QLabel, QSplitter, QToolTip, QVBoxLayout, QWidget
 
 from ..core import marker_look, render, render_cfg
 from ..core.markers import SPAN_KINDS
@@ -87,6 +87,57 @@ class TimeAxis(pg.AxisItem):
             else:
                 out.append(f"{v:.{dec}f}s")
         return out
+
+
+class AxisTitle(QGraphicsTextItem):
+    """The title of an axis ('Sygnały', 'Czas'). It needs no room of its own: it is drawn BEHIND the tick numbers of the axis (the numbers
+    cover it, not the other way round) and can be dragged along the axis with the mouse."""
+
+    def __init__(self, text: str, axis, vertical: bool):
+        super().__init__(text, axis)
+        self.axis, self.vertical = axis, vertical
+        self.frac = 0.5                                            # position along the axis (0..1)
+        self.setFlag(QGraphicsItem.ItemStacksBehindParent, True)
+        self.setAcceptedMouseButtons(Qt.LeftButton)
+        self.setCursor(Qt.SizeVerCursor if vertical else Qt.SizeHorCursor)
+        self.setToolTip("Przeciągnij, aby przesunąć opis osi (liczby osi zasłaniają go).")
+        if vertical:
+            self.setRotation(-90)
+        axis.geometryChanged.connect(self.place)
+        self.place()
+
+    def set_text(self, text: str) -> None:
+        if self.toPlainText() != text:
+            self.setPlainText(text)
+            self.place()
+
+    def set_color(self, color) -> None:
+        self.setDefaultTextColor(QColor(color))
+
+    def _rect(self) -> QRectF:
+        """The axis band itself (pyqtgraph's boundingRect() of an axis with a grid reaches over the whole plot)."""
+        return QRectF(QPointF(0.0, 0.0), self.axis.size())
+
+    def place(self, *_) -> None:
+        r, tb = self._rect(), self.boundingRect()
+        if self.vertical:                                          # text rotated by -90: it runs upwards from its position
+            c = min(max(self.frac * r.height(), tb.width() / 2), max(r.height() - tb.width() / 2, tb.width() / 2))
+            self.setPos(r.left() + 1, r.top() + c + tb.width() / 2)
+        else:
+            c = min(max(self.frac * r.width(), tb.width() / 2), max(r.width() - tb.width() / 2, tb.width() / 2))
+            self.setPos(r.left() + c - tb.width() / 2, r.top() + max((r.height() - tb.height()) / 2, 0.0))
+
+    def mousePressEvent(self, ev) -> None:
+        ev.accept()
+
+    def mouseMoveEvent(self, ev) -> None:
+        r = self._rect()
+        p = self.axis.mapFromScene(ev.scenePos())
+        length = r.height() if self.vertical else r.width()
+        if length > 0:
+            self.frac = min(max((p.y() - r.top() if self.vertical else p.x() - r.left()) / length, 0.0), 1.0)
+            self.place()
+        ev.accept()
 
 
 class LaneAxis(pg.AxisItem):
@@ -248,7 +299,8 @@ class PlotView(QWidget):
         self.plot = self.glw.addPlot(row=0, col=0, axisItems={"bottom": TimeAxis("bottom"), "left": self.axis_y})
         self.plot.setMenuEnabled(False)
         self.plot.showGrid(x=True, y=True, alpha=0.25)
-        self.plot.setLabel("bottom", "Czas")
+        self.title_y = AxisTitle("Sygnały", self.axis_y, True)          # the axis titles take no space of their own
+        self.title_x = AxisTitle("Czas", self.plot.getAxis("bottom"), False)
         self._axis_labels()
         self.plot.hideButtons()
         self.vb = self.plot.getViewBox()
@@ -260,7 +312,7 @@ class PlotView(QWidget):
 
         self.ov = self.glw_ov.addPlot(row=0, col=0, axisItems={"bottom": TimeAxis("bottom")})
         self.ov.setMenuEnabled(False)
-        self.ov.getAxis("left").setWidth(48)
+        self.ov.getAxis("left").setWidth(62)
         self.ov.getAxis("left").setStyle(showValues=False)
         self.ov.hideButtons()
         self.ov.setMouseEnabled(x=False, y=False)
@@ -456,7 +508,8 @@ class PlotView(QWidget):
                 a = pl.getAxis(ax)
                 a.setPen(pen)
                 a.setTextPen(pen)
-        self.plot.setLabel("bottom", "Czas")
+        self.title_x.set_color(fg)
+        self.title_y.set_color(fg)
         self._axis_labels()
         c = QColor(bg)
         c.setAlpha(170)
@@ -508,8 +561,8 @@ class PlotView(QWidget):
 
     def _axis_labels(self) -> None:
         lanes = getattr(self, "y_layout", "lanes") == "lanes"
-        self.plot.setLabel("left", "Sygnały" if lanes else "Offset")
-        self.axis_y.setWidth(70 if lanes else 52)
+        self.title_y.set_text("Sygnały" if lanes else "Offset")
+        self.axis_y.setWidth(62)                                  # just the numbers (the same as the overview strip below)
         if not lanes:
             self.axis_y.lanes = []
             self.axis_y.labels = []
@@ -675,21 +728,28 @@ class PlotView(QWidget):
         self.windowChanged.emit(self.window)
         self._dirty = True
 
-    def _on_click(self, ev):
-        if (ev.button() == Qt.RightButton and self.legend.isVisible()
-                and self.legend.sceneBoundingRect().contains(ev.scenePos())):
+    def _legend_click(self, ev) -> bool:
+        """A click on the legend or on a name label: its menu (right button) / the signal list (double click). True = handled.
+        It is asked before the markers: a marker area under the legend must not take the click away from it."""
+        on_legend = self.legend.isVisible() and self.legend.sceneBoundingRect().contains(ev.scenePos())
+        if ev.button() == Qt.RightButton and on_legend:
             ev.accept()
             self.legendContextMenu.emit(ev.screenPos().toPoint())
-            return
+            return True
         if self._tag_row_at(ev.scenePos()) is not None:           # a name label: the same menu / double click as the legend
             if ev.button() == Qt.RightButton:
                 ev.accept()
                 self.legendContextMenu.emit(ev.screenPos().toPoint())
-                return
+                return True
             if ev.button() == Qt.LeftButton and ev.double():
                 ev.accept()
                 self.legendDoubleClicked.emit()
-                return
+                return True
+        return False
+
+    def _on_click(self, ev):
+        if self._legend_click(ev):
+            return
         if self.place_marker is not None:
             mid = self.place_marker
             if ev.button() == Qt.LeftButton and self.vb.sceneBoundingRect().contains(ev.scenePos()):
@@ -828,6 +888,15 @@ class PlotView(QWidget):
         text = (text[:28] + "…") if len(text) > 29 else text
         restricted = bool(it["signals"])
         label_opts = {"color": col, "position": 0.985, "rotateAxis": (1, 0), "anchors": [(1, 1), (1, 1)]}
+        if it.get("passive"):                                        # only a translucent area (REC between Start and Stop): no edges, no clicks
+            main = pg.LinearRegionItem(values=(it["x0"], it["x1"]), brush=pg.mkBrush(self._range_fill(it)), pen=pg.mkPen(None), movable=False)
+            main.setZValue(5)
+            main.setAcceptedMouseButtons(Qt.NoButton)
+            for ln in main.lines:
+                ln.setAcceptedMouseButtons(Qt.NoButton)
+                ln.setVisible(False)
+            self.plot.addItem(main, ignoreBounds=True)
+            return {"look": look, "main": main, "label": None, "extras": [], "data": it}
         if it["kind"] in SPAN_KINDS:
             fill = self._range_fill(it)
             main = _MarkerRegion(values=(it["x0"], it["x1"]), brush=pg.mkBrush(fill), pen=self._marker_pen(it),
@@ -951,6 +1020,8 @@ class PlotView(QWidget):
         """The marker chosen for moving ('Zmień pozycję') is drawn white and thick; the others in their own colour."""
         for mid, cur in self.mitems.items():
             it, hi = cur["data"], mid in self.mhi
+            if it.get("passive"):
+                continue
             pen = self._marker_pen(it, hi)
             main = cur["main"]
             if it["kind"] in SPAN_KINDS:
@@ -1001,6 +1072,8 @@ class PlotView(QWidget):
             tol = self.vb.viewPixelSize()[0] * 6
             for mid, cur in self.mitems.items():
                 it = cur["data"]
+                if it.get("passive"):
+                    continue
                 hit = (it["x0"] - tol <= x <= it["x1"] + tol) if it["kind"] in SPAN_KINDS else abs(x - it["x0"]) <= tol
                 if hit:
                     sc = (it["kind"] == "point", it["priority"])          # a line wins over the area it lies in
@@ -1040,6 +1113,8 @@ class PlotView(QWidget):
     def _marker_clicked(self, mid: int, ev) -> None:
         if self.place_marker is not None:
             return                                                   # the click is for the placement (scene handler)
+        if self._legend_click(ev):
+            return                                                   # the legend / a name label lies over the marker: it gets the click
         if ev.button() == Qt.RightButton:
             ev.accept()
             self.markerMenu.emit(mid, ev.screenPos().toPoint())

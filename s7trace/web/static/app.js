@@ -313,8 +313,14 @@ function resetShow() { const b = $("c-reset"); b.textContent = RST.auto ? "Auto-
 function resetLabel(held) { return held < 1 ? "Reset" : `Reset (${Math.max(Math.ceil(4 - held), 0)}s)`; }
 async function resetPost(body) { try { await api(`/api/connections/${$("c-conn").value}/reset`, body); } catch (e) { alert(e.message); } }
 async function resetClick() {
+  const live = lastDesc && lastDesc.state && lastDesc.state !== "stopped", rec = !!lastDesc?.rec?.active;
+  let axis = false;
+  if (live) {   // the reading goes on: ask before the chart is cleared (and whether the time axis starts from 0 again)
+    if (!confirm("Odczyt trwa. Czy na pewno wyczyścić wykres (bufor danych)?" + (rec ? "\n\nREC trwa: nagrywanie nie jest przerywane, czyszczony jest tylko wykres; oś czasu biegnie dalej." : ""))) return;
+    if (!rec) axis = confirm("Zacząć też oś czasu od zera?\n\nOK = tak, wykres rusza od 0 s. Anuluj = oś czasu biegnie dalej.");
+  }
   if (typeof mkAskBuffer === "function") await mkAskBuffer($("c-conn").value, "Reset");
-  await resetPost({}); if (typeof draw === "function") { frozen = null; frozenKey = null; draw(); }
+  await resetPost(axis ? { axis: true } : {}); if (typeof draw === "function") { frozen = null; frozenKey = null; draw(); }
 }
 $("c-reset").addEventListener("pointerdown", (e) => {
   if (e.button) return; e.preventDefault();
@@ -410,7 +416,7 @@ function drawChart(cv, ds, t0, t1, o) {
         }
       }
     }
-    if (LEGSTYLE !== "labels") { g.fillStyle = c; g.fillText(ds.names[k], pad.l + 6, top + 14 + (offsetMode ? 14 * k : 0)); }
+    if (legStyle(cv, ds) !== "labels") { g.fillStyle = c; g.fillText(ds.names[k], pad.l + 6, top + 14 + (offsetMode ? 14 * k : 0)); }
     g.strokeStyle = c; g.lineWidth = 1.2; g.beginPath(); let pen = false, py = 0;
     let medY = null;
     const pts = [];
@@ -429,7 +435,7 @@ function drawChart(cv, ds, t0, t1, o) {
   }
   cv._geo = { t0, t1, pad, W, H, lanes, offsetMode };
   cv._tags = [];
-  if (LEGSTYLE === "labels") cxTags(g, cv, ds, lanes, colors, pad, H);                // a translucent box with the name beside every signal, right of the Y axis
+  if (legStyle(cv, ds) === "labels") cxTags(g, cv, ds, lanes, colors, pad, H);                // a translucent box with the name beside every signal, right of the Y axis
   if (o.mk) mkPaint(g, cv, o.mk, cv._geo, lanes);                                    // markers (bookmarks) over the curves
   if (o.mk && o.mk.kind === "live") recmPaint(g, cv, ds, cv._geo);                    // Start / Stop REC lines, Manual REC areas, the ghost of a moved Start REC
   g.strokeStyle = "#ff4d4d"; g.fillStyle = "#ff4d4d"; g.lineWidth = 1; g.setLineDash([5, 4]);
@@ -438,7 +444,7 @@ function drawChart(cv, ds, t0, t1, o) {
   if (o.clock) cxAxis(g, cv._geo, o.clock);                                           // a clock axis (server / PLC time) replaces the "-200 s ... teraz" labels
   else { g.fillText(o.left || "", pad.l, H - 6); if (o.right) { const w = g.measureText(o.right).width; g.fillText(o.right, W - pad.r - w, H - 6); } }
   if (cv._cx) cxPaint(g, cv);                                                        // cursors V1/V2, H1/H2 and their read-out
-  if (o.legend && LEGSTYLE === "labels") o.legend.innerHTML = "";                     // the names are on the chart: no list under it
+  if (o.legend && legStyle(cv, ds) === "labels") o.legend.innerHTML = "";                     // the names are on the chart: no list under it
   else if (o.legend) o.legend.innerHTML = ds.names.map((nm, k) => { const last = [...(ds.values[k] || [])].reverse().find((x) => x !== null && x !== undefined), tip = (ds.tips?.[k] || "Nazwa: " + nm) + "\nAktualna wartość: " +(last === undefined ? "—" : +(+last).toPrecision(8));
     return `<span title="${esc(tip)}"><i style="background:${colors[k] || COLORS[k % COLORS.length]}"></i>${esc(cxLegend(cv, ds, k))}</span>`; }).join("");
 }
@@ -922,7 +928,22 @@ const TABLE_COLORS = [["header_bg", "Kolor tła nagłówka tabeli", "--tb-head-b
   ["reset_on_bg", "Auto-Reset załączony: tło", "--rst-bg"], ["reset_on_text", "Auto-Reset załączony: tekst", "--rst-text"]];
 // names of the signals on the chart: 'legend' (list under the chart) or 'labels' (a boxed name at every signal); per account, like the desktop interface configuration
 let legSave = null;
-function legendStyleApply() { document.querySelectorAll("[data-x=lst]").forEach((s) => { s.value = LEGSTYLE; }); }
+// the style of one chart: the viewer's own choice (toolbar / menu), else the one saved with the connection (like the desktop tab), else the account default
+function legStyle(cv, ds) { const v = (cv && cv._cx && cv._cx.lstyle) || (ds && ds.layout && ds.layout.legend_style) || LEGSTYLE; return v === "labels" ? "labels" : "legend"; }
+function legendStyleApply() { for (const [tools, cv] of [["c-tools", "canvas"], ["rv-tools", "rv-canvas"]]) { const sel = $(tools)?.querySelector("[data-x=lst]"); if (sel) sel.value = $(cv)?._cx?.lstyle || ""; } }
+function legendRedraw() { if (typeof draw === "function") draw(); if (typeof rv !== "undefined" && rv.data) drawRec(); }
+async function legendStyleThis(cv, v) {   // this connection's chart: shown at once, and kept with the connection when the account may edit it
+  const st = cv._cx; if (!st) return;
+  st.lstyle = v === "labels" || v === "legend" ? v : ""; legendStyleApply(); legendRedraw();
+  if (cv === $("canvas") && conn && conn.can_edit) { try { await api(`/api/connections/${conn.id}/config`, { legend_style: st.lstyle }); } catch (e) { /* only the viewer's choice then */ } }
+}
+async function legendStyleAll(v) {   // 'Wszystkie połączenia': every connection the account may edit gets the style, and it becomes the account default
+  v = v === "labels" ? "labels" : "legend"; LEGSTYLE = v;
+  for (const id of ["canvas", "rv-canvas"]) { const c = $(id); if (c && c._cx) c._cx.lstyle = ""; }
+  legendStyleApply(); legendRedraw();
+  clearTimeout(legSave); legSave = setTimeout(() => { api("/api/prefs", { legend_style: v }).catch(() => {}); }, 100);
+  for (const c of (overview?.connections || [])) if (c.can_edit) { try { await api(`/api/connections/${c.id}/config`, { legend_style: v }); } catch (e) { /* running / no rights: the account default applies */ } }
+}
 function legendStyleSet(v) {
   LEGSTYLE = v === "labels" ? "labels" : "legend"; legendStyleApply();
   clearTimeout(legSave); legSave = setTimeout(() => { api("/api/prefs", { legend_style: LEGSTYLE }).catch(() => {}); }, 400);

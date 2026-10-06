@@ -116,7 +116,7 @@ programu</b> (menu, pola, okna) i opis: co to jest, do czego służy, jak się z
 """ + _img("menu_widok") + _table([
         ("Dopasuj widok do całości (Ctrl+0)", "Pokazuje całą nagraną historię na wykresie głównym (wstrzymuje widok na żywo)."),
         ("Legenda", "Włącza lub wyłącza nazwy sygnałów na wykresie – legendę albo opisy przy sygnałach (zależnie od stylu poniżej). Ustawienie wspólne dla kart."),
-        ("Nazwy sygnałów na wykresie", "Wybór stylu: <b>Legenda (ramka z listą w rogu)</b> albo <b>Opisy przy sygnałach</b> – patrz rozdział „Wykres główny”. Ustawienie wchodzi do konfiguracji interfejsu."),
+        ("Nazwy sygnałów na wykresie (ta karta)", "Styl nazw sygnałów <b>tylko na bieżącej karcie</b>: <b>Legenda (ramka z listą w rogu)</b> albo <b>Opisy przy sygnałach</b>. Poniżej dwie pozycje „Wszystkie otwarte karty: …” ustawiają ten sam styl na każdej karcie – patrz rozdział „Wykres główny”."),
         ("Siatka", "Włącza lub wyłącza siatkę wykresu."),
         ("Punkty (znaczniki próbek na krzywych, ta karta)", "Pokazuje znaczniki pojedynczych próbek na krzywych (ustawienie karty). Gdy w oknie jest więcej próbek niż limit z Ustawienia → Renderowanie wykresu, punkty są ukrywane – przybliż wykres."),
         ("Położenie legendy (ta karta)", "Narożnik wykresu, w którym stoi legenda (można ją też przeciągnąć myszą). Zapamiętywane osobno dla każdej karty."),
@@ -160,6 +160,7 @@ programu</b> (menu, pola, okna) i opis: co to jest, do czego służy, jak się z
         ("Kreator połączenia (rozpoznawanie metody)…", "Rozpoznaje, która metoda działa, i podaje zalecenia."),
         ("Serwer Web (zgłaszanie sesji i wspólny rejestr)…", "Zgłaszanie sesji centralnemu serwerowi Web (wspólny rejestr dla wielu komputerów)."),
         ("Zapis nagrań w bazach danych (SQLite / InfluxDB / TimescaleDB)…", "Ustawienia celu zapisu REC (SQLite, InfluxDB, TimescaleDB), czasy, bufory, nagrania i użytkownicy."),
+        ("Ikona programu (pasek zadań / przy zegarze)", "Gdzie ma być ikona programu: <b>Pasek zadań</b> (domyślnie), <b>Obszar powiadomień (przy zegarze)</b> albo <b>oba miejsca</b>. W trybie „przy zegarze” zminimalizowane okno znika z paska zadań, a kliknięcie ikony przy zegarze przywraca je; prawy przycisk na ikonie: „Pokaż S7Trace” i „Zakończ”. Gdy system nie ma obszaru powiadomień, program zostaje na pasku zadań. Wybór jest zapamiętywany."),
         ("Renderowanie wykresu (odświeżanie, punkty, obciążenie CPU)…", "Odświeżanie, limity punktów, wygładzanie – decyduje o obciążeniu procesora przez wykres."),
         ("Interfejs (kolory, czcionki)…", "Kolory, czcionki, tabele, pasek statusu, belki podziału, migająca kropka REC."),
         ("Zapisane konfiguracje interfejsu", "Lista zapisanych wyglądów – wybór wczytuje wygląd."),
@@ -374,7 +375,7 @@ Widok nie wyjdzie poza zebrane dane; najwęższe okno to 0,1 s.</li>
 <li>Pionowa czerwona linia <b>TRIG</b> oznacza chwilę wyzwolenia triggera.</li>
 </ul>
 <h3>Nazwy sygnałów: legenda albo opisy przy sygnałach</h3>
-<p>Nazwy sygnałów można pokazywać na dwa sposoby – wybierasz w <b>Widok → Nazwy sygnałów na wykresie</b>, w prawym menu legendy albo w <b>Ustawienia → Interfejs</b> („Nazwy sygnałów na wykresie”):</p>
+<p>Nazwy sygnałów można pokazywać na dwa sposoby – wybierasz <b>osobno dla każdej karty</b> w <b>Widok → Nazwy sygnałów na wykresie (ta karta)</b> albo w prawym menu legendy / opisu. Te same menu mają dwie pozycje <b>Wszystkie otwarte karty: …</b>, które ustawiają wybrany styl na wszystkich kartach naraz. W <b>Ustawienia → Interfejs</b> („Nazwy sygnałów (domyślnie)”) wybierasz styl domyślny – dostają go karty, którym nie wybrano stylu osobno:</p>
 <ul>
 <li><b>Legenda (ramka z listą w rogu)</b> – jedna ramka ze wszystkimi nazwami; można ją przeciągnąć w dowolne miejsce, położenie jest zapamiętywane osobno dla każdej karty.</li>
 <li><b>Opisy przy sygnałach</b> – legenda znika, a przy <b>każdym sygnale</b> pojawia się jego nazwa w półprzezroczystej ramce, <b>w połowie wysokości pasma</b> sygnału, tuż <b>po prawej stronie osi pionowej</b>. Ramka ma kolor tła wykresu z przezroczystością, a napis – kolor sygnału, dzięki temu litery nie mieszają się z pikselami krzywej o tym samym kolorze.
@@ -382,9 +383,11 @@ W układzie „Offset + Gain” (jedna wspólna skala) opis stoi przy krzywej, a
 </ul>
 """ + _imgs(("wykres_opisy", "Opisy przy sygnałach zamiast legendy (nazwy sygnałów)"), ("wykres_opisy_adres", "Ten sam wykres po przełączeniu opisów na adres / węzeł OPC")) + """
 <p><b>Prawy przycisk na legendzie albo na opisie</b> otwiera menu: <b>Sygnały…</b>, <b>Legenda pokazuje</b> (nazwa sygnału / adres – węzeł OPC; ustawienie karty), <b>Nazwy sygnałów na wykresie</b> (legenda / opisy), położenie legendy (tylko w stylu „Legenda”) i ukrycie. Podwójne kliknięcie opisu otwiera okno „Sygnały…”, a najechanie pokazuje ten sam dymek co przy legendzie.
-Przełącznik <b>Widok → Legenda</b> ukrywa i pokazuje nazwy w obu stylach. Wybrany styl jest częścią konfiguracji interfejsu (zapisuje się w pliku konfiguracji interfejsu); w trybie Web jest zapamiętywany w ustawieniach konta (lista „Nazwy sygnałów” w pasku narzędzi wykresu, ten sam prawy przycisk na opisie).</p>
+Przełącznik <b>Widok → Legenda</b> ukrywa i pokazuje nazwy w obu stylach. Styl wybrany dla karty zapisuje się w konfiguracji tej karty; wartość domyślna – w konfiguracji interfejsu. W trybie Web lista „Nazwy sygnałów” w pasku narzędzi wykresu i prawy przycisk na opisie ustawiają styl <b>tego połączenia</b> (zapisywany przy połączeniu, jeśli możesz je edytować); „Wszystkie połączenia: …” ustawia go wszystkim Twoim połączeniom i jako domyślny dla konta.</p>
+<p><b>Opisy osi</b> („Sygnały” z lewej, „Czas” na dole) nie zabierają miejsca wykresowi: leżą <b>pod liczbami osi</b> (liczby je zasłaniają) i można je <b>chwycić myszką i przesunąć</b> wzdłuż osi – „Sygnały” w górę i w dół, „Czas” w lewo i w prawo. Gdy pod kursorem leży <b>znacznik obszaru</b> (np. Manual REC), prawy przycisk na legendzie albo na opisie sygnału otwiera <b>menu legendy</b>, a nie menu znacznika.</p>
 """ + _imgs(("menu_legenda", "Menu prawego przycisku na legendzie"), ("menu_opis_sygnalu", "To samo menu otwarte na opisie przy sygnale (styl „Opisy”)")) + """
 <h3>Menu prawego przycisku na wykresie</h3>
+<p>Polecenia menu są <b>pogrupowane poziomymi separatorami</b> według funkcji: dodawanie znaczników, polecenia REC (Manual Start / Stop REC, przenoszenie, usuwanie), zapis znaczników, lista i wyszukiwanie, widoczność znaczników z innych połączeń. W grupie REC jest rozwijane menu <b>Pokaż…</b> z wszystkimi znacznikami REC (Start REC (n), Stop REC (n), Manual Start / Stop REC (n), Stop / Start odczytu (n)), a obok listy – <b>Pokaż znacznik…</b> z pozostałymi znacznikami (do 40, od najwcześniejszego). Wybranie pozycji <b>zatrzymuje wykres (pauza)</b> i ustawia widok na wskazanym znaczniku (gdy leży w innym nagraniu – otwiera je).</p>
 """ + _img("menu_wykres_prawy") + _table([
         ("Dodaj znacznik…", "Znacznik punktowy, zakres czasu albo różnica sygnału w miejscu kliknięcia (rozdział „Znaczniki”)."),
         ("Legenda pokazuje", "Przełącza napisy legendy: nazwa sygnału albo jego adres / węzeł OPC (ustawienie karty)."),
@@ -422,9 +425,11 @@ Przełącznik <b>Widok → Legenda</b> ukrywa i pokazuje nazwy w obu stylach. Wy
         ("przyciski_reset_odliczanie", "Reset przytrzymany 2 s: odliczanie „Reset (2s)”"), ("przyciski_auto_reset", "Auto-Reset załączony: przycisk wciśnięty, niebieski tekst")) + """
 <h3>Start po Stop: przerwa w wykresie, Reset i Auto-Reset</h3>
 <p>Domyślnie (Auto-Reset <b>wyłączony</b>) ponowny <b>Start</b> po <b>Stop</b> <b>nie czyści wykresu</b>: oś czasu biegnie dalej, a między ostatnią próbką sprzed Stop a pierwszą po Start
-powstaje <b>przerwa (dziura) w krzywych</b> równa czasowi, który minął między Stop i Start. Znaczniki, znaczniki REC i przybliżanie wykresu zachowują swoje położenie.
+powstaje <b>przerwa (dziura) w krzywych</b> równa czasowi, który minął między Stop i Start (stara wartość nie jest „przedłużana” przez przerwę). Na początku i końcu przerwy wykres stawia numerowane, kropkowane znaczniki <b>Stop odczytu (n)</b> i <b>Start odczytu (n)</b> (włączane razem ze znacznikami REC w Znaczniki → Wygląd znaczników…). Znaczniki, znaczniki REC i przybliżanie wykresu zachowują swoje położenie.
 Wykres jest kontynuowany tylko wtedy, gdy pobierane są <b>te same sygnały</b> (nazwa, adres, typ; kolor czy wysokość pasma mogą się zmienić) i na karcie nie ma wczytanego nagrania – w przeciwnym razie Start zaczyna wykres od nowa.</p>
-<p><b>Reset</b> (przycisk po lewej od REC): <b>kliknięcie</b> czyści bufor i wykres. Gdy połączenie pracuje, czas biegnie dalej (REC i znaczniki zachowują swoje czasy) i wykres zapełnia się od tej chwili;
+<p><b>Reset</b> (przycisk po lewej od REC): <b>kliknięcie</b> czyści bufor i wykres. Gdy odczyt trwa, program <b>pyta o potwierdzenie</b> i o oś czasu: <b>Wyczyść i zeruj oś czasu</b> (wykres rusza od 0 s, nowy czas początkowy), <b>Wyczyść (oś czasu biegnie dalej)</b> albo <b>Anuluj</b>.
+Jeśli w tym czasie trwa <b>REC</b>, nagrywanie <b>nie jest przerywane</b> – dalej zapisuje się do bazy / pliku wszystko, co odczytuje program (czyszczony jest tylko wykres, a znaczniki Start REC / Stop REC zostają na swoich czasach); wtedy oś czasu musi biec dalej (przycisk zerowania osi jest niedostępny), żeby nagranie miało ciągłe czasy.
+Gdy połączenie pracuje i oś biegnie dalej, czas płynie (REC i znaczniki zachowują swoje czasy) i wykres zapełnia się od tej chwili;
 na zatrzymanej karcie wykres zaczyna się od zera. Jeśli są zapisane znaczniki, które istnieją tylko dla czyszczonego bufora, program pyta, czy je usunąć.</p>
 <p><b>Auto-Reset</b>: przytrzymaj Reset. Po 1 s pojawia się odliczanie <b>Reset (3s) → (2s) → (1s)</b>, a po 4 s przycisk zostaje wciśnięty jako <b>Auto-Reset</b> (niebieski tekst, tło bez zmian). Od tej chwili
 <b>każdy Start czyści wykres</b> i zaczyna go od nowa (tak działał program dawniej). Puszczenie przycisku w trakcie odliczania <b>anuluje</b> (nic się nie dzieje); kliknięcie „Auto-Reset” wyłącza go (nie czyści wykresu).
@@ -498,12 +503,13 @@ Można też przejść do wpisanej daty i godziny.</p>
 <p>Oprócz zwykłych znaczników wykres sam zaznacza, <b>kiedy w przebiegu włączono i wyłączono nagrywanie</b>. W jednym przebiegu (od Start do Stop połączenia) REC można włączać wiele razy,
 dlatego linie są numerowane: <b>Start REC (1)</b>, <b>Stop REC (1)</b>, <b>Start REC (2)</b>, <b>Stop REC (2)</b> i tak dalej. Początkowy kolor to kolor tła załączonego przycisku REC (pomarańczowy);
 kolor, grubość i rodzaj linii oraz samo włączenie tych znaczników ustawiasz w <b>Znaczniki → Wygląd znaczników…</b>. Znaczniki REC nie trafiają do pliku znaczników – wynikają z przebiegu nagrań
-i znikają po ponownym Start.</p>
+i znikają po ponownym Start. Okres między <b>Start REC (n)</b> a <b>Stop REC (n)</b> jest dodatkowo zaznaczony <b>półprzezroczystym obszarem</b> w tym samym kolorze (przezroczystość – jak przy Manual REC).</p>
 """ + _img("wykres_rec_znaczniki", "Linie Start / Stop REC (numerowane) i ręczny obszar „Manual REC” (z lewej, półprzezroczysty)") + """
 <h4>Manual REC – nagranie z już zebranych danych</h4>
 <p>Gdy nagrywanie włączono za późno, a potrzebny fragment jest już na wykresie: zatrzymaj wykres (<b>Pauza</b>), przesuń go w potrzebne miejsce, kliknij prawym przyciskiem i wybierz
 <b>Manual Start REC (n) tutaj</b>; potem w drugim miejscu <b>Manual Stop REC (n) tutaj</b>. Między liniami pojawia się półprzezroczysty obszar (podobny do znacznika zakresu czasu). Prawy przycisk na obszarze
-otwiera menu: <b>Zapis Manual REC (n)</b> zapisuje ten fragment danych z bufora wykresu jako <b>osobne nagranie</b> (do bazy wybranej w panelu REC albo do pliku CSV), <b>Zmień pozycję</b> pozwala przeciągać brzegi, <b>Usuń</b> kasuje obszar.
+otwiera menu: <b>Zapis Manual REC (n)</b> zapisuje ten fragment danych z bufora wykresu jako <b>osobne nagranie</b> (do bazy wybranej w panelu REC albo do pliku CSV), <b>Zmień pozycję</b> pozwala przeciągać brzegi, <b>Przenieś Manual REC (n)</b> (też <b>Przenieś Manual Start REC (n)</b> w menu pustego wykresu, gdy czeka sam początek) pokazuje <b>pulsującego „ducha”</b> linii początku – przeciągnij go w nowe miejsce i wybierz prawym przyciskiem na nim <b>Przenieś … tutaj</b> albo <b>Anuluj przenoszenie</b> (usuwa ducha); <b>Usuń</b> kasuje obszar. Na końcu menu zapisanego obszaru stoi informacja „zapisano: …” i pozycja <b>Otwórz Manual REC (n): nagranie …</b>, która otwiera zapisane nagranie (z zapytaniem: ta karta / nowa karta).
+Gdy ten sam, niezmieniony obszar zapisujesz <b>drugi raz</b>, program pyta, czy na pewno zapisać dokładnie to samo nagranie jeszcze raz (przesunięcie obszaru unieważnia zapis, wtedy pytania nie ma).
 Obszarów może być wiele naraz.</p>
 """ + _img("menu_wykres_manual", "Prawy przycisk na pustym wykresie: Manual Start REC / Manual Stop REC") + _img("menu_manual_rec", "Prawy przycisk na obszarze Manual REC") + """
 <p>Obszary czekające na zapis liczą się do przycisku <b>Zapisz znaczniki (n)</b>. Okno zapisu wylicza je w osobnej tabeli z polami wyboru – zaznaczone obszary zostaną zapisane jako nagrania

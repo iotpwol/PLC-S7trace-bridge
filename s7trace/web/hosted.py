@@ -7,7 +7,7 @@ import os
 import re
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import numpy as np
 
@@ -117,7 +117,8 @@ class HostedConnection:
                 "label": self.rec_label, "title": self.rec_info.get("title", ""), "by": self.rec_by,
                 "started_us": self.rec_started_us, "error": err,
                 "written": getattr(rec, "written", None), "dropped": getattr(rec, "dropped", 0),
-                "marks": [{"n": a["n"], "t0": a["t0"], "t1": a["t1"], "db": bool(a["sid"])} for a in self.rec_marks.auto]}   # Start / Stop REC lines
+                "marks": [{"n": a["n"], "t0": a["t0"], "t1": a["t1"], "db": bool(a["sid"])} for a in self.rec_marks.auto],   # Start / Stop REC lines
+                "gaps": [dict(g) for g in self.rec_marks.gaps]}                                                 # Stop / Start of the reading (the chart keeps a gap)
 
     # ---- control
     def method_text(self) -> str:
@@ -165,15 +166,21 @@ class HostedConnection:
         return (not self.cfg.auto_reset and len(self.buffer) > 0 and bool(self.signals)
                 and [self._sig_key(s) for s in run] == [self._sig_key(s) for s in self.signals])
 
-    def reset_chart(self) -> None:
-        """'Reset': clears the buffer. A running connection keeps its time axis (REC and markers keep their times), a stopped one starts afresh."""
+    def reset_chart(self, restart_axis: bool = False) -> bool:
+        """'Reset': clears the buffer. A running connection keeps its time axis (REC and markers keep their times) unless `restart_axis` asks
+        for a new one (refused while REC runs: the recording needs continuous times); a stopped one starts afresh. True = the axis was restarted."""
         with self._lock:
             self.buffer.reset()
+            axis = bool(restart_axis) and self.recorder is None and self.state != "stopped" and self.acq is not None and bool(self.acq.t0)
+            if axis:
+                self.acq.time_offset = -(time.perf_counter() - self.acq.t0)
+                self.start_wall = datetime.now()
             if self.recorder is None:
                 self.rec_marks.reset()
             if self.state == "stopped":
                 self.start_wall = datetime.now()
             self.version += 1
+            return axis
 
     def stop(self) -> None:
         with self._lock:
@@ -188,9 +195,14 @@ class HostedConnection:
             self.acq.join(wait)
 
     def _on_state(self, state: str, message: str) -> None:
+        gap = getattr(self.acq, "gap", None) if self.acq is not None else None
+        if gap is not None:                                    # this run continues the chart after a pause
+            self.acq.gap = None
+            self.rec_marks.add_gap(*gap)
         with self._lock:
             if state == "running" and self.state in ("connecting", "stopped") and not self._continued:
-                self.start_wall = datetime.now()
+                t0 = self.acq.t0 if self.acq is not None else 0.0
+                self.start_wall = datetime.now() - timedelta(seconds=max(0.0, time.perf_counter() - t0) if t0 else 0.0)
             self.state, self.message = state, message
             self.version += 1
         if state in ("stopped", "error"):
@@ -476,7 +488,7 @@ class HostedConnection:
                 "gains": [float(s.gain) for s in self.signals], "dtypes": [s.dtype for s in self.signals],
                 "offsets": [float(s.offset_y) for s in self.signals],
                 "addresses": [s.address for s in self.signals], "tips": [signal_tip_static(s) for s in self.signals],
-                "layout": {"legend_mode": self.cfg.legend_mode, "time_axis": self.cfg.time_axis, "time_offset": self.cfg.time_offset, "y_layout": self.cfg.y_layout, "auto_y": self.cfg.auto_y, "y_min": self.cfg.y_min,
+                "layout": {"legend_mode": self.cfg.legend_mode, "legend_style": self.cfg.legend_style, "time_axis": self.cfg.time_axis, "time_offset": self.cfg.time_offset, "y_layout": self.cfg.y_layout, "auto_y": self.cfg.auto_y, "y_min": self.cfg.y_min,
                            "y_max": self.cfg.y_max, "show_points": self.cfg.show_points},
                 "rec": [{"n": a["n"], "t0": a["t0"], "t1": a["t1"], "db": bool(a["sid"])} for a in self.rec_marks.auto],     # Start / Stop REC lines
                 "last": float(last), "state": self.state,

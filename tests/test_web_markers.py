@@ -398,3 +398,13 @@ def test_legend_style_is_kept_per_account_on_the_server(srv):
     assert ola.post("/api/prefs", {"legend_style": "rubbish"})[1]["prefs"]["legend_style"] == "legend"      # validated
     st_, body = ola.get("/static/chartx.js")
     assert "cxTags" in (body if isinstance(body, str) else body.decode("utf-8"))   # the boxed names are drawn by the front end
+
+
+def test_legend_style_front_end_has_per_chart_choice_and_all_connections(srv):
+    base = os.path.join(os.path.dirname(__import__("s7trace.web.server", fromlist=["x"]).__file__), "static")
+    js = {f: open(os.path.join(base, f), encoding="utf-8").read() for f in ("app.js", "chartx.js", "recmarks.js")}
+    assert "function legStyle(cv, ds)" in js["app.js"] and "ds.layout.legend_style" in js["app.js"]            # viewer's choice, then the connection's, then the account's
+    assert "legendStyleAll" in js["app.js"] and "Wszystkie połączenia: Opisy przy sygnałach" in js["chartx.js"]
+    assert 'data-x="lst"><option value="">wg połączenia</option>' in js["chartx.js"]
+    assert "Zapis Manual REC" in js["recmarks.js"] and "został już zapisany jako nagranie" in js["recmarks.js"]
+    assert "a.t1 > a.t0" in js["recmarks.js"]                                                                 # the translucent area between Start and Stop REC

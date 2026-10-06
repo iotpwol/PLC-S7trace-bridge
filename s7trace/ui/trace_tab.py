@@ -28,7 +28,7 @@ from ..core.csvio import CsvRecorder, csv_start_wall, read_csv, write_csv
 from ..core.planner import MODES
 from ..core.symbols import Symbol
 from ..core.netaddr import ACCEPTABLE, ipv4_state
-from ..core.types import LEGEND_MODES, TIME_AXES, Signal, axis_shift, fmt_offset, signal_tip
+from ..core.types import LEGEND_MODES, LEGEND_STYLES, TIME_AXES, Signal, axis_shift, fmt_offset, signal_tip
 from ..core.drivers import CONN_LABEL, SOURCE_OF, family_of
 from .diag_dialog import DiagDialog
 from .duration_combo import DurationCombo
@@ -116,6 +116,7 @@ class TraceTab(QWidget):
     titleChanged = QtSignal(str)
     _stateRaw = QtSignal(str, str)     # from worker thread
     layoutChanged = QtSignal()         # splitters / legend moved -> main window syncs the other tabs
+    legendStyleChanged = QtSignal()    # this tab's legend style was changed (the View menu follows it)
     legendHideRequested = QtSignal()   # 'Ukryj legendę' in the legend's context menu (the setting is shared by all tabs)
     _dbProbe = QtSignal(str, str)      # (recording id, cause or "") - result of the connection test run when REC starts
     _infoRaw = QtSignal(object)        # device data from the acquisition process (worker thread)
@@ -468,6 +469,8 @@ class TraceTab(QWidget):
         mbar.addStretch()
         right.addLayout(mbar)
         self.theme_edit = lambda changes: None       # the main window points it at the interface configuration (status bar menu)
+        self.legend_style_all = lambda style: None   # ... and this at 'the same legend style in all open tabs'
+        self._theme_legend = "legend"                # the interface default (used while this tab has no style of its own)
         self.lbl_status = PanLabel()
         self.lbl_status.menuRequested.connect(self._status_menu)                  # right aligned; a long text can be dragged with the mouse
         right.addWidget(self.lbl_status)
@@ -588,7 +591,8 @@ class TraceTab(QWidget):
         self.lbl_status.set_colors(theme.get("status_bg", "#2b2b2b"), theme.get("status_text", "#d0d0d0"))
         self.lbl_status.set_max_lines(int(theme.get("status_lines", 1)))
         self.lbl_status.set_align(theme.get("status_align", "right"))
-        self.plot.set_legend_style(theme.get("legend_style", "legend"))
+        self._theme_legend = theme.get("legend_style", "legend")
+        self.plot.set_legend_style(self.cfg.legend_style or self._theme_legend)     # a style chosen for this tab wins over the default
         self._status_theme = {k: theme.get(k) for k in ("status_bg", "status_text")}
         self.split_h.set_bar(bar, always)                # the thin resize bars: colour and permanent visibility
         self.plot.split.set_bar(bar, always)
@@ -628,14 +632,17 @@ class TraceTab(QWidget):
             a.setCheckable(True)
             a.setChecked(self.cfg.legend_mode == key)
             a.triggered.connect(lambda _=False, k=key: self.set_legend_mode(k))
-        style = m.addMenu("Nazwy sygnałów na wykresie")
+        style = m.addMenu("Nazwy sygnałów na wykresie (ta karta)")
         grp = QActionGroup(style)
-        for key, label in (("legend", "Legenda (ramka z listą w rogu)"), ("labels", "Opisy przy sygnałach (po prawej stronie osi Y)")):
+        for key, label in LEGEND_STYLES:
             a = style.addAction(label)
             a.setCheckable(True)
             a.setChecked(self.plot.legend_style == key)
             grp.addAction(a)
-            a.triggered.connect(lambda _=False, k=key: self.theme_edit({"legend_style": k}))
+            a.triggered.connect(lambda _=False, k=key: self.set_legend_style(k))
+        style.addSeparator()
+        for key, label in LEGEND_STYLES:
+            style.addAction("Wszystkie otwarte karty: " + label, lambda k=key: self.legend_style_all(k))
         corners = m.addMenu("Położenie legendy (ta karta)")
         corners.setEnabled(self.plot.legend_style == "legend")
         for label, p in (("Lewy górny róg", (0, 0)), ("Prawy górny róg", (1, 0)),
@@ -644,6 +651,12 @@ class TraceTab(QWidget):
         m.addSeparator()
         m.addAction("Ukryj legendę" if self.plot.legend_style == "legend" else "Ukryj opisy sygnałów", lambda: self.legendHideRequested.emit())
         return m
+
+    def set_legend_style(self, style: str) -> None:
+        """Signal names on the chart: legend box or labels at the signals (per tab, saved in the tab's configuration)."""
+        self.cfg.legend_style = "labels" if style == "labels" else "legend"
+        self.plot.set_legend_style(self.cfg.legend_style)
+        self.legendStyleChanged.emit()
 
     def set_legend_mode(self, mode: str) -> None:
         """Legend text: the signal name or its address / OPC node (per tab, saved in the tab's configuration)."""
@@ -975,6 +988,7 @@ class TraceTab(QWidget):
         self._rkind_changed()
         self.plot.set_legend_pos(float(c.legend_pos[0]), float(c.legend_pos[1]))
         self.plot.set_legend_mode(c.legend_mode)
+        self.plot.set_legend_style(c.legend_style or self._theme_legend)
         self.cb_taxis.setCurrentIndex(max(self.cb_taxis.findData(c.time_axis), 0))
         self.sp_toff.setValue(c.time_offset)
         self._loading = False
@@ -1222,16 +1236,51 @@ class TraceTab(QWidget):
         self.status_msg = ("Auto-Reset włączony: każdy Start czyści wykres." if on else
                            "Auto-Reset wyłączony: kolejny Start kontynuuje wykres (z przerwą w danych).")
 
+    def _ask_reset(self) -> str | None:
+        """'Reset' while the connection runs: 'axis' = clear the chart and start the time axis from 0, 'keep' = clear it, the time axis goes on,
+        None = cancel. While REC runs the time axis cannot restart (the recording needs continuous times)."""
+        rec = self.recorder is not None
+        box = QMessageBox(QMessageBox.Question, "Reset wykresu",
+                          "Odczyt trwa. Czy na pewno wyczyścić wykres (bufor danych)?\n\n"
+                          "Wyczyścić i zacząć oś czasu od zera, czy wyczyścić, a oś czasu ma biec dalej?"
+                          + ("\n\nREC trwa: nagrywanie nie jest przerywane (zapisuje się dalej do bazy / pliku), czyszczony jest tylko wykres; "
+                             "oś czasu musi biec dalej, żeby nagranie miało ciągłe czasy." if rec else ""), parent=self)
+        b_axis = None if rec else box.addButton("Wyczyść i zeruj oś czasu", QMessageBox.AcceptRole)
+        b_keep = box.addButton("Wyczyść (oś czasu biegnie dalej)", QMessageBox.AcceptRole)
+        box.addButton("Anuluj", QMessageBox.RejectRole)
+        box.setDefaultButton(b_keep)
+        box.exec()
+        clicked = box.clickedButton()
+        return "axis" if clicked is b_axis and b_axis is not None else "keep" if clicked is b_keep else None
+
+    def _restart_time_axis(self) -> None:
+        """The chart of a running connection starts again from 0 s: new start time, the samples that follow are counted from now."""
+        acq = self.acq
+        if acq is not None and acq.t0:
+            acq.time_offset = -(time.perf_counter() - acq.t0)
+        self.start_wall = datetime.now()
+        self.apply_time_axis()
+        self.mk.rec.new_run()
+
     def reset_chart(self) -> None:
         """'Reset': clears the buffer and the chart. While the connection runs the time axis goes on (recordings and markers keep their
         times); a stopped tab starts a fresh chart."""
         if not len(self.buffer) and self.loaded is None:
             self.status_msg = "Wykres jest już pusty."
             return
+        live = self.state in ("running", "reconnecting", "connecting") and self.acq is not None
+        axis = False
+        if live:                                                             # the reading goes on: ask before the chart is cleared
+            ans = self._ask_reset()
+            if ans is None:
+                return
+            axis = ans == "axis"
         if not self.mk.confirm_buffer("reset", self._key_shared()):          # markers that exist only for this buffer
             return
         self.buffer.reset()
-        if self.recorder is None:
+        if axis:
+            self._restart_time_axis()
+        elif self.recorder is None:
             self.mk.rec.new_run()
         self.plot.clear_trigger_marks()
         self._pending.clear()
@@ -1502,9 +1551,15 @@ class TraceTab(QWidget):
 
     def _on_state(self, state: str, msg: str):
         """Runs in GUI thread (queued from worker)."""
+        gap = getattr(self.acq, "gap", None) if self.acq else None
+        if gap is not None:                                      # this run continues the chart after a pause: mark where it stopped / began again
+            self.acq.gap = None
+            self.mk.rec.m.add_gap(*gap)
+            self.mk.rec._changed()
         if state == "running":
             if self.state in ("connecting", "stopped") and not self._continued:
-                self.start_wall = datetime.now()
+                t0 = self.acq.t0 if self.acq else 0.0                   # chart time 0 = the child's start: the 'running' message comes later
+                self.start_wall = datetime.now() - timedelta(seconds=max(0.0, time.perf_counter() - t0) if t0 else 0.0)
                 self.apply_time_axis()
             self.status_msg = msg
             self.state = "running"

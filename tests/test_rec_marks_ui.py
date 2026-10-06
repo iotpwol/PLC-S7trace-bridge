@@ -56,7 +56,7 @@ def pump(cond, timeout=8.0):
 
 
 def titles(tab):
-    return sorted(c["data"]["title"] for mid, c in tab.plot.mitems.items() if rmk.is_rec(mid))
+    return sorted(c["data"]["title"] for mid, c in tab.plot.mitems.items() if rmk.is_rec(mid) and not c["data"].get("passive"))      # the translucent area has no title
 
 
 def test_start_and_stop_rec_lines_are_numbered(app, tmp_path):
