@@ -84,6 +84,13 @@ class InterfaceDialog(QDialog):
                                      "przy każdym sygnale, po prawej stronie osi pionowej. To jest ustawienie DOMYŚLNE: karta, której styl wybrano osobno "
                                      "(Widok → Nazwy sygnałów na wykresie albo prawy przycisk myszy na legendzie), zachowuje własny.")
         form.addRow("Nazwy sygnałów (domyślnie):", self.legend_style)
+        self.cb_inactive = QComboBox()
+        self.cb_inactive.addItem("Ukrywane", "hide")
+        self.cb_inactive.addItem("Wyszarzone", "grey")
+        self.cb_inactive.setToolTip("Co dzieje się z elementem panelu ustawień, który inne ustawienie wyłącza (np. „Zapis do” przy akcji „Pauza”): "
+                                    "znika (można go pokazać z menu prawego przycisku grupy) albo zostaje wyszarzony. Przełącznik „Ukrywanie "
+                                    "nieaktywnych” w menu grupy działa tylko przy wyborze „Ukrywane”.")
+        form.addRow("Elementy nieaktywne:", self.cb_inactive)
         self.chk_bar = QCheckBox("Belki zmiany rozmiaru zawsze widoczne")
         self.chk_bar.setToolTip("Belka między panelem ustawień a wykresem oraz nad wykresem przeglądowym służy do zmiany "
                                 "rozmiaru (przeciąganie) i do schowania / pokazania panelu (dwukrotne kliknięcie). "
@@ -121,6 +128,7 @@ class InterfaceDialog(QDialog):
         self.status_lines.valueChanged.connect(self._font_changed)
         self.status_align.currentIndexChanged.connect(self._font_changed)
         self.legend_style.currentIndexChanged.connect(self._font_changed)
+        self.cb_inactive.currentIndexChanged.connect(self._font_changed)
 
     # ------------------------------------------------------------------
     def _sync_widgets(self) -> None:
@@ -151,6 +159,9 @@ class InterfaceDialog(QDialog):
         self.legend_style.blockSignals(True)
         self.legend_style.setCurrentIndex(max(0, self.legend_style.findData(self.theme.get("legend_style", "legend"))))
         self.legend_style.blockSignals(False)
+        self.cb_inactive.blockSignals(True)
+        self.cb_inactive.setCurrentIndex(max(0, self.cb_inactive.findData(self.theme["panel"].get("inactive", "hide"))))
+        self.cb_inactive.blockSignals(False)
         self.font_size.blockSignals(False)
 
     def _pick(self, key: str) -> None:
@@ -169,6 +180,7 @@ class InterfaceDialog(QDialog):
         self.theme["status_lines"] = self.status_lines.value()
         self.theme["status_align"] = self.status_align.currentData()
         self.theme["legend_style"] = self.legend_style.currentData()
+        self.theme["panel"] = {**self.theme["panel"], "inactive": self.cb_inactive.currentData()}
         self._apply(self.theme)
 
     def _load(self, preset: dict, keep_font: bool = True) -> None:

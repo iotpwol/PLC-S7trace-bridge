@@ -668,7 +668,7 @@ class PlotView(QWidget):
             pos = look["gap_text_pos"]
             # the anchor is in the frame of the (unrotated) text: a vertical text runs upwards, so its end is at the top
             ax, ay = ((1 if pos == "top" else 0 if pos == "bottom" else 0.5), 0.5) if vertical else (0.5, (0 if pos == "top" else 1 if pos == "bottom" else 0.5))
-            txt = pg.TextItem(f"przerwa {L:.1f} s" if L < 600 else f"przerwa {L / 60:.1f} min", color=look["gap_text_color"], anchor=(ax, ay),
+            txt = pg.TextItem(f"Przerwa:  {L:.1f} s" if L < 600 else f"Przerwa:  {L / 60:.1f} min", color=look["gap_text_color"], anchor=(ax, ay),
                               angle=90 if vertical else 0)
             txt.setZValue(2)
             txt.setPos(float(self.gm.j[i]), 0.5)

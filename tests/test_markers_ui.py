@@ -1518,7 +1518,7 @@ def test_signal_names_style_per_tab_and_for_all_tabs(app, tmp_path):
     assert t1.plot.legend_style == "labels" and t2.plot.legend_style == "legend"
     menu = t1._build_legend_menu()                                             # 'all open tabs' sits in the legend / label menu
     sub = next(a for a in menu.actions() if a.menu() and a.text().startswith("Nazwy sygnałów")).menu()
-    all_items = [a for a in sub.actions() if a.text().startswith("Wszystkie otwarte karty")]
+    all_items = [a for a in sub.actions() if a.text().startswith("Wszystkie karty")]
     assert len(all_items) == 2
     next(a for a in all_items if "Legenda" in a.text()).trigger()
     assert t1.plot.legend_style == t2.plot.legend_style == "legend" and t1.cfg.legend_style == t2.cfg.legend_style == "legend"

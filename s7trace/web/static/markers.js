@@ -9,7 +9,7 @@ const MK_PALETTE = ["#ff9f1c", "#ff4d4d", "#3fc380", "#4aa3ff", "#b07cff", "#ffd
 // its interface configuration.
 // + the look of the REC marks (Start REC / Stop REC lines, Manual REC areas): on / off, colour, width, line style, opacity of the area
 const MK_LOOK_DEF = { width_all: 2, width_sel: 3, width_other: 1, width_hover: 4, rec_show: 1, rec_width: 2, rec_opacity: 24, rec_color: "#ff8c1a", rec_style: "solid", trig_show: 1, trig_width: 1, trig_color: "#ff4040", trig_style: "dot",
-  gap_fill: "#969696", gap_opacity: 15, gap_text: 1, gap_text_color: "#a0a0a0", gap_text_dir: "vertical", gap_text_pos: "middle" };
+  gap_fill: "#969696", gap_opacity: 15, gap_text: 1, gap_text_color: "#ff8c1a", gap_text_dir: "vertical", gap_text_pos: "middle" };
 // (gap_* = the look of a pause drawn as a band of a fixed width, see Przerwy Stop -> Start)
 const MK_LOOK_ENUM = { rec_style: Object.keys(MK_STYLES), trig_style: Object.keys(MK_STYLES), gap_text_dir: ["vertical", "horizontal"], gap_text_pos: ["top", "middle", "bottom"] };
 const MK_LOOK_LIM = { width_all: [1, 12], width_sel: [1, 12], width_other: [1, 12], width_hover: [1, 16], rec_show: [0, 1], rec_width: [1, 12], rec_opacity: [0, 100], gap_opacity: [0, 100], gap_text: [0, 1], trig_show: [0, 1], trig_width: [1, 12] };
@@ -19,6 +19,7 @@ const mkLookFrom = (raw) => {
   const o = { ...MK_LOOK_DEF };
   for (const k of Object.keys(MK_LOOK_LIM)) if (Number.isFinite(+raw?.[k]) && raw[k] !== null && raw[k] !== "") o[k] = Math.min(Math.max(Math.round(+raw[k]), MK_LOOK_LIM[k][0]), MK_LOOK_LIM[k][1]);
   for (const k of ["rec_color", "trig_color", "gap_fill", "gap_text_color"]) if (/^#[0-9a-f]{6}$/i.test(raw?.[k] || "")) o[k] = raw[k].toLowerCase();
+  if (String(raw?.gap_text_color || "").toLowerCase() === "#a0a0a0") o.gap_text_color = MK_LOOK_DEF.gap_text_color;      // the old grey default = the marker colour now
   for (const [k, ok] of Object.entries(MK_LOOK_ENUM)) if (ok.includes(raw?.[k])) o[k] = raw[k];
   return o;
 };

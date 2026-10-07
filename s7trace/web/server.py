@@ -296,6 +296,8 @@ class Handler(BaseHTTPRequestHandler):
         if q.get("ping"):
             rtt = dg.system_ping(addr)
             d["ping_ms"] = None if rtt is None else round(rtt, 1)
+        if q.get("peers"):                                         # connections of THIS server to the PLC (who else polls it from here)
+            d["peers"] = dg.local_connections_to(addr)
         d["spools"] = []
         if session["role"] == "admin" and self.app.hosts.data_dir:
             d["spools"] = [{"name": x["name"], "target": x["target"], "rows": x["rows"], "size": x["size"],

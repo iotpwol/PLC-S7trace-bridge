@@ -243,16 +243,22 @@ def test_help_pictures_are_all_used_and_exist():
     assert len(used) >= 90
 
 
-def test_help_pictures_are_shown_at_the_real_size(app):
-    """The pictures are taken at 125 % screen scale: on a 100 % screen they must be shown 1.25 times smaller (the window as big as the real one)."""
+def test_help_pictures_are_shown_at_75_percent_and_the_whole_window_at_50(app):
+    """Every picture is taken sharp (125 % screen scale) and carries the size it has in the Help (PNG resolution): 75 % of the real window,
+    50 % for the whole program window - the browser shows exactly that (smoothly downscaled), the zoom window the full file."""
     from PySide6.QtCore import QUrl
     from PySide6.QtGui import QImage
-    from s7trace.ui.help_dialog import ImageBrowser, SHOT_DPR
+    from s7trace.ui.help_dialog import CAPTURE_DPR, DPM_LOGICAL, ImageBrowser
+    names = [f[:-4] for f in os.listdir(os.path.join(HELP_DIR, "img")) if f.endswith(".png")]
+    for n in names:
+        want = 0.5 if n.startswith("okno_glowne") else 0.75
+        dpm = QImage(os.path.join(HELP_DIR, "img", n + ".png")).dotsPerMeterX()
+        assert abs(dpm - DPM_LOGICAL * CAPTURE_DPR / want) <= 2, (n, dpm)
     b = ImageBrowser()
     b.resize(1400, 800)
     b.show()
     dpr = b.devicePixelRatioF()
     src = QImage(os.path.join(HELP_DIR, "img", "menu_plik.png"))
     got = b.loadResource(2, QUrl("img/menu_plik.png"))
-    assert abs(got.width() - round(src.width() / SHOT_DPR * dpr)) <= 1
+    assert abs(got.width() - round(src.width() / CAPTURE_DPR * 0.75 * dpr)) <= 1
     b.close()

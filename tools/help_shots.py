@@ -118,6 +118,10 @@ def run(app, win, tab, sim, *, tmp, **helpers) -> None:
     step("recordings", recordings)
     step("buttons states", button_states)
     step("dialogs", dialogs)
+    step("trigger firings", trigger_firings)
+    step("inactive fields", inactive_fields)
+    step("tray menu", tray_menu)
+    step("pauses", pauses)
     step("diagnostics", diagnostics)
     step("interface dialog", interface_dialog)
     step("wizard + connection", wizard_and_connection)
@@ -641,7 +645,7 @@ def diagnostics():
     dlg.resize(1000, 800)
     pump(8)
     tw = dlg.findChild(QTabWidget)
-    names = ["opoznienia", "pakiety", "przepustowosc", "wykresy"]
+    names = ["opoznienia", "pakiety", "przepustowosc", "obciazenie", "wykresy"]
     for i in range(tw.count()):
         tw.setCurrentIndex(i)
         pump(8, 100)
@@ -699,6 +703,113 @@ def wizard_and_connection():
             pump(5)
             shot(w, f"okno_kreator_karta{i + 1}")
     w.hide()
+
+
+def _wait_firings(tab, n, limit=400):
+    """Waits (real time) until the trigger has fired `n` times."""
+    for _ in range(limit):
+        pump(1, 100)
+        if tab.trig_n >= n:
+            break
+
+
+def trigger_firings():
+    """TRIG (n): the trigger fires several times in one run (action 'Zapis CSV' does not pause the chart) - every firing keeps its numbered line."""
+    tab, win = H["tab"], H["win"]
+    tab.mk.confirm_buffer = lambda *a, **k: True
+    if tab.btn_rec.isChecked():
+        tab.btn_rec.setChecked(False)
+    tab.chk_trig.setChecked(False)
+    tab.cb_tact.setCurrentIndex(1)                          # 'Zapis CSV': the chart goes on, the trigger arms itself again (pretrigger = window: no waiting after a firing)
+    tab.ed_tfolder.setText(os.path.join(H["tmp"], "snapshots"))
+    tab.cb_tsig.setCurrentIndex(max(0, tab.cb_tsig.findText("D160E")))
+    tab.cb_tmode.setCurrentIndex(max(0, tab.cb_tmode.findText("rising edge")))
+    tab.sp_ta.setValue(0.5)
+    tab.sp_window.setValue(50.0)
+    tab.sp_tpre.setValue(50.0)
+    tab.chk_trig.setChecked(True)
+    tab.trig_n = 0
+    tab._clear_trig()
+    _wait_firings(tab, 3, 900)
+    pump(6, 100)
+    rect(win, [tab.plot], "wykres_trigger_kilka", pad=0)
+    tab.chk_trig.setChecked(False)
+    tab.cb_tact.setCurrentIndex(0)
+    pump(4)
+
+
+def inactive_fields():
+    """Fields that another setting switches off: hidden by default (v1.21), or greyed out (Interfejs -> Elementy nieaktywne)."""
+    tab, win = H["tab"], H["win"]
+    tab.chk_trig.setChecked(False)
+    pump(4)
+    grp_shot(tab, "Trigger", "grp_trigger_ukryte")
+    tab.apply_panel({**tab.panel_state(), "inactive": "grey"})
+    pump(6)
+    grp_shot(tab, "Trigger", "grp_trigger_wyszarzone")
+    named("menu_grupa_ukrywanie")
+    tab._group_menu("Trigger", QPoint(300, 300))
+    tab.apply_panel({**tab.panel_state(), "inactive": "hide"})
+    pump(4)
+    tab.cb_tmode.setCurrentIndex(max(0, tab.cb_tmode.findText("between")))
+    pump(4)
+    grp_shot(tab, "Trigger", "grp_trigger_between")
+    tab.cb_tmode.setCurrentIndex(max(0, tab.cb_tmode.findText("rising edge")))
+    tab.cb_tact.setCurrentIndex(1)
+    pump(4)
+    grp_shot(tab, "Trigger", "grp_trigger_zapis_csv")
+    tab.cb_tact.setCurrentIndex(0)
+    pump(3)
+
+
+def tray_menu():
+    """The menu of the program's icon next to the clock."""
+    win = H["win"]
+    tc = win.tray
+    tc.refresh()
+    pump(4)
+    tc.menu.popup(QPoint(200, 200))
+    pump(6)
+    H["save"](tc.menu.grab(), "menu_zegar")
+    tc.menu.hide()
+    pump(2)
+
+
+def pauses():
+    """The three ways to show a pause between Stop and Start of the reading, and the dialog that sets them."""
+    tab, win = H["tab"], H["win"]
+    ctl = tab.mk
+    ctl.confirm_buffer = lambda *a, **k: True
+    if tab.btn_rec.isChecked():
+        tab.btn_rec.setChecked(False)
+        pump(6, 100)
+    tab.chk_trig.setChecked(False)
+    tab.sp_window.setValue(30.0)
+    tab.btn_reset.set_auto(True)                           # a fresh chart for this part: the first Start clears it
+    tab.stop()
+    pump(6, 100)
+    tab.start()
+    pump(45, 100)
+    tab.btn_reset.set_auto(False)                          # the next Start continues the chart and leaves a gap
+    tab.stop()
+    pump(60, 100)                                           # ~6 s of pause
+    tab.start()
+    pump(60, 100)
+    tab.set_gap_mode("full", 40)
+    pump(8, 80)
+    rect(win, [tab.plot], "wykres_przerwa_pelna", pad=0)
+    tab.set_gap_mode("join", 40)
+    pump(8, 80)
+    rect(win, [tab.plot], "wykres_przerwa_wyciecie", pad=0)
+    tab.set_gap_mode("fixed", 60)
+    pump(8, 80)
+    rect(win, [tab.plot], "wykres_przerwa_pas", pad=0)
+    H["shot_menu"](H["sub_menu"](H["menu_by_title"](win, "Widok"), "Przerwy Stop → Start (ta karta)"), "menu_widok_przerwy")
+    from s7trace.ui.gap_dialog import GapDialog
+    d = GapDialog(tab.cfg.gap_mode, tab.cfg.gap_px, win.marker_look, lambda m, p: None, lambda lk: None, win)
+    dlg_shot(d, "okno_wyglad_przerw")
+    tab.set_gap_mode("full", 40)
+    pump(4)
 
 
 def help_window():

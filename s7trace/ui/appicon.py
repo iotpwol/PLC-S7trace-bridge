@@ -104,6 +104,20 @@ def _pythonw() -> str:
     return w if os.path.exists(w) else exe
 
 
+def launch_spec() -> tuple[str, str, str, str]:
+    """(program, arguments, working folder, icon) that start this program again - for the Start menu shortcut."""
+    script = os.path.abspath(sys.argv[0]) if sys.argv and sys.argv[0] else ""
+    ico = ""
+    try:
+        from ..core.config import app_dir
+        ico = os.path.join(app_dir(), "s7trace.ico")
+        if not os.path.exists(ico):
+            write_ico(ico)
+    except Exception:
+        pass
+    return _pythonw(), f'"{script}"', os.path.dirname(script) or os.getcwd(), ico
+
+
 def set_taskbar_identity(hwnd: int, ico_path: str) -> bool:
     """Window property store: AppUserModel.ID + relaunch command / display name / icon, so the taskbar (and its
     pinned entry) shows 'S7Trace' with this icon instead of 'Python'. True when every property was stored."""

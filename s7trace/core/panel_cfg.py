@@ -37,9 +37,11 @@ ALL_GROUPS = GROUPS + INFO_GROUPS
 # groups whose elements get greyed out when another setting makes them useless: with "Ukrywanie nieaktywnych" (per group, on by default) such an
 # element is hidden automatically; the group's menu can show it anyway (until it becomes inactive again)
 AUTOHIDE_GROUPS = ("Połączenie", "Zakres okna wykresu", "Trigger", "Nagrywanie REC")
+INACTIVE_MODES = ("hide", "grey")                          # what an inactive element does: "hide" = disappears (default), "grey" = stays, greyed out (Interfejs)
 
 DEFAULTS = {"order": list(GROUPS), "folds": {g: False for g in GROUPS},
-            "hidden": {g: list(DEFAULT_HIDDEN.get(g, [])) for g in ALL_GROUPS}, "info_tab": 0, "autohide": {g: True for g in AUTOHIDE_GROUPS}}
+            "hidden": {g: list(DEFAULT_HIDDEN.get(g, [])) for g in ALL_GROUPS}, "info_tab": 0, "autohide": {g: True for g in AUTOHIDE_GROUPS},
+            "inactive": "hide"}
 
 
 def normalize(raw, rows: dict = ROWS) -> dict:
@@ -64,4 +66,5 @@ def normalize(raw, rows: dict = ROWS) -> dict:
         tab = 0
     auto_in = raw.get("autohide") if isinstance(raw.get("autohide"), dict) else {}
     autohide = {g: bool(auto_in.get(g, True)) for g in AUTOHIDE_GROUPS}
-    return {"order": order, "folds": folds, "hidden": hidden, "info_tab": tab if 0 <= tab < INFO_TABS else 0, "autohide": autohide}
+    return {"order": order, "folds": folds, "hidden": hidden, "info_tab": tab if 0 <= tab < INFO_TABS else 0, "autohide": autohide,
+            "inactive": raw.get("inactive") if raw.get("inactive") in INACTIVE_MODES else "hide"}

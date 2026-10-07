@@ -26,7 +26,12 @@ from .marker_look_dialog import MarkerLookDialog
 from .wizard_dialog import WizardDialog
 from .trace_tab import RACK_SLOT_HELP, TraceTab, dot_icon
 
-APP_TITLE = "PLC Trace - narzędzie do rysowania wykresów z danych z PLC Siemens"
+def blank_tab_config() -> TabConfig:
+    """What the '+' button opens: a tab named 'Nowa karta' with no address yet (to be set) and rack / slot 0 / 0."""
+    return TabConfig(name="Nowa karta", ip="", rack=0, slot=0)
+
+
+APP_TITLE = "PLC S7 Trace - narzędzie do rysowania wykresów z danych z PLC Siemens"
 
 STATE_PL = {"running": "praca", "connecting": "łączenie", "reconnecting": "ponawianie połączenia",
             "stopped": "zatrzymana", "error": "błąd"}
@@ -134,7 +139,8 @@ class MainWindow(QMainWindow):
         plus = QToolButton()
         plus.setText("+")
         plus.setToolTip("Nowa karta (nowe połączenie)")
-        plus.clicked.connect(lambda: self.new_tab())
+        plus.setStyleSheet("QToolButton { font-weight: bold; font-size: 13pt; padding: 0px 4px 4px 4px; }")      # a bold '+', lifted to the middle of the button
+        plus.clicked.connect(lambda: self.new_tab(blank_tab_config()))
         corner = QWidget()
         lay = QHBoxLayout(corner)
         lay.setContentsMargins(0, 0, 4, 0)
@@ -148,14 +154,15 @@ class MainWindow(QMainWindow):
         self._corner, self._plus = corner, plus       # keep the Python wrappers alive
         self.menuBar().setCornerWidget(corner, Qt.TopRightCorner)
 
-        tabs = cfg.get("tabs") or [TabConfig().to_dict()]
+        tabs = cfg["tabs"] if isinstance(cfg.get("tabs"), list) else [TabConfig().to_dict()]      # (an empty list = every tab was closed: an empty window)
         legacy_legend = self.ui.get("legend_pos")                # before: one position for all tabs
         for d in tabs:
             tc = TabConfig.from_dict(d)
             if "legend_pos" not in d and isinstance(legacy_legend, (list, tuple)) and len(legacy_legend) == 2:
                 tc.legend_pos = [float(legacy_legend[0]), float(legacy_legend[1])]
             self.new_tab(tc)
-        self.tabs.setCurrentIndex(min(max(cfg.get("current", 0), 0), self.tabs.count() - 1))
+        if self.tabs.count():
+            self.tabs.setCurrentIndex(min(max(cfg.get("current", 0), 0), self.tabs.count() - 1))
         geo = self.ui.get("geometry")
         if geo:
             try:
@@ -189,7 +196,7 @@ class MainWindow(QMainWindow):
     def _build_menu(self):
         mb = self.menuBar()
         m = mb.addMenu("&Plik")
-        self._act(m, "Nowa karta", lambda: self.new_tab(), "Ctrl+T")
+        self._act(m, "Nowa karta", lambda: self.new_tab(blank_tab_config()), "Ctrl+T")
         self._act(m, "Zmień nazwę karty…", lambda: self.rename_tab(self.tabs.currentIndex()), "F2")
         self._act(m, "Duplikuj kartę", lambda: self.duplicate_tab(self.tabs.currentIndex()))
         self._act(m, "Zamknij kartę", lambda: self.close_tab(self.tabs.currentIndex()), "Ctrl+W")
@@ -225,7 +232,7 @@ class MainWindow(QMainWindow):
             self.act_style[key] = a
         self.menu_style.addSeparator()
         for key, label in LEGEND_STYLES:
-            self._act(self.menu_style, "Wszystkie otwarte karty: " + label, lambda k=key: self._legend_style_all(k))
+            self._act(self.menu_style, "Wszystkie karty: " + label, lambda k=key: self._legend_style_all(k))
         self.menu_gap = v.addMenu("Przerwy Stop → Start (ta karta)")
         self.grp_gap = QActionGroup(self)
         self.act_gap = {}
@@ -481,7 +488,7 @@ class MainWindow(QMainWindow):
             self._apply_marker_look(look)
 
     def _legend_style_all(self, style: str) -> None:
-        """'Wszystkie otwarte karty': the same signal-name style in every open tab (each keeps it as its own setting)."""
+        """'Wszystkie karty': the same signal-name style in every open tab (each keeps it as its own setting)."""
         for i in range(self.tabs.count()):
             self.tabs.widget(i).set_legend_style(style)
 
@@ -643,10 +650,9 @@ class MainWindow(QMainWindow):
             return
         tab.shutdown()
         self.tabs.removeTab(i)
-        tab.deleteLater()
-        if self.tabs.count() == 0:
-            self.new_tab()
+        tab.deleteLater()                                        # the last tab may go too: the window stays empty until the '+' button
         self._relayout_tabs()
+        self._sync_tab_actions()
 
     # --------------------------------------------------------- config
     def _config_dict(self) -> dict:
@@ -756,7 +762,8 @@ class MainWindow(QMainWindow):
             t = self.tabs.widget(i)
             scanning = t.state in sessions.SCANNING
             out.append({"title": t.title(), "ip": t.ed_ip.text(), "state": t.state,
-                        "since": t.start_wall.isoformat(timespec="seconds") if scanning else None})
+                        "since": t.start_wall.isoformat(timespec="seconds") if scanning else None,
+                        "rec": t.recorder is not None})
         return out
 
     def show_sessions(self) -> None:
@@ -770,6 +777,28 @@ class MainWindow(QMainWindow):
         self.ui["app_icon"] = mode
         self.act_icon[mode].setChecked(True)
         self.tray.set_mode(mode)
+
+    def ask_quit(self) -> bool:
+        """The question of the tray menu's 'Zakończ': True = quit the program now. 'Ukryj' only takes the window down to the bar / tray."""
+        tabs = [self.tabs.widget(i) for i in range(self.tabs.count())]
+        scan = sum(1 for t in tabs if t.state in sessions.SCANNING)
+        rec = sum(1 for t in tabs if t.recorder is not None)
+        text = "Zakończyć program S7Trace?"
+        if scan or rec:
+            text += (f"\n\nAktywne połączenia: {scan}" + (f", w tym nagrywane (REC): {rec}" if rec else "")
+                     + ". Zakończenie programu zatrzyma odczyt" + (" i zamknie nagrania." if rec else "."))
+        box = QMessageBox(QMessageBox.Question, "S7Trace", text, QMessageBox.NoButton, self)
+        b_quit = box.addButton("Zakończ program", QMessageBox.AcceptRole)
+        b_hide = box.addButton("Ukryj do paska", QMessageBox.ActionRole)
+        b_cancel = box.addButton("Anuluj", QMessageBox.RejectRole)
+        box.setDefaultButton(b_cancel)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is b_hide:
+            if not self.tray.hidden_now():
+                self.tray.toggle()
+            return False
+        return clicked is b_quit
 
     def changeEvent(self, e):
         super().changeEvent(e)

@@ -125,7 +125,7 @@ window.openEditor = async (id) => {
   view = "editor"; show("editor"); stopStream(); $("e-error").textContent = "";
   let d;
   if (id) d = await api(`/api/connections/${id}/config`);
-  else d = { name: "", ip: "192.168.0.1", rack: 0, slot: 2, cycle_ms: 25, window_s: 200, y_layout: "lanes", auto_y: true, y_min: 0, y_max: 10, show_points: false, conn_type: "auto", mode: null, state: "stopped",
+  else d = { name: "Nowa karta", ip: "", rack: 0, slot: 0, cycle_ms: 25, window_s: 200, y_layout: "lanes", auto_y: true, y_min: 0, y_max: 10, show_points: false, conn_type: "auto", mode: null, state: "stopped",
              signals: [NEW_SIGNAL(1)], options: (await api("/api/options")).options };
   editing = { id, opts: d.options, running: d.state !== "stopped" };
   $("e-title").textContent = id ? `Edycja połączenia: ${d.name || d.ip}` : "Nowe połączenie";
@@ -471,7 +471,7 @@ function drawChart(cv, ds, t0, t1, o) {
       if (!MKLOOK.gap_text) continue;
       const pos = MKLOOK.gap_text_pos, vert = MKLOOK.gap_text_dir === "vertical", yt = pad.t + 6, yb = H - pad.b - 6, ym = (pad.t + H - pad.b) / 2;
       g.fillStyle = MKLOOK.gap_text_color; g.save(); g.textBaseline = "middle";
-      const txt = gm.L[i] < 600 ? `przerwa ${gm.L[i].toFixed(1)} s` : `przerwa ${(gm.L[i] / 60).toFixed(1)} min`;
+      const txt = gm.L[i] < 600 ? `Przerwa:  ${gm.L[i].toFixed(1)} s` : `Przerwa:  ${(gm.L[i] / 60).toFixed(1)} min`;
       if (vert) { g.translate((xa + xb) / 2, pos === "top" ? yt : pos === "bottom" ? yb : ym); g.rotate(-Math.PI / 2); g.textAlign = pos === "top" ? "right" : pos === "bottom" ? "left" : "center"; }   // reads upwards: its end is at the top
       else { g.translate((xa + xb) / 2, pos === "top" ? yt + 6 : pos === "bottom" ? yb - 6 : ym); }
       g.fillText(txt, 0, 0); g.restore();
@@ -618,6 +618,7 @@ const DG_COLOR = { "Bardzo dobre": "#2fbf4a", "Dobre": "#7fcf3a", "Przeciętne":
 const DG_SCORE = { "Bardzo dobre": 10, "Dobre": 8, "Przeciętne": 5, "Słabe": 2, "Brak połączenia": 0, "Brak danych": 0 };
 const dgF = (v, d = 1) => (typeof v === "number" && isFinite(v) ? v.toFixed(d) : "—");
 const dgHms = (sec) => { sec = Math.floor(sec || 0); return `${Math.floor(sec / 3600)}:${String(Math.floor(sec % 3600 / 60)).padStart(2, "0")}:${String(sec % 60).padStart(2, "0")}`; };
+let dgPeers = null;                                          // the last "who connects to the PLC" answer stays visible while the view is open
 let dgTimer = null, dgBusy = false, dgPing = null;       // dgPing: the last ping result stays visible while the view refreshes
 async function initDiag() {
   const o = overview || await api("/api/overview"); overview = o; const cur = $("dg-conn").value;
@@ -629,17 +630,20 @@ async function initDiag() {
 async function refreshDiag(ping) {
   const id = $("dg-conn").value; if (!id || dgBusy) { if (!id) $("dg-body").innerHTML = '<p class="muted">Brak połączeń.</p>'; return; }
   dgBusy = true;
-  try { const d = await api(`/api/connections/${id}/diag` + (ping ? "?ping=1" : "")); if (ping) dgPing = { id, ms: d.ping_ms, at: new Date() };
+  try { const d = await api(`/api/connections/${id}/diag` + (ping === "peers" ? "?peers=1" : ping ? "?ping=1" : "")); if (ping === true) dgPing = { id, ms: d.ping_ms, at: new Date() };
+    if (ping === "peers") dgPeers = { id, rows: d.peers || [], at: new Date() };
     renderDiag(d); $("dg-msg").textContent = ""; }
   catch (e) { $("dg-msg").textContent = "Błąd: " + e.message; }
   dgBusy = false;
 }
+const dgHost = (ip) => { const m = /^(.*?)(?::(\d+))?$/.exec(String(ip || "")); return { host: m[1] || String(ip || ""), port: m[2] || "102", given: !!m[2] }; };
 function renderDiag(d) {
   const L = d.link, col = DG_COLOR[d.rating] || "#8a8a8a", seg = DG_SCORE[d.rating] ?? 0;
   const bar = Array.from({ length: 10 }, (_, i) => `<i style="background:${col};opacity:${i < seg ? 1 : 0.25}"></i>`).join("");
   const keys = [["last", "Chwilowo"], ["avg10", "Śr. 10 s"], ["avg60", "Śr. 60 s"], ["avg", "Śr. całość"], ["min", "Min"], ["max", "Max"], ["std", "Odch. std."], ["p95", "P95"], ["p99", "P99"]];
   const row = (title, o, extra) => `<tr><th>${title}</th>${keys.map(([k]) => `<td>${dgF(o?.[k])}</td>`).join("")}${extra || ""}</tr>`;
-  let h = `<div class="dg-rate"><b style="color:${col}">${esc(d.rating)}</b> <span class="dg-bar">${bar}</span> <span class="muted">${esc(d.name)} · ${esc(d.ip)} · ${esc(d.state)}${d.message ? " · " + esc(d.message) : ""} · metoda: ${esc(d.method)}</span></div>`;
+  let h = `<p class="dg-target">Diagnostyka połączenia za adresem IP: <b>${esc(dgHost(d.ip).host)}</b>, port: <b>${esc(dgHost(d.ip).port)}</b>${dgHost(d.ip).given ? "" : " (domyślny)"}</p>`;
+  h += `<div class="dg-rate"><b style="color:${col}">${esc(d.rating)}</b> <span class="dg-bar">${bar}</span> <span class="muted">${esc(d.name)} · ${esc(d.ip)} · ${esc(d.state)}${d.message ? " · " + esc(d.message) : ""} · metoda: ${esc(d.method)}</span></div>`;
   h += "<ul>" + d.notes.map((n) => `<li>${boldNums(n)}</li>`).join("") + "</ul>";
   if (dgPing && dgPing.id === d.id) h += `<p>Ping ICMP sterownika (z serwera, ${dgPing.at.toLocaleTimeString("pl-PL")}): <b>${dgPing.ms === null ? "brak odpowiedzi" : dgPing.ms + " ms"}</b></p>`;
   if (L) {
@@ -650,6 +654,17 @@ function renderDiag(d) {
       <tr><th>Błędy odczytu</th><td>${L.errors}</td><th>Ponowne połączenia</th><td>${L.reconnects}</td><th>Czas przerw / dostępność</th><td>${dgF(L.down_s)} s / ${dgF(L.availability, 2)}%</td><th>Czas pracy</th><td>${dgHms(L.uptime_s)}</td></tr>
       <tr><th>Dane na cykl</th><td>${L.bytes_per_cycle} B w ${L.req_per_cycle} żądaniach</td><th>Przepustowość</th><td>${dgF(L.bytes_per_s, 0)} B/s, ${dgF(L.req_per_s)} żądań/s</td><th>Ruch w sieci (szacunek)</th><td>${dgF(L.wire_bytes_per_s * 8 / 1000)} kb/s</td><th>Ostatni błąd</th><td>${esc(L.last_error || "—")}</td></tr></tbody></table>`;
   }
+  if (L && L.load) {                                                                       // the load of the link and of the PLC caused by this program (an estimate)
+    const wk = [["now", "Chwilowo (2 s)"], ["w10", "Śr. 10 s"], ["w60", "Śr. 60 s"], ["all", "Śr. całość"]];
+    const rows = [["hz", "Częstotliwość odczytów [Hz]", 1], ["data_Bps", "Dane odczytane ze sterownika [B/s]", 0], ["to_plc_kbps", "Ruch DO sterownika – żądania [kb/s]", 1], ["from_plc_kbps", "Ruch OD sterownika – odpowiedzi [kb/s]", 1],
+      ["total_kbps", "Ruch łącznie [kb/s]", 1], ["pkts_to", "Pakiety DO sterownika – żądania [1/s]", 1], ["pkts_from", "Pakiety OD sterownika – odpowiedzi [1/s]", 1], ["plc_busy_pct", "Zajętość sterownika odpowiedziami dla tej aplikacji [%]", 2]];
+    h += `<h3>Obciążenie sieci i sterownika przez ten serwer (szacunek)</h3><table class="dg"><thead><tr><th></th>${wk.map(([, t]) => `<th>${t}</th>`).join("")}</tr></thead><tbody>` +
+      rows.map(([k, t, n]) => `<tr><th>${t}</th>${wk.map(([w]) => `<td><b>${dgF(L.load[w]?.[k], n)}</b></td>`).join("")}</tr>`).join("") + `</tbody></table>` +
+      '<p class="muted">Szacunek z zaplanowanego rozmiaru jednego cyklu i zmierzonej częstotliwości / czasu odczytu. Dokładną liczbę pakietów da dopiero zrzut sieci; obciążenia procesora sterownika ani listy adresów, z którymi rozmawia, nie widać z serwera.</p>';
+  }
+  if (dgPeers && dgPeers.id === d.id) h += `<h3>Kto łączy się ze sterownikiem (z tego serwera, ${dgPeers.at.toLocaleTimeString("pl-PL")})</h3>` + (dgPeers.rows.length
+    ? `<table class="dg"><thead><tr><th>Port lokalny</th><th>Port sterownika</th><th>Stan</th><th>Program</th><th>PID</th></tr></thead><tbody>${dgPeers.rows.map((r) => `<tr><td>${esc(r.lport)}</td><td>${esc(r.rport)}</td><td>${esc(r.state)}</td><td>${esc(r.process)}</td><td>${esc(r.pid)}</td></tr>`).join("")}</tbody></table>`
+    : '<p class="muted">Z tego serwera nie ma teraz połączeń TCP do sterownika.</p>');
   h += `<h3>Sterownik</h3>` + (d.device.length ? `<table class="dg"><tbody>${d.device.map(([a, b]) => `<tr><th>${esc(a)}</th><td>${esc(b)}</td></tr>`).join("")}</tbody></table>`
     : '<p class="muted">Brak danych sterownika – pojawią się po pierwszym połączeniu.</p>');
   if (d.plc_time) h += `<p>Czas sterownika (w chwili połączenia): <b>${esc(d.plc_time.time)}</b>${d.plc_time.utc ? " (UTC)" : ""}, różnica do zegara serwera <b>${esc(d.plc_time.diff_text)}</b>.</p>`;
@@ -659,7 +674,7 @@ function renderDiag(d) {
     : '<p class="muted">Brak – wszystko dostarczone.</p>');
   $("dg-body").innerHTML = h;
 }
-$("dg-conn").addEventListener("change", () => refreshDiag()); $("dg-refresh").addEventListener("click", () => refreshDiag()); $("dg-ping").addEventListener("click", () => refreshDiag(true));
+$("dg-conn").addEventListener("change", () => refreshDiag()); $("dg-refresh").addEventListener("click", () => refreshDiag()); $("dg-ping").addEventListener("click", () => refreshDiag(true)); $("dg-peers").addEventListener("click", () => refreshDiag("peers"));
 
 // ---------------------------------------------------------------- recording targets (administrator)
 let targets = [];
@@ -736,7 +751,7 @@ const PANEL_ROWS = {
 };
 const PANEL_DEFAULT_HIDDEN = { "Sterownik": ["Numer katalogowy (MLFB)", "Numer seryjny", "Producent / copyright", "Stan CPU", "Długość PDU [B]"] };
 const PANEL_AUTOHIDE = ["Połączenie", "Zakres okna wykresu", "Trigger", "Nagrywanie REC"];       // = panel_cfg.AUTOHIDE_GROUPS: groups with greyed-out elements
-let PANEL = { order: PANEL_GROUPS.slice(), folds: {}, hidden: JSON.parse(JSON.stringify(PANEL_DEFAULT_HIDDEN)), info_tab: 0, autohide: Object.fromEntries(PANEL_AUTOHIDE.map((g) => [g, true])) }, panelSave = null;
+let PANEL = { order: PANEL_GROUPS.slice(), folds: {}, hidden: JSON.parse(JSON.stringify(PANEL_DEFAULT_HIDDEN)), info_tab: 0, autohide: Object.fromEntries(PANEL_AUTOHIDE.map((g) => [g, true])), inactive: "hide" }, panelSave = null;
 const PANEL_PIN = new Set(), PANEL_INACT = {};          // "group|row" shown although inactive (until its state changes) / the last known inactive state
 function panelNormalize(raw) {
   raw = raw && typeof raw === "object" ? raw : {};
@@ -745,19 +760,19 @@ function panelNormalize(raw) {
   const folds = {}; for (const g of PANEL_GROUPS) folds[g] = !!(raw.folds && raw.folds[g]);
   const hidden = {}; for (const g of Object.keys(PANEL_ROWS)) { const want = Array.isArray(raw.hidden?.[g]) ? raw.hidden[g] : (PANEL_DEFAULT_HIDDEN[g] || []); hidden[g] = PANEL_ROWS[g].filter((k) => want.includes(k)); }
   const autohide = {}; for (const g of PANEL_AUTOHIDE) autohide[g] = raw.autohide?.[g] !== false;
-  const t = Number(raw.info_tab); return { order, folds, hidden, info_tab: t === 1 ? 1 : 0, autohide };
+  const t = Number(raw.info_tab); return { order, folds, hidden, info_tab: t === 1 ? 1 : 0, autohide, inactive: raw.inactive === "grey" ? "grey" : "hide" };
 }
 function panelFolds() { return [...document.querySelectorAll("#e-folds .fold")]; }
 // An element is INACTIVE when all its controls are disabled by another setting (the lock of a running connection / a recording does not count: dataset.lock).
 const panelRowInactive = (row) => { const c = [...row.querySelectorAll("input,select,textarea,button")]; return c.length > 0 && c.every((e) => e.disabled && !e.dataset.lock); };
 const panelRowEl = (group, key) => [...document.querySelectorAll(`#e-folds .fold[data-fold="${group}"] [data-row]`)].find((e) => e.dataset.row === key);
-const panelAutoHidden = (group, key) => { const e = panelRowEl(group, key); return !!(e && PANEL.autohide[group] && !PANEL_PIN.has(group + "|" + key) && panelRowInactive(e)); };
+const panelAutoHidden = (group, key) => { const e = panelRowEl(group, key); return !!(e && PANEL.inactive === "hide" && PANEL.autohide[group] && !PANEL_PIN.has(group + "|" + key) && panelRowInactive(e)); };
 function panelApplyHidden() {
   panelFolds().forEach((f) => f.querySelectorAll("[data-row]").forEach((e) => {
     const g = f.dataset.fold, k = g + "|" + e.dataset.row; let auto = false;
     if (PANEL_AUTOHIDE.includes(g)) {                       // "Ukrywanie nieaktywnych": a pin lives only until the element changes state
       const now = panelRowInactive(e); if ((k in PANEL_INACT && PANEL_INACT[k] !== now) || !now) PANEL_PIN.delete(k);
-      PANEL_INACT[k] = now; auto = !!PANEL.autohide[g] && now && !PANEL_PIN.has(k);
+      PANEL_INACT[k] = now; auto = PANEL.inactive === "hide" && !!PANEL.autohide[g] && now && !PANEL_PIN.has(k);
     }
     e.classList.toggle("row-hidden", auto || (PANEL.hidden[g] || []).includes(e.dataset.row));
   }));
@@ -873,7 +888,7 @@ function panelRowItems(group) {
   const items = PANEL_ROWS[group].map((k) => [k === "Pobierz dane" ? "Pobierz dane sterownika (przycisk)" : k, () => panelSetRow(group, k, !shown(k)), shown(k)]);
   const any = hid.length || (auto && PANEL_ROWS[group].some((k) => panelAutoHidden(group, k)));
   const out = [...items, "-", ["Pokaż wszystkie elementy", any ? () => panelShowAll(group) : null]];
-  if (auto) out.push("-", ["Ukrywanie nieaktywnych", () => { PANEL.autohide[group] = !PANEL.autohide[group]; for (const p of [...PANEL_PIN]) if (p.startsWith(group + "|")) PANEL_PIN.delete(p); panelApplyHidden(); panelPersist(); }, !!PANEL.autohide[group]]);
+  if (auto) out.push("-", ["Ukrywanie nieaktywnych", PANEL.inactive !== "hide" ? null : () => { PANEL.autohide[group] = !PANEL.autohide[group]; for (const p of [...PANEL_PIN]) if (p.startsWith(group + "|")) PANEL_PIN.delete(p); panelApplyHidden(); panelPersist(); }, !!PANEL.autohide[group]]);
   return out;
 }
 const panelDeviceItem = (group) => (group === "Sterownik" ? [["Pobierz dane sterownika", () => $("e-readdev").click()], "-"] : []);
@@ -1049,6 +1064,11 @@ function tableColorsDialog() {
     i.addEventListener("input", () => { TBL[k] = i.value; tableColorsPersist(); });
     r.append(l, i); box.appendChild(r);
   }
+  const r = document.createElement("div"); r.className = "urow";          // what an inactive element of the settings panel does (the same choice as in the program's Interfejs window)
+  const l = document.createElement("label"); l.textContent = "Elementy nieaktywne (panel ustawień)";
+  const s = document.createElement("select"); s.innerHTML = '<option value="hide">Ukrywane</option><option value="grey">Wyszarzone</option>'; s.value = PANEL.inactive;
+  s.addEventListener("change", () => { PANEL.inactive = s.value; PANEL_PIN.clear(); panelApplyHidden(); panelPersist(); });
+  r.append(l, s); box.appendChild(r);
   if (!$("ui-dlg").open) $("ui-dlg").showModal();
 }
 $("ui-btn").addEventListener("click", tableColorsDialog);

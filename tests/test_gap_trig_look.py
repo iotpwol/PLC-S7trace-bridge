@@ -192,3 +192,41 @@ console.log(JSON.stringify({ a: ctx.f({ gap_fill: '#ABCDEF', gap_opacity: 999, g
     assert (a["trig_style"], a["trig_width"], a["trig_show"], a["trig_color"]) == ("dash", 4, 0, "#ff4040")
     assert set(ml.DEFAULTS) == set(d)                                                              # the browser knows exactly the keys of the program
     assert all(d[k] == ml.DEFAULTS[k] for k in d)                                                  # ... with the same defaults
+
+
+# ------------------------------------------------------------------------------------------------ pauses of a loaded recording (v1.22)
+def test_find_gaps_in_a_loaded_recording():
+    import numpy as np
+    from s7trace.core.gapmap import find_gaps
+    t = np.array([0, 1, 2, 3.001, 3.002, 20.0, 21.0, 22.0, 22.5, 22.6, 40.0])
+    v = np.ones((len(t), 2))
+    v[[3, 4]] = np.nan                                      # the empty rows the acquisition leaves at a pause
+    v[8] = np.nan                                           # a one-cycle dropout (too short)
+    assert find_gaps(t, v) == [(3.001, 20.0)]
+    v2 = np.ones((6, 1))
+    v2[0] = np.nan
+    v2[5] = np.nan
+    assert find_gaps(np.arange(6.0), v2) == []              # empty rows at the very beginning / end are no pause
+    assert find_gaps(np.array([]), np.empty((0, 2))) == []
+
+
+def test_a_loaded_recording_can_switch_the_kind_of_pause(app, tmp_path):
+    import numpy as np
+    from s7trace.core.config import TabConfig
+    from s7trace.ui.trace_tab import TraceTab
+    tab = db_tab(tmp_path)
+    tab.show()
+    t = np.concatenate([np.arange(0, 30, 0.1), [30.001], np.arange(50, 70, 0.1)])
+    v = np.sin(t)[:, None] * np.ones((1, 2))
+    v[300] = np.nan
+    tab._show_loaded(tab.cfg.signals, t, v, "test")
+    assert tab.mk.rec.m.gaps and abs(tab.mk.rec.m.gaps[0]["t1"] - 50.0) < 1e-6
+    tab.plot.set_view(0, 70)
+    tab.set_gap_mode("join")
+    assert tab.plot.gm and abs(tab.plot.view_range()[1] - 70) < 1e-6                              # cut out: the chart now has a junction
+    tab.set_gap_mode("fixed", 50)
+    tab.plot.refresh(True)
+    assert tab.plot.gm.g > 0 and len(tab.plot._band_items) >= 1                                    # a band of a fixed width
+    tab.set_gap_mode("full")
+    assert not tab.plot.gm
+    tab.shutdown()

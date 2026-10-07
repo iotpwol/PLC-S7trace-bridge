@@ -19,6 +19,7 @@ from .planner import MAX_MULTI, MODE_MULTI, build_plan
 from .types import SOURCES, Signal
 
 HIST_EDGES = [0, 2, 5, 10, 20, 50, 100, 200, 500, 1000]          # ms; the last bucket is open ended
+S7_REQ_B = 90                # ... of which the request (Ethernet + IP + TCP + TPKT + COTP + S7 header + the item list)
 S7_OVERHEAD_B = 150          # rough Ethernet+IP+TCP+TPKT+COTP+S7 bytes of one request/response pair (estimate)
 
 
@@ -29,6 +30,23 @@ def plan_cost(signals: list[Signal], mode: str) -> tuple[int, int]:
     plan = build_plan(signals, mode)
     reqs = -(-len(plan) // MAX_MULTI) if mode == MODE_MULTI else len(plan)
     return sum(b.size for b in plan), reqs
+
+
+TCP_MSS = 1460
+LOAD_WINDOWS = (("now", 2.0), ("w10", 10.0), ("w60", 60.0), ("all", None))
+
+
+def load_metrics(rate: float, mean_lag_ms: float | None, bpc: int, rpc: int) -> dict:
+    """Load of the link and of the PLC caused by THIS program for a read rate [cycles/s]: an ESTIMATE from the planned size of one cycle
+    (payload bytes, requests) and the measured rate / read time - a real packet count needs a capture (Npcap / port mirror), the PLC's own CPU
+    load is not visible from outside."""
+    rpc = max(int(rpc), 0)
+    resp_b = (bpc + (S7_OVERHEAD_B - S7_REQ_B) * rpc)                      # bytes of the answers in one cycle
+    per_resp = (bpc / rpc + (S7_OVERHEAD_B - S7_REQ_B)) if rpc else 0.0
+    segs = rpc * max(math.ceil(per_resp / TCP_MSS), 1) if rpc else 0        # an answer larger than one TCP segment takes more packets
+    return {"hz": rate, "data_Bps": bpc * rate, "to_plc_kbps": S7_REQ_B * rpc * rate * 8 / 1000, "from_plc_kbps": resp_b * rate * 8 / 1000,
+            "total_kbps": (S7_REQ_B * rpc + resp_b) * rate * 8 / 1000, "pkts_to": rpc * rate, "pkts_from": segs * rate,
+            "plc_busy_pct": (rate * mean_lag_ms / 10.0) if mean_lag_ms is not None else None}   # share of the time the PLC spends answering us
 
 
 def _stats(a: np.ndarray) -> dict:
@@ -179,6 +197,16 @@ class LinkDiag:
             w = lt[m][-1] - lt[m][0] if m.sum() > 1 else 0.0
             rate10 = (m.sum() - 1) / w if w > 0 else 0.0
         out.update(rate=rate, rate10=rate10, expected_rate=1000.0 / cycle if cycle > 0 else 0.0)
+        load: dict = {}
+        for key, w in LOAD_WINDOWS:                                    # momentary (2 s), 10 s, 60 s and the whole run
+            if w is None:
+                r, ml = rate, lag.get("avg")
+            else:
+                m = lt >= t_last - w if len(lt) else np.zeros(0, bool)
+                r = (m.sum() - 1) / (lt[m][-1] - lt[m][0]) if m.sum() > 1 and lt[m][-1] > lt[m][0] else 0.0
+                ml = float(lags[m].mean()) if m.any() else None
+            load[key] = load_metrics(r, ml, bpc, rpc)
+        out["load"] = load
         out["bytes_per_s"] = bpc * rate10
         out["req_per_s"] = rpc * rate10
         out["wire_bytes_per_s"] = (bpc + S7_OVERHEAD_B * rpc) * rate10
@@ -304,6 +332,33 @@ class PingProbe(threading.Thread):
         now = time.perf_counter()
         with self._lock:
             return [(t, r) for t, r in self.history if t >= now - seconds]
+
+
+def local_connections_to(host: str) -> list[dict]:
+    """TCP connections of THIS computer to `host` (from `netstat -ano`): local / remote port, state, process - to see who else polls the PLC from here."""
+    import csv
+    import io
+    import subprocess
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        out = subprocess.run(["netstat", "-ano", "-p", "TCP"], capture_output=True, text=True, timeout=10, creationflags=flags).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    names: dict[str, str] = {}
+    try:
+        tl = subprocess.run(["tasklist", "/FO", "CSV", "/NH"], capture_output=True, text=True, timeout=10, creationflags=flags).stdout
+        for row in csv.reader(io.StringIO(tl)):
+            if len(row) > 1:
+                names[row[1]] = row[0]
+    except (OSError, subprocess.SubprocessError):
+        pass
+    rows = []
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) >= 5 and parts[0].upper() == "TCP" and parts[2].rsplit(":", 1)[0] == host:
+            rows.append({"lport": parts[1].rsplit(":", 1)[-1], "rport": parts[2].rsplit(":", 1)[-1], "state": parts[3], "pid": parts[4],
+                         "process": names.get(parts[4], "?")})
+    return rows
 
 
 def tcp_probe(host: str, port: int = 102, timeout: float = 2.0) -> tuple[bool, float, str]:

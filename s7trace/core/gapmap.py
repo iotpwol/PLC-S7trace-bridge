@@ -138,3 +138,29 @@ class GapMap:
                 nan_row = np.isnan(v[lo:hi]).all(axis=1) if v.ndim == 2 else np.isnan(v[lo:hi])
                 keep[lo:hi] = ~nan_row
         return (t, v) if keep.all() else (t[keep], v[keep])
+
+
+def find_gaps(t, v, min_len: float = 1.0) -> list[tuple[float, float]]:
+    """The pauses of a LOADED recording (CSV / database): stretches where every signal is empty (NaN). The acquisition puts such a row right after
+    the last sample of a run (+1 ms) and the next real sample comes at the new start, so a pause = (time of the empty row, time of the next
+    non-empty row). Stretches shorter than `min_len` s are not pauses (a dropout of one cycle). Returns [(t0, t1)]."""
+    import numpy as np
+    t = np.asarray(t, float)
+    v = np.asarray(v, float)
+    if len(t) < 3 or v.ndim != 2 or v.shape[1] == 0:
+        return []
+    empty = np.isnan(v).all(axis=1)
+    out: list[tuple[float, float]] = []
+    i, n = 0, len(t)
+    while i < n:
+        if not empty[i]:
+            i += 1
+            continue
+        j = i
+        while j + 1 < n and empty[j + 1]:
+            j += 1
+        if i > 0 and j + 1 < n and t[j + 1] - t[i] >= min_len:      # (empty rows at the very beginning / end are no pause)
+            out.append((float(t[i]), float(t[j + 1])))
+        i = j + 1
+    return out
+

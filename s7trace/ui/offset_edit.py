@@ -20,16 +20,17 @@ class OffsetEdit(QWidget):
         self.btn_sign = QPushButton("+")
         self.btn_sign.setCheckable(True)
         self.btn_sign.setFixedWidth(34)
-        self.btn_sign.setStyleSheet("QPushButton { padding: 0px; font-weight: bold; }")
+        self.btn_sign.setStyleSheet("QPushButton { padding: 0px 0px 4px 0px; font-weight: bold; font-size: 13pt; }")        # a bold, larger sign lifted to the middle of the button
         self.btn_sign.setToolTip("Znak offsetu: + = późniejszy czas na osi, - = wcześniejszy")
         self.sp_days = QSpinBox()
         self.sp_days.setRange(0, int(TIME_OFFSET_MAX // 86400))
         self.sp_days.setSuffix(" d")
-        self.sp_days.setMinimumWidth(66)
+        self.sp_days.setMinimumWidth(84)
+        self.sp_days.setStyleSheet("QSpinBox { padding-left: 4px; }")                         # narrow fields: the number keeps its room next to the arrows
         self.sp_days.setToolTip("Data: pełne doby korekty (0 – 3650)")
         self.ed_time = QTimeEdit()
         self.ed_time.setDisplayFormat("HH:mm:ss.zzz")
-        self.ed_time.setMinimumWidth(104)
+        self.ed_time.setMinimumWidth(110)
         self.ed_time.setToolTip("Godzina: HH:MM:SS.mmm (godziny, minuty, sekundy, milisekundy) korekty")
         for w in (self.sp_days, self.ed_time):
             w.setKeyboardTracking(False)

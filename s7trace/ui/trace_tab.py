@@ -24,6 +24,7 @@ from ..core.acquisition import parse_host
 from ..core.diagnostics import PingProbe
 from ..core.buffer import TraceBuffer
 from ..core.config import GAP_MODES, GAP_PX_MAX, GAP_PX_MIN, TabConfig, data_dir
+from ..core.gapmap import find_gaps
 from ..core.csvio import CsvRecorder, csv_start_wall, read_csv, write_csv
 from ..core.planner import MODES
 from ..core.symbols import Symbol
@@ -210,6 +211,7 @@ class TraceTab(QWidget):
         self._net_on = False                                                          # the 'Sieć' rows are shown (the connection works)
         self._row_keys: dict[str, list[str]] = {}
         self._autohide: dict[str, bool] = dict(panel_cfg.DEFAULTS["autohide"])        # "Ukrywanie nieaktywnych" per group (part of the panel layout)
+        self._inactive_mode = "hide"                                                  # Interfejs: inactive elements "hide" or stay "grey" (greyed out)
         self._pinned: set[tuple[str, str]] = set()                                    # greyed-out elements shown on purpose (until they change state)
         self._row_fields: dict[str, list[list[QWidget]]] = {}                         # group -> per row: the input widgets (their enabled state decides)
         self._field_rows: dict[QWidget, tuple[str, str]] = {}
@@ -666,7 +668,7 @@ class TraceTab(QWidget):
             a.triggered.connect(lambda _=False, k=key: self.set_legend_style(k))
         style.addSeparator()
         for key, label in LEGEND_STYLES:
-            style.addAction("Wszystkie otwarte karty: " + label, lambda k=key: self.legend_style_all(k))
+            style.addAction("Wszystkie karty: " + label, lambda k=key: self.legend_style_all(k))
         corners = m.addMenu("Położenie legendy (ta karta)")
         corners.setEnabled(self.plot.legend_style == "legend")
         for label, p in (("Lewy górny róg", (0, 0)), ("Prawy górny róg", (1, 0)),
@@ -815,7 +817,8 @@ class TraceTab(QWidget):
         return all(not w.isEnabledTo(self) and not (w in self._conn_widgets and not stopped) for w in ws)
 
     def _auto_hidden(self, title: str, key: str) -> bool:
-        return bool(self._autohide.get(title)) and (title, key) not in self._pinned and self._row_inactive(title, key)
+        return (self._inactive_mode == "hide" and bool(self._autohide.get(title)) and (title, key) not in self._pinned
+                and self._row_inactive(title, key))
 
     def _refresh_inactive(self) -> None:
         """An element became (in)active: a pin ('show although inactive') is only valid until the state changes again; the rows are updated."""
@@ -878,6 +881,7 @@ class TraceTab(QWidget):
             a = m.addAction("Ukrywanie nieaktywnych")
             a.setCheckable(True)
             a.setChecked(bool(self._autohide.get(title)))
+            a.setEnabled(self._inactive_mode == "hide")           # (Interfejs -> Elementy nieaktywne: "Wyszarzone" keeps every element on show)
             a.setToolTip("Elementy wyszarzone przez inne ustawienia (np. „Zapis do” przy akcji „Pauza”) ukrywają się same; z tego menu można je pokazać "
                          "mimo to – do następnej zmiany ich stanu.")
             a.triggered.connect(lambda checked: self._set_autohide(title, checked))
@@ -928,7 +932,7 @@ class TraceTab(QWidget):
         """Order of the groups, folded groups and the bottom tab: the layout of the left panel (a part of the interface configuration)."""
         return {"order": self._group_order(), "folds": {k: g.folded() for k, g in self.folds.items()},
                 "hidden": {k: list(v) for k, v in self._hidden.items()}, "info_tab": self.info_tabs.currentIndex(),
-                "autohide": dict(self._autohide)}
+                "autohide": dict(self._autohide), "inactive": self._inactive_mode}
 
     def apply_panel(self, p: dict) -> None:
         p = panel_cfg.normalize(p)
@@ -948,8 +952,9 @@ class TraceTab(QWidget):
                 lv.insertWidget(first + n, g)
         for k, g in self.folds.items():
             g.set_folded(bool(p["folds"].get(k, False)), animate=False)
-        if p["autohide"] != self._autohide:
+        if p["autohide"] != self._autohide or p["inactive"] != self._inactive_mode:
             self._autohide = dict(p["autohide"])
+            self._inactive_mode = p["inactive"]
             self._pinned.clear()
             if self._row_keys:
                 self._apply_rows()
@@ -2060,6 +2065,8 @@ class TraceTab(QWidget):
         self.cfg.signals = sigs
         self._run_signals = [Signal.from_dict(s.to_dict()) for s in sigs]
         self.buffer.load(t, v)
+        for g0, g1 in find_gaps(t, v):                       # the pauses of the recording (Stop -> Start) can be shown like those of a live chart
+            self.mk.rec.m.add_gap(g0, g1)
         self._refresh_signal_widgets()
         self.btn_pause.setChecked(False)
         self.plot.set_follow(False)

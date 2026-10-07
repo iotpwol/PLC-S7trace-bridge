@@ -10,7 +10,9 @@ from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QLineEdit, QListWid
 
 from .help_content import HELP_DIR, sections                      # noqa: E402,F401  (HELP_DIR / sections: part of this module's interface)
 
-SHOT_DPR = 1.25            # the pictures were taken by tools/make_help_images.py at 125 % screen scale (= 1.25 x the logical size of a window)
+CAPTURE_DPR = 1.25         # the pictures are taken by tools/make_help_images.py at 125 % screen scale (sharp); their size in the Help (75 % of the real
+                           # window, 50 % for the whole program window) is stored in the file (PNG resolution = 3780 x capture scale / display scale)
+DPM_LOGICAL = 3780         # dots per metre of a 96 dpi image: a picture with this resolution is shown pixel for pixel
 
 
 class ImageBrowser(QTextBrowser):
@@ -24,9 +26,9 @@ class ImageBrowser(QTextBrowser):
             if not img.isNull():
                 dpr = self.devicePixelRatioF()
                 room = max(300, round((self.viewport().width() - 30) * dpr))            # text area in real pixels
-                want = round(img.width() / SHOT_DPR * dpr)                               # the real size of the shown window on THIS screen
-                want = min(want, room)                                                   # a picture that does not fit is scaled down
-                if want != img.width():                                                  # the pictures were taken at 125 %: on a 100 % screen they shrink
+                logical = img.width() * DPM_LOGICAL / max(img.dotsPerMeterX(), 1)        # the width the picture has on screen (logical pixels): 75 % / 50 % of the window
+                want = min(round(logical * dpr), room)                                   # a picture that does not fit is scaled down
+                if want != img.width():                                                  # always smooth (a sharp downscale of the full capture)
                     img = img.scaledToWidth(want, Qt.SmoothTransformation)
                 img.setDevicePixelRatio(dpr)
                 return img

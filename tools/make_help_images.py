@@ -51,14 +51,29 @@ def pump(n: int = 6, ms: int = 30) -> None:
         time.sleep(ms / 1000)
 
 
+CAPTURE_DPR = 1.25                                  # the screen scale of the machine the pictures are taken on (checked in save)
+SCALE_FULL, SCALE_PART = 0.5, 0.75                  # how big a picture appears in the Help relative to the real window: the whole program window 50 %, everything else 75 %
+
+
+def display_scale(name: str) -> float:
+    """The whole window of the program is shown at 50 % (it would not fit the text area otherwise), menus / dialogs / groups / fields / chart at 75 %."""
+    return SCALE_FULL if name.startswith("okno_glowne") else SCALE_PART
+
+
 def save(pm: QPixmap, name: str) -> None:
+    """Saves the picture at the full sharpness of the screen it was taken on. The size it has in the Help is written into the file (PNG pHYs =
+    3780 x capture scale / display scale dots per metre): `help_dialog.ImageBrowser` reads it, so the zoom window still gets the full resolution."""
     os.makedirs(OUT, exist_ok=True)
     path = os.path.join(OUT, name + ".png")
-    if abs(pm.devicePixelRatio() - 1.25) > 0.01:                             # help_dialog.SHOT_DPR assumes pictures taken at 125 %
-        print(f"  WARNING: {name} taken at scale {pm.devicePixelRatio()} (help_dialog.SHOT_DPR = 1.25)")
-    pm.save(path)
+    if abs(pm.devicePixelRatio() - CAPTURE_DPR) > 0.01:                      # help_dialog.CAPTURE_DPR must be the scale of ALL pictures
+        print(f"  WARNING: {name} taken at scale {pm.devicePixelRatio()} (help_dialog.CAPTURE_DPR = {CAPTURE_DPR})")
+    img = pm.toImage()
+    dpm = round(3780 * pm.devicePixelRatio() / display_scale(name))
+    img.setDotsPerMeterX(dpm)
+    img.setDotsPerMeterY(dpm)
+    img.save(path)
     SAVED.append(name)
-    print(f"  {name}.png  {pm.width()}x{pm.height()}")
+    print(f"  {name}.png  {pm.width()}x{pm.height()}  shown at {display_scale(name):.0%}")
 
 
 def shot(w: QWidget, name: str, margin: int = 0) -> None:

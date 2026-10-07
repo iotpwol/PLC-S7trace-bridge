@@ -34,7 +34,7 @@ PARAMS: dict[str, tuple] = {
     "gap_opacity": ("Przerwa (pas): nieprzezroczystość wypełnienia", 0, 100, "%", 15,
                     "Jak mocno zabarwiony jest pas przerwy Stop → Start (tryb „Przerwa o stałej szerokości”). 0 = pas bez wypełnienia."),
     "gap_text": ("Przerwa (pas): opis długości przerwy", 0, 1, "", 1,
-                 "Gdy włączone, w pasie przerwy jest wypisana jej długość (np. „przerwa 20.0 s”)."),
+                 "Gdy włączone, w pasie przerwy jest wypisana jej długość (np. „Przerwa:  20.0 s”)."),
 }
 FLAGS = ("rec_show", "gap_text", "trig_show")                                  # 0 / 1 values shown as a check box
 # text values: key -> (label, default, description)
@@ -44,11 +44,12 @@ STRINGS: dict[str, tuple] = {
     "trig_color": ("Linie TRIG: kolor", "#ff4040", "Kolor linii „TRIG (n)” i jej opisu."),
     "trig_style": ("Linie TRIG: rodzaj linii", "dot", "Rodzaj linii „TRIG (n)”: ciągła, kreskowana, kropkowana albo kreska-kropka."),
     "gap_fill": ("Przerwa (pas): kolor wypełnienia", "#969696", "Kolor wypełnienia pasa przerwy Stop → Start."),
-    "gap_text_color": ("Przerwa (pas): kolor opisu", "#a0a0a0", "Kolor czcionki opisu długości przerwy."),
+    "gap_text_color": ("Przerwa (pas): kolor opisu", "#ff8c1a", "Kolor czcionki opisu długości przerwy. Początkowo taki jak kolor znaczników Stop / Start odczytu."),
     "gap_text_dir": ("Przerwa (pas): kierunek opisu", "vertical", "Opis długości przerwy: pisany w pionie (od dołu do góry) albo w poziomie."),
     "gap_text_pos": ("Przerwa (pas): położenie opisu", "middle", "Gdzie w pasie stoi opis: u góry, pośrodku albo na dole."),
 }
 STYLES = ("solid", "dash", "dot", "dashdot")
+OLD_GAP_TEXT = "#a0a0a0"
 COLOR_KEYS = ("rec_color", "trig_color", "gap_fill", "gap_text_color")
 ENUMS: dict[str, tuple] = {"rec_style": STYLES, "trig_style": STYLES, "gap_text_dir": ("vertical", "horizontal"), "gap_text_pos": ("top", "middle", "bottom")}
 ENUM_LABELS: dict[str, dict] = {"gap_text_dir": {"vertical": "w pionie", "horizontal": "w poziomie"},
@@ -81,6 +82,8 @@ def normalize(d) -> dict:
         for k in COLOR_KEYS:
             if _color_ok(d.get(k)):
                 out[k] = d[k].lower()
+        if str(d.get("gap_text_color", "")).lower() == OLD_GAP_TEXT:           # the grey of v1.19 - 1.21 was only a default: now the marker colour
+            out["gap_text_color"] = DEFAULTS["gap_text_color"]
         for k, allowed in ENUMS.items():
             if d.get(k) in allowed:
                 out[k] = d[k]

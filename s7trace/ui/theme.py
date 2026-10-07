@@ -199,6 +199,51 @@ def alt_row(table_bg: str) -> str:
     return (c.lighter(125) if c.lightness() < 128 else c.darker(107)).name()
 
 
+_ARROW_DIR = os.path.join(os.environ.get("TEMP") or os.environ.get("TMP") or ".", "S7Trace_arrows")
+
+
+def _arrow_png(color: str, up: bool, dim: bool) -> str:
+    """Small triangle (the arrow of a spin box button) as a PNG file for the style sheet; cached per colour."""
+    from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QPainter, QPixmap, QPolygonF
+    c = QColor(color)
+    if dim:
+        c.setAlpha(80)
+    name = f"{'up' if up else 'down'}_{c.name()[1:]}_{c.alpha()}.png"
+    path = os.path.join(_ARROW_DIR, name)
+    if not os.path.exists(path):
+        os.makedirs(_ARROW_DIR, exist_ok=True)
+        pm = QPixmap(14, 9)
+        pm.fill(Qt.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.setPen(Qt.NoPen)
+        p.setBrush(c)
+        p.drawPolygon(QPolygonF([QPointF(1.5, 7.0), QPointF(12.5, 7.0), QPointF(7.0, 1.5)] if up else [QPointF(1.5, 2.0), QPointF(12.5, 2.0), QPointF(7.0, 7.5)]))
+        p.end()
+        pm.save(path, "PNG")
+    return path.replace("\\", "/")
+
+
+def _spin_qss(t: dict) -> str:
+    """Up / down buttons of the number fields: a button background a few tones darker than the push buttons, arrows in the text colour
+    (dimmed when the value is at its limit / the field is disabled)."""
+    arrow = t["edit_text"]
+    bg = t["edit_bg"]                                          # the same fill as the drop-down part of a combo box, inside the field's frame
+    hover = QColor(t["button_bg"]).darker(135).name()
+    kinds = ("QSpinBox", "QDoubleSpinBox", "QTimeEdit", "QDateEdit", "QDateTimeEdit")
+    out = [", ".join(kinds) + " { padding-right: 2px; }"]
+    for part, pos in (("up", "top"), ("down", "bottom")):
+        sel = lambda sub: ", ".join(f"{k}::{sub}" for k in kinds)
+        out.append(f"{sel(part + '-button')} {{ subcontrol-origin: padding; subcontrol-position: {pos} right; width: 17px; background: {bg}; "
+                   f"border-left: 1px solid rgba(128,128,128,110); }}")
+        out.append(f"{sel(part + '-button:hover')} {{ background: {hover}; }}")
+        out.append(f"{sel(part + '-button:pressed')} {{ background: {t['accent']}; }}")
+        out.append(f"{sel(part + '-arrow')} {{ image: url({_arrow_png(arrow, part == 'up', False)}); width: 10px; height: 6px; }}")
+        out.append(f"{sel(part + '-arrow:disabled')}, {sel(part + '-arrow:off')} {{ image: url({_arrow_png(arrow, part == 'up', True)}); }}")
+    return "\n".join(out)
+
+
 def build_qss(t: dict) -> str:
     return f"""
 QMainWindow, QDialog {{ background: {t['window_bg']}; }}
@@ -261,7 +306,7 @@ QScrollArea {{ background: transparent; }}
 QFrame#dlgHeader {{ background: {t['panel_bg']}; border-bottom: 2px solid {t['accent']}; }}
 QLabel#dlgTitle {{ font-weight: bold; font-size: {t['font_size'] + 3}pt; color: {t['text']}; }}
 QLabel#dlgText {{ color: {t['text']}; }}
-"""
+""" + _spin_qss(t)
 
 
 ROW_TEXT = {"odd": DARK["row_odd_text"], "even": DARK["row_even_text"]}      # set by apply_theme: font colours of the odd / even table rows

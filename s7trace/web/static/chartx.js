@@ -63,10 +63,23 @@ function cxT(geo, px, clamp) {   // real time under the x pixel of the canvas
 }
 // the pauses of a canvas: only the live chart has them. The viewer's choice (st.gapmode / st.gappx) wins over the connection's (layout.gap_mode / gap_px).
 // -> { gaps, px } (px 0 = cut out) or null (the full axis); `cxGm` makes the time map for a view (the width of a band follows the view)
+function cxFindGaps(ds, minLen = 1) {   // pauses of a LOADED recording = stretches where every signal is empty (same rule as core.gapmap.find_gaps)
+  if (!ds || !ds.t || ds.t.length < 3 || !ds.values || !ds.values.length) return [];
+  if (ds._gapsFor === ds.t) return ds._gaps;
+  const t = ds.t, n = t.length, v = ds.values, out = []; let i = 0;
+  const empty = (k) => v.every((c) => c[k] === null || c[k] === undefined || Number.isNaN(c[k]));
+  while (i < n) {
+    if (!empty(i)) { i++; continue; }
+    let j = i; while (j + 1 < n && empty(j + 1)) j++;
+    if (i > 0 && j + 1 < n && t[j + 1] - t[i] >= minLen) out.push({ n: out.length + 1, t0: t[i], t1: t[j + 1] });
+    i = j + 1;
+  }
+  ds._gapsFor = ds.t; ds._gaps = out; return out;
+}
 function cxGapSpec(cv, ds) {
   const st = cv._cx || {}, d = (ds && ds.layout) || {}, mode = st.gapmode || d.gap_mode || "full";
-  if (mode === "full" || cv.id !== "canvas" || typeof recmGaps !== "function") return null;
-  const gaps = recmGaps(); if (!gmMake(gaps)) return null;
+  if (mode === "full" || (cv.id !== "canvas" && cv.id !== "rv-canvas") || typeof recmGaps !== "function") return null;
+  const gaps = cv.id === "rv-canvas" ? cxFindGaps(ds) : recmGaps(); if (!gmMake(gaps)) return null;
   return { gaps, px: mode === "fixed" ? Math.max(8, Math.min(300, +(st.gappx || d.gap_px || 40))) : 0 };
 }
 function cxGm(spec, t0, t1, plotPx, followSec) {

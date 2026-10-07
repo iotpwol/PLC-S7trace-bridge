@@ -116,8 +116,8 @@ programu</b> (menu, pola, okna) i opis: co to jest, do czego służy, jak się z
 """ + _img("menu_widok") + _table([
         ("Dopasuj widok do całości (Ctrl+0)", "Pokazuje całą nagraną historię na wykresie głównym (wstrzymuje widok na żywo)."),
         ("Legenda", "Włącza lub wyłącza nazwy sygnałów na wykresie – legendę albo opisy przy sygnałach (zależnie od stylu poniżej). Ustawienie wspólne dla kart."),
-        ("Nazwy sygnałów na wykresie (ta karta)", "Styl nazw sygnałów <b>tylko na bieżącej karcie</b>: <b>Legenda (ramka z listą w rogu)</b> albo <b>Opisy przy sygnałach</b>. Poniżej dwie pozycje „Wszystkie otwarte karty: …” ustawiają ten sam styl na każdej karcie – patrz rozdział „Wykres główny”."),
-        ("Przerwy Stop → Start (ta karta)", "Jak wykres pokazuje pauzę między <b>Stop</b> a <b>Start</b> odczytu (ustawienie karty): <b>Pusta przerwa w pełnej długości</b> (domyślnie), <b>Wytnij przerwę z wykresu (jeden znacznik)</b> – pauza nie zajmuje miejsca, krzywe się stykają, stoi tam jeden znacznik, a opisy osi przeskakują (np. „30 s | 50 s”) – albo <b>Przerwa o stałej szerokości (w pikselach)</b> – pauza to pas o stałej szerokości niezależnie od czasu jej trwania; szerokość ustawia pozycja <b>Szerokość przerwy [px]…</b>; wszystkie ustawienia naraz (sposób, szerokość, kolor wypełnienia pasa, opis długości: kierunek, kolor, położenie) zbiera okno <b>Wygląd i szerokość przerw…</b>. Patrz „Start po Stop” w rozdziale „Przyciski sterujące”."),
+        ("Nazwy sygnałów na wykresie (ta karta)", "Styl nazw sygnałów <b>tylko na bieżącej karcie</b>: <b>Legenda (ramka z listą w rogu)</b> albo <b>Opisy przy sygnałach</b>. Poniżej dwie pozycje „Wszystkie karty: …” ustawiają ten sam styl na każdej karcie – patrz rozdział „Wykres główny”."),
+        ("Przerwy Stop → Start (ta karta)", "Jak wykres pokazuje pauzę między <b>Stop</b> a <b>Start</b> odczytu (ustawienie karty): <b>Pusta przerwa w pełnej długości</b> (domyślnie), <b>Wytnij przerwę z wykresu (jeden znacznik)</b> – pauza nie zajmuje miejsca, krzywe się stykają, stoi tam jeden znacznik, a opisy osi przeskakują (np. „30 s | 50 s”) – albo <b>Przerwa o stałej szerokości (w pikselach)</b> – pauza to pas o stałej szerokości niezależnie od czasu jej trwania; szerokość ustawia pozycja <b>Szerokość przerwy [px]…</b>; wszystkie ustawienia naraz (sposób, szerokość, kolor wypełnienia pasa, opis długości: kierunek, kolor, położenie) zbiera okno <b>Wygląd i szerokość przerw…</b>. Pełny opis ze zdjęciami: rozdział „Przerwy Stop → Start”."),
         ("Siatka", "Włącza lub wyłącza siatkę wykresu."),
         ("Punkty (znaczniki próbek na krzywych, ta karta)", "Pokazuje znaczniki pojedynczych próbek na krzywych (ustawienie karty). Gdy w oknie jest więcej próbek niż limit z Ustawienia → Renderowanie wykresu, punkty są ukrywane – przybliż wykres."),
         ("Położenie legendy (ta karta)", "Narożnik wykresu, w którym stoi legenda (można ją też przeciągnąć myszą). Zapamiętywane osobno dla każdej karty."),
@@ -170,6 +170,19 @@ programu</b> (menu, pola, okna) i opis: co to jest, do czego służy, jak się z
         ("Zapisz konfigurację karty… / Wczytaj konfigurację do karty…", "To samo co w menu Plik."),
     ]) + _imgs(("menu_ustawienia_zapisane", "Podmenu „Zapisane konfiguracje interfejsu”"),
                ("menu_ustawienia_profil", "Podmenu „Profil kolorów”")) + """
+<h3>Menu ikony przy zegarze</h3>
+<p>Gdy ikona programu jest w obszarze powiadomień (Ustawienia → Ikona programu), jej menu pokazuje stan programu i pozwala go schować lub zakończyć:</p>
+""" + _img("menu_zegar", "Menu ikony przy zegarze (prawy przycisk na ikonie)") + _table([
+        ("Ikona i nazwa S7Trace", "Tylko nagłówek menu."),
+        ("Połączenia PLC: W / LU / AU", "<b>W</b> – liczba połączeń, które <b>nagrywasz</b> (REC) na tym komputerze jako bieżący użytkownik; <b>LU</b> – liczba sterowników, które <b>skanujesz</b> (połączenie pracuje) jako bieżący użytkownik; "
+         "<b>AU</b> – połączenia <b>wszystkich użytkowników</b> tego komputera (rejestr sesji, rozdział „Sesje i serwer Web”). Gdy pracuje tylko jeden użytkownik, widać tylko „W / LU”."),
+        ("Obciążenie: xx % / yy %", "Obciążenie procesora: <b>xx</b> – przez ten program (z procesami odczytu), <b>yy</b> – całego komputera (tak jak w Menedżerze zadań). Liczby odświeżają się co sekundę, gdy menu jest otwarte; „—” oznacza, że pomiar jeszcze nie jest gotowy."),
+        ("Pokaż S7Trace / Ukryj S7Trace", "Dwie pozycje wyświetlane <b>naprzemiennie</b>: „Pokaż”, gdy program jest schowany (zminimalizowany do paska albo ikony), „Ukryj”, gdy jest na ekranie."),
+        ("Przypnij do belki / Odepnij od belki", "Też naprzemiennie. Windows nie pozwala programowi samemu przypiąć się do paska zadań, więc „Przypnij” zakłada <b>skrót S7Trace w menu Start</b> (zostaje po zamknięciu programu), a „Odepnij” go usuwa. "
+         "Ikonę na pasku zadań przypinasz sam: prawy przycisk na ikonie (na pasku albo w menu Start) → „Przypnij do paska zadań”."),
+        ("Zakończ", "Nie kończy programu od razu, tylko <b>pyta, co zrobić</b>: <b>Zakończ program</b> (zatrzymuje odczyt i zamyka nagrania – w pytaniu widać, ile połączeń pracuje i ile nagrywa), <b>Ukryj do paska</b> albo <b>Anuluj</b>. "
+         "Po wybraniu „Zakończ program” zachowuje się jak zamknięcie okna: najpierw pytania o niezapisane znaczniki."),
+    ]) + """
 """))
 
     # ------------------------------------------------------------------------------------------------------------ 8
@@ -204,7 +217,10 @@ zakresem, nagrywaniem i wykresem; kilka kart może pracować jednocześnie (np. 
 <span style="color:#ff453a">●</span> błąd.</li>
 <li><b>Aktywna karta</b> ma niebieskie tło i żółtą czcionkę (kolory: Ustawienia → Interfejs).</li>
 <li>Karta jest tak szeroka, by pokazać całą nazwę; gdy kart jest za dużo, nazwy są skracane. Pełna nazwa i stan pokazują się w podpowiedzi po najechaniu.</li>
-<li><b>Dwuklik</b> lub F2 – zmiana nazwy; przeciąganie zmienia kolejność; <b>+</b> – nowa karta; <b>×</b> – zamknięcie.</li>
+<li><b>Dwuklik</b> lub F2 – zmiana nazwy; przeciąganie zmienia kolejność.</li>
+<li><b>+</b> (Ctrl+T, Plik → Nowa karta) – nowa karta o nazwie <b>Nowa karta</b>, z <b>pustym adresem IP</b> i rack / slot <b>0 / 0</b>: wpisz adres i dodaj sygnały.</li>
+<li><b>×</b> (Ctrl+W) – zamknięcie karty. <b>Można zamknąć wszystkie karty</b>: okno zostaje puste (bez wykresów i przycisków), a pierwszą kartę otwiera znowu przycisk <b>+</b>.
+Program zapamiętuje, że okno było puste, i tak samo się otwiera.</li>
 </ul>
 """ + _img("menu_karta", "Menu prawego przycisku na karcie") + """
 <p>Menu karty: zmień nazwę, duplikuj, zamknij. Zamknięcie karty z niezapisanymi znacznikami lub aktywnym połączeniem wymaga potwierdzenia.</p>
@@ -286,9 +302,21 @@ program to zgłasza w pasku statusu.</p>
     s.append(("13. Panel „Trigger”", """
 <h2>Panel „Trigger”</h2>
 <p>Trigger działa jak w oscyloskopie: obserwuje jeden sygnał i po spełnieniu warunku wykonuje akcję. Porównywana jest <b>wartość surowa</b>
-sygnału (bez gain i offsetu Y).</p>
-""" + _img("grp_trigger", "Trigger wyłączony – pola warunku i akcji są nieaktywne") + _img("grp_trigger_wlaczony", "Trigger włączony (uzbrojony)") + _table([
-        ("Włącz trigger", "Uzbraja trigger (działa podczas pracy połączenia). Pola warunku są aktywne tylko po włączeniu."),
+sygnału (bez gain i offsetu Y), każda próbka po kolei – także wtedy, gdy wykres jest przybliżony albo wstrzymany. Brak danych w przerwie odczytu (Stop → Start) jest pomijany.</p>
+<h3>Jak to działa – krok po kroku</h3>
+<ol>
+<li><b>Wyłączony.</b> Trigger niczego nie robi, ale jego ustawienia możesz już przygotować. Po zaznaczeniu <b>Włącz trigger</b> jest <b>uzbrajany</b>, gdy tylko pracuje połączenie.</li>
+<li><b>Uzbrojony.</b> Każda nowa próbka obserwowanego sygnału jest sprawdzana. Warunki typu „==, &gt;, &lt;, between” wyzwalają w chwili, gdy warunek <b>staje się prawdziwy</b> (nie trwa, tylko zaczyna się);
+zbocza – gdy sygnał <b>przekracza wartość A</b> we wskazanym kierunku. Jeśli warunek jest prawdziwy już w chwili uzbrojenia, trigger <b>czeka, aż stanie się fałszywy</b> – dopiero potem może zadziałać.</li>
+<li><b>Wyzwolenie.</b> Na wykresie pojawia się pionowa linia <b>TRIG (n)</b>. Program zapamiętuje długość okna wykresu (Okno czasu) i <b>dalej zbiera dane</b>, aż po wyzwoleniu upłynie
+„okno czasu minus Pretrigger” – dzięki temu zapis / widok obejmuje <b>Pretrigger</b> sekund przed zdarzeniem i resztę okna po nim (Pretrigger nie może być dłuższy niż okno czasu). W tym czasie kolejne wyzwolenia są pomijane.</li>
+<li><b>Akcja.</b> Po zebraniu danych program wykonuje wybraną akcję (tabela „Akcja”): zapisuje fragment do pliku albo bazy i / lub wstrzymuje wykres, ustawiając widok dokładnie na zapisanym oknie. Wynik widać w pasku statusu
+(„Trigger: zapisano …”, „Trigger: wstrzymano (Wznów = ponowne uzbrojenie).” albo komunikat o błędzie zapisu).</li>
+<li><b>Ponowne uzbrojenie.</b> Akcje <b>z zapisem bez pauzy</b> uzbrajają trigger od razu ponownie, a wykres biegnie dalej – w jednym przebiegu może więc zadziałać wiele razy. Akcje <b>z pauzą</b> zatrzymują się w stanie „wstrzymany”:
+<b>Wznów</b> uzbraja trigger na nowo i wraca do widoku na żywo. Zmiana ustawień triggera w trakcie pracy uzbraja go od nowa.</li>
+</ol>
+""" + _img("grp_trigger", "Trigger wyłączony (pola można ustawić od razu; „Wartość B” jest ukryta, bo tryb nie jest „between”)") + _img("grp_trigger_wlaczony", "Trigger włączony (uzbrojony)") + _table([
+        ("Włącz trigger", "Uzbraja trigger (działa podczas pracy połączenia). Pola warunku i akcji można ustawiać także przy wyłączonym triggerze."),
         ("Sygnał", "Obserwowany sygnał (spośród pobieranych)."),
         ("Tryb", "Rodzaj warunku (lista niżej)."),
         ("Wartość A / B", "Progi porównania (B tylko dla „between”)."),
@@ -301,17 +329,21 @@ sygnału (bez gain i offsetu Y).</p>
     ]) + """
 <h3>Tryb warunku</h3>
 """ + _img("lista_trigger_tryb") + _table([
-        ("==", "Równe A (z tolerancją histerezy)."),
-        (">  /  <", "Większe / mniejsze od A."),
-        ("between", "Wartość między A i B."),
-        ("rising edge / falling edge", "Zbocze narastające / opadające przez wartość A. Dla sygnałów BOOL użyj A = 0,5."),
-    ], ("Tryb", "Warunek")) + """
+        ("==", "Wartość <b>równa A</b> z tolerancją histerezy (|wartość − A| ≤ histereza). Uzbraja się ponownie, gdy wartość odejdzie od A o więcej niż histereza."),
+        (">  /  <", "Wartość <b>większa / mniejsza od A</b>. Uzbraja się ponownie po zejściu poniżej (A − histereza) / wzroście powyżej (A + histereza)."),
+        ("between", "Wartość <b>w przedziale od A do B</b> (kolejność A i B nie ma znaczenia, brzegi należą do przedziału). Uzbraja się ponownie po wyjściu poza przedział o więcej niż histereza."),
+        ("rising edge", "<b>Zbocze narastające</b>: sygnał, który był poniżej (A − histereza), dochodzi do A lub wyżej. Dla sygnałów BOOL użyj A = 0,5."),
+        ("falling edge", "<b>Zbocze opadające</b>: sygnał, który był powyżej (A + histereza), spada do A lub niżej. Dla sygnałów BOOL użyj A = 0,5."),
+    ], ("Tryb", "Kiedy wyzwala i kiedy uzbraja się ponownie")) + """
+<p><b>Histereza</b> chroni przed wielokrotnym wyzwalaniem na szumie: po wyzwoleniu sygnał musi odejść od progu o więcej niż histereza, zanim trigger zadziała ponownie (0 = bez histerezy).
+<b>Wartość B</b> jest używana tylko w trybie „between”.</p>
 <h3>Akcja</h3>
 """ + _img("lista_trigger_akcja") + _table([
         ("Pauza", "Wstrzymuje widok na zdarzeniu (Wznów = ponowne uzbrojenie)."),
         ("Zapis CSV", "Zapisuje okno do pliku i uzbraja się ponownie."),
         ("Pauza + zapis CSV", "Jedno i drugie."),
     ], ("Akcja", "Działanie")) + """
+<p>Zapisywany jest fragment od <b>(chwila wyzwolenia − Pretrigger)</b> o długości <b>Okna czasu</b> – ten sam, który po „Pauza” pokazuje wykres. Zapis <b>nie wymaga REC</b> i nie przerywa trwającego REC.</p>
 <h3>Gdzie trafia zapis (snapshot)</h3>
 <p>Pole <b>Zapis do</b> wybiera cel zapisu wyzwalacza – tak jak w REC: <b>Plik CSV</b> (domyślnie), <b>SQLite</b>, <b>InfluxDB 1.x / 2.x</b> albo <b>TimescaleDB</b>. Tekst akcji zmienia się razem z celem („Zapis SQLite”, „Pauza + zapis InfluxDB 1.x”…).
 Dla bazy snapshot jest <b>nagraniem</b> o tytule „Snapshot (trigger)” (widać go w „Przeglądzie nagrań”). Pole <b>Baza</b> mówi, dokąd:</p>
@@ -320,9 +352,27 @@ Dla bazy snapshot jest <b>nagraniem</b> o tytule „Snapshot (trigger)” (wida�
 <li><b>Osobna</b> – dla SQLite: <b>własny plik w folderze snapshotów</b> (pola <b>Folder</b> i <b>Plik bazy</b>, domyślnie <i>snapshots.db</i>, jedna baza zbiera wszystkie snapshoty karty); dla InfluxDB / TimescaleDB: <b>osobna tabela albo measurement</b> (nazwa jak w REC z dopiskiem <i>_snapshots</i>) w tej samej bazie.</li>
 </ul>
 """ + _img("grp_trigger_sqlite", "Snapshot do osobnej bazy SQLite (aktywne pola: Zapis do, Baza, Folder, Plik bazy)") + """
-<p>Pola <b>Folder</b> i <b>Nazwa pliku</b> dotyczą zapisu do pliku CSV; <b>Folder</b> i <b>Plik bazy</b> – osobnej bazy SQLite. Pola, które przy danym wyborze nie mają znaczenia, są wyszarzone. Zapis do bazy odbywa się w tle, wynik pojawia się w pasku statusu.</p>
-<p>Moment wyzwolenia jest zaznaczany na wykresie pionową linią <b>TRIG (n)</b> (n = kolejny numer wyzwolenia w tym przebiegu; linie wcześniejszych wyzwoleń zostają; kolor, grubość i rodzaj linii: Znaczniki → Wygląd znaczników):</p>
-""" + _img("wykres_trigger", "Wykres po wyzwoleniu triggera") + _img("okno_glowne_trigger", "Całe okno z uzbrojonym triggerem")))
+<p>Zapis do bazy odbywa się w tle, wynik pojawia się w pasku statusu.</p>
+<h3>Które pola są aktywne – i co się dzieje z nieaktywnymi</h3>
+<p>Część pól ma znaczenie tylko przy określonych innych ustawieniach. Pole, które w danej chwili nic nie zmienia, jest <b>nieaktywne</b> – program je domyślnie <b>ukrywa</b> (albo wyszarza – patrz niżej),
+a podpowiedź wyszarzonego pola mówi, dlaczego jest wyłączone.</p>
+""" + _table([
+        ("Wartość B", "Tylko dla trybu <b>between</b>."),
+        ("Zapis do", "Tylko gdy akcja <b>zapisuje</b> (Zapis… / Pauza + zapis…). Przy samej „Pauza” nic nie jest zapisywane."),
+        ("Baza (Ogólna / Osobna)", "Tylko gdy akcja zapisuje i celem jest <b>baza danych</b> (nie plik CSV)."),
+        ("Folder i „…”", "Dla zapisu do <b>pliku CSV</b> oraz dla bazy SQLite w trybie <b>Osobna</b> (folder, w którym leży plik bazy)."),
+        ("Nazwa pliku", "Tylko dla zapisu do <b>pliku CSV</b> (szablon nazwy z {confname}, {ip}, {tab}, {date}, {time})."),
+        ("Plik bazy", "Tylko dla <b>SQLite</b> w trybie <b>Osobna</b> (domyślnie <i>snapshots.db</i>)."),
+    ], ("Pole", "Aktywne, gdy…")) + _imgs(("grp_trigger_ukryte", "Tryb zbocza i akcja „Pauza”: „Wartość B” i pola zapisu nic nie zmieniają, więc są ukryte"),
+        ("grp_trigger_wyszarzone", "To samo przy ustawieniu „Wyszarzone”: pola są widoczne, ale wyłączone"),
+        ("grp_trigger_between", "Tryb „between”: pojawia się „Wartość B”"),
+        ("grp_trigger_zapis_csv", "Akcja „Zapis CSV”: pojawiają się pola zapisu (Zapis do, Folder, Nazwa pliku)")) + """
+<p>Ukrywanie dotyczy grup <b>Połączenie</b>, <b>Zakres okna wykresu</b>, <b>Trigger</b> i <b>Nagrywanie REC</b> (rozdział „Zwijanie, przeciąganie i ukrywanie pól panelu”). Wybór <b>ukrywać czy wyszarzać</b> jest w
+Ustawienia → Interfejs → „Elementy nieaktywne”.</p>
+<h3>Linia TRIG (n) na wykresie</h3>
+<p>Moment wyzwolenia jest zaznaczany pionową linią <b>TRIG (n)</b>, gdzie <b>n</b> to kolejny numer wyzwolenia w tym przebiegu (od Start do Start z czyszczeniem wykresu albo do Reset). <b>Linie wcześniejszych wyzwoleń zostają</b> (do 200 ostatnich),
+więc widać każde zadziałanie osobno. Nowy przebieg i Reset zerują numerację. Kolor, grubość, rodzaj linii i samo rysowanie ustawia <b>Znaczniki → Wygląd znaczników…</b> (część konfiguracji interfejsu).</p>
+""" + _img("wykres_trigger_kilka", "Akcja „Zapis CSV” nie zatrzymuje wykresu: trigger uzbraja się ponownie i kolejne wyzwolenia dostają numery TRIG (1), TRIG (2), TRIG (3)") + _img("wykres_trigger", "Wykres po wyzwoleniu z akcją „Pauza” (widok ustawiony na zapisanym oknie)") + _img("okno_glowne_trigger", "Całe okno z uzbrojonym triggerem")))
 
     # ------------------------------------------------------------------------------------------------------------ 14
     s.append(("14. Panel „Nagrywanie REC”", """
@@ -353,6 +403,15 @@ i „Pokaż wszystkie elementy”.</li>
 """ + _img("grp_zwiniete", "Zwinięte pola Połączenie i Sterownik – pozostałe pola przesunęły się do góry") + _imgs(
         ("menu_pole_polaczenie", "Prawy przycisk na nazwie pola: zwiń / rozwiń i lista elementów z haczykami"),
         ("menu_wiersz_ip", "Prawy przycisk na nazwie elementu: ukrycie tego elementu")) + """
+<h3>Ukrywanie nieaktywnych</h3>
+<p>W polach <b>Połączenie</b>, <b>Zakres okna wykresu</b>, <b>Trigger</b> i <b>Nagrywanie REC</b> element, który inne ustawienie wyłącza (np. „Zapis do” przy akcji „Pauza”, „Wartość B” poza trybem „between”, „Folder” przy zapisie do bazy),
+<b>znika sam</b> i pojawia się z powrotem, gdy staje się potrzebny. Pola zablokowane tylko na czas pracy połączenia nie liczą się jako nieaktywne.</p>
+<ul>
+<li><b>Pokazanie ukrytego elementu:</b> prawy przycisk na nazwie pola → zaznacz element na liście (albo „Pokaż wszystkie elementy”). Element zostaje widoczny, <b>dopóki jego stan się nie zmieni</b> (np. wyłączy go i włączy inne ustawienie) – wtedy znowu podlega ukrywaniu.</li>
+<li><b>Wyłączenie ukrywania w jednym polu:</b> na samym dole tego menu, pod osobnym separatorem, jest przełącznik <b>Ukrywanie nieaktywnych</b> (osobno dla każdego z czterech pól). Wyłączony – nieaktywne elementy zostają widoczne i wyszarzone.</li>
+<li><b>Ukrywanie czy wyszarzanie – dla całego programu:</b> Ustawienia → Interfejs → <b>Elementy nieaktywne: Ukrywane / Wyszarzone</b>. „Wyszarzone” zostawia wszystkie elementy na miejscu (przełącznik w menu jest wtedy niedostępny).</li>
+</ul>
+""" + _img("menu_grupa_ukrywanie", "Menu pola Trigger: lista elementów, „Pokaż wszystkie elementy” i na dole „Ukrywanie nieaktywnych”") + """
 <p>Kolejność pól, zwinięte pola, ukryte elementy i aktywna zakładka dolna wchodzą do <b>konfiguracji interfejsu</b> – zapisują się w pliku konfiguracji aplikacji
 i w pliku konfiguracji interfejsu (Ustawienia → Interfejs → Zapisz jako… / Wczytaj z pliku…). Element, dla którego nie ma danych (np. numer seryjny sterownika, którego nie odczytano), jest
 w każdym razie niewidoczny, niezależnie od ustawienia.</p>
@@ -385,7 +444,7 @@ Widok nie wyjdzie poza zebrane dane; najwęższe okno to 0,1 s.</li>
 <li>Pionowa linia <b>TRIG (n)</b> oznacza chwilę n-tego wyzwolenia triggera w tym przebiegu.</li>
 </ul>
 <h3>Nazwy sygnałów: legenda albo opisy przy sygnałach</h3>
-<p>Nazwy sygnałów można pokazywać na dwa sposoby – wybierasz <b>osobno dla każdej karty</b> w <b>Widok → Nazwy sygnałów na wykresie (ta karta)</b> albo w prawym menu legendy / opisu. Te same menu mają dwie pozycje <b>Wszystkie otwarte karty: …</b>, które ustawiają wybrany styl na wszystkich kartach naraz. W <b>Ustawienia → Interfejs</b> („Nazwy sygnałów (domyślnie)”) wybierasz styl domyślny – dostają go karty, którym nie wybrano stylu osobno:</p>
+<p>Nazwy sygnałów można pokazywać na dwa sposoby – wybierasz <b>osobno dla każdej karty</b> w <b>Widok → Nazwy sygnałów na wykresie (ta karta)</b> albo w prawym menu legendy / opisu. Te same menu mają dwie pozycje <b>Wszystkie karty: …</b>, które ustawiają wybrany styl na wszystkich kartach naraz. W <b>Ustawienia → Interfejs</b> („Nazwy sygnałów (domyślnie)”) wybierasz styl domyślny – dostają go karty, którym nie wybrano stylu osobno:</p>
 <ul>
 <li><b>Legenda (ramka z listą w rogu)</b> – jedna ramka ze wszystkimi nazwami; można ją przeciągnąć w dowolne miejsce, położenie jest zapamiętywane osobno dla każdej karty.</li>
 <li><b>Opisy przy sygnałach</b> – legenda znika, a przy <b>każdym sygnale</b> pojawia się jego nazwa w półprzezroczystej ramce, <b>w połowie wysokości pasma</b> sygnału, tuż <b>po prawej stronie osi pionowej</b>. Ramka ma kolor tła wykresu z przezroczystością, a napis – kolor sygnału, dzięki temu litery nie mieszają się z pikselami krzywej o tym samym kolorze.
@@ -436,7 +495,7 @@ Przełącznik <b>Widok → Legenda</b> ukrywa i pokazuje nazwy w obu stylach. St
 <h3>Start po Stop: przerwa w wykresie, Reset i Auto-Reset</h3>
 <p>Domyślnie (Auto-Reset <b>wyłączony</b>) ponowny <b>Start</b> po <b>Stop</b> <b>nie czyści wykresu</b>: oś czasu biegnie dalej, a między ostatnią próbką sprzed Stop a pierwszą po Start
 powstaje <b>przerwa (dziura) w krzywych</b> równa czasowi, który minął między Stop i Start (stara wartość nie jest „przedłużana” przez przerwę). Na początku i końcu przerwy wykres stawia numerowane, kropkowane znaczniki <b>Stop odczytu (n)</b> i <b>Start odczytu (n)</b> (włączane razem ze znacznikami REC w Znaczniki → Wygląd znaczników…). Znaczniki, znaczniki REC i przybliżanie wykresu zachowują swoje położenie.
-<br><b>Przerwa na wykresie – trzy sposoby</b> (Widok → <b>Przerwy Stop → Start (ta karta)</b>, osobno dla każdej karty): <b>pusta przerwa w pełnej długości</b> (domyślnie); <b>wycięcie</b> – pauza nie zajmuje miejsca, krzywe się stykają, w tym miejscu stoi jeden znacznik <b>Stop / Start odczytu (n)</b>, a opisy osi czasu przeskakują („30 s | 50 s”); <b>stała szerokość</b> – pauza to półprzezroczysty pas o szerokości ustawionej w pikselach (pozycja <b>Szerokość przerwy [px]…</b>, 8 – 300), z długością pauzy wypisaną w pasie, znacznikami Stop i Start odczytu na jego brzegach i jednym opisem osi „30 s | 50 s” pośrodku; szerokość pasa nie zależy ani od czasu pauzy, ani od przybliżenia. Dane, nagrania i znaczniki zostają na prawdziwym czasie – zmienia się tylko rysowanie; okno czasu liczy się w czasie zeskanowanym (w trybie stałej szerokości – wraz z pasami). Wygląd pasa – kolor i nieprzezroczystość wypełnienia, opis długości pauzy (włączony, w pionie / w poziomie, kolor czcionki, u góry / pośrodku / na dole) – ustawia okno <b>Wygląd i szerokość przerw…</b> (kolory należą do konfiguracji interfejsu).
+<br><b>Jak ta przerwa wygląda na wykresie</b> (pusta w pełnej długości, wycięta albo pas o stałej szerokości), gdzie to ustawić i jak działają wtedy znaczniki i oś czasu – opisuje rozdział „Przerwy Stop → Start”.
 Wykres jest kontynuowany tylko wtedy, gdy pobierane są <b>te same sygnały</b> (nazwa, adres, typ; kolor czy wysokość pasma mogą się zmienić) i na karcie nie ma wczytanego nagrania – w przeciwnym razie Start zaczyna wykres od nowa.</p>
 <p><b>Reset</b> (przycisk po lewej od REC): <b>kliknięcie</b> czyści bufor i wykres. Gdy odczyt trwa, program <b>pyta o potwierdzenie</b> i o oś czasu: <b>Wyczyść i zeruj oś czasu</b> (wykres rusza od 0 s, nowy czas początkowy), <b>Wyczyść (oś czasu biegnie dalej)</b> albo <b>Anuluj</b>.
 Jeśli w tym czasie trwa <b>REC</b>, nagrywanie <b>nie jest przerywane</b> – dalej zapisuje się do bazy / pliku wszystko, co odczytuje program (czyszczony jest tylko wykres, a znaczniki Start REC / Stop REC zostają na swoich czasach); wtedy oś czasu musi biec dalej (przycisk zerowania osi jest niedostępny), żeby nagranie miało ciągłe czasy.
@@ -467,20 +526,74 @@ Ustawienie jest zapamiętywane przy karcie.</p>
         ("Diagnostyka…", "Okno diagnostyki połączenia (Ctrl+D)."),
     ])))
 
+    # ------------------------------------------------------------------------------------------------------------ pauses
+    s.append(("20. Przerwy Stop → Start", """
+<h2>Przerwy Stop → Start – pauza odczytu na wykresie</h2>
+<p><b>Skąd się bierze przerwa.</b> Gdy <b>Auto-Reset jest wyłączony</b> (ustawienie domyślne), ponowny <b>Start</b> po <b>Stop</b> nie czyści wykresu: oś czasu biegnie dalej, a między ostatnią próbką sprzed Stop
+a pierwszą po Start zostaje <b>pauza</b> – czas, w którym program niczego nie czytał. Przykład: Stop po 30 s pracy, Start po kolejnych 20 s → pauza trwa 20 s, a odczyt zaczyna się znowu w 50. sekundzie osi czasu.
+W samej pauzie nie ma danych: stara wartość nie jest „przedłużana” (krzywe się urywają). Przerwa jest zapamiętana także w nagraniu (REC), więc <b>wykres otwarty z bazy lub pliku CSV pokazuje ją tak samo</b> – program rozpoznaje pauzę po pustych wierszach w danych
+(co najmniej 1 s bez żadnego sygnału).</p>
+<h3>Trzy sposoby pokazania przerwy</h3>
+<p>Wybierasz je <b>osobno dla każdej karty</b>: <b>Widok → Przerwy Stop → Start (ta karta)</b> (trzy pozycje do wyboru) albo okno <b>Wygląd i szerokość przerw…</b> z tego samego podmenu. Wybór zapisuje się z kartą.
+Dane, nagrania i znaczniki <b>zawsze zostają na prawdziwym czasie</b> – zmienia się tylko sposób rysowania.</p>
+""" + _img("menu_widok_przerwy", "Widok → Przerwy Stop → Start (ta karta): trzy sposoby, szerokość pasa i okno wyglądu") + _table([
+        ("1. Pusta przerwa w pełnej długości (domyślnie)", "Pauza jest <b>pustym odcinkiem wykresu tak długim, jak trwała</b>. Oś czasu jest ciągła i pokazuje prawdziwe czasy. Dwa znaczniki: <b>Stop odczytu (n)</b> i <b>Start odczytu (n)</b> na brzegach przerwy. "
+         "Wada: długa pauza zabiera większość okna i spłaszcza resztę."),
+        ("2. Wytnij przerwę z wykresu (jeden znacznik)", "Pauza <b>nie zajmuje miejsca</b> (szerokość zero): krzywe się stykają, jakby odczyt nigdy nie był przerwany. W miejscu styku stoi <b>jeden</b> znacznik <b>Stop / Start odczytu (n)</b>, "
+         "a opis osi czasu <b>przeskakuje</b>, np. „30 s | 50 s” (czas przed i po pauzie). Okno czasu, przybliżanie i przesuwanie liczą się w czasie zeskanowanym (bez pauz)."),
+        ("3. Przerwa o stałej szerokości (w pikselach)", "Każda pauza to <b>półprzezroczysty pas o tej samej szerokości w pikselach</b> (8 – 300, pozycja <b>Szerokość przerwy [px]…</b>), niezależnie od czasu pauzy i od przybliżenia. "
+         "W pasie jest napisana długość pauzy („Przerwa:&nbsp; 238.9 s”), na jego brzegach stoją <b>Stop odczytu (n)</b> i <b>Start odczytu (n)</b>, a pośrodku jeden opis osi „30 s | 50 s”. Najlepszy, gdy pauzy bywają bardzo długie albo bardzo krótkie."),
+    ], ("Sposób", "Jak wygląda i jak działa")) + _imgs(
+        ("wykres_przerwa_pelna", "Sposób 1 – pusta przerwa w pełnej długości (dwa znaczniki: Stop odczytu i Start odczytu)"),
+        ("wykres_przerwa_wyciecie", "Sposób 2 – przerwa wycięta: krzywe się stykają, jeden znacznik „Stop / Start odczytu”, oś „… | …”"),
+        ("wykres_przerwa_pas", "Sposób 3 – pas o stałej szerokości z opisem „Przerwa:&nbsp; … s”")) + """
+<h3>Co dzieje się ze znacznikami, kliknięciami i osią</h3>
+<ul>
+<li><b>Znaczniki odczytu</b> („Stop odczytu (n)”, „Start odczytu (n)”, w wycięciu – „Stop / Start odczytu (n)”) to kropkowane linie numerowane kolejno w przebiegu. Rysowanie włącza <b>Znaczniki → Wygląd znaczników…</b> (grupa „Linie REC”, razem ze znacznikami Start / Stop REC).</li>
+<li><b>Znacznik użytkownika leżący w pauzie</b> jest w wycięciu rysowany na styku, a w pasie – w odpowiednim miejscu pasa (proporcjonalnie do jego czasu).</li>
+<li><b>Kliknięcie</b> dokładnie na styku (sposób 2) daje czas <b>Stop</b>; kliknięcie w pasie (sposób 3) daje czas proporcjonalny do miejsca w pasie. Dodawanie znaczników, kursory poziomu i przesuwanie znaczników działają tak samo jak bez pauz.</li>
+<li><b>Przybliżanie, przesuwanie i pasek podglądu</b> pracują na pozycjach wyświetlanych (bez wyciętych pauz); w sposobie 3 szerokość pasa zachowuje się po przybliżeniu – pas ma zawsze tyle pikseli, ile ustawiono.</li>
+<li><b>Oś czasu</b>: w sposobach 2 i 3 podziałka jest liczona z prawdziwego czasu każdego kawałka wykresu, a na styku (pas – pośrodku) stoi jeden opis podwójny „30 s | 50 s”. Dotyczy wszystkich osi (względnej, czasu aplikacji i czasu PLC).</li>
+<li><b>Linie TRIG (n), znaczniki REC i obszary Manual REC</b> trzymają prawdziwe czasy, więc mogą leżeć po obu stronach pauzy.</li>
+</ul>
+<h3>Wygląd pasa przerwy</h3>
+""" + _img("okno_wyglad_przerw", "Widok → Przerwy Stop → Start → Wygląd i szerokość przerw…") + _table([
+        ("Sposób pokazania przerwy / Szerokość pasa przerwy", "Wybór jednego z trzech sposobów oraz szerokość pasa w pikselach (dotyczą bieżącej karty)."),
+        ("Kolor wypełnienia / Nieprzezroczystość wypełnienia", "Kolor i krycie pasa (domyślnie szary, 15 %)."),
+        ("Opis długości przerwy", "Włącza napis w pasie: „Przerwa:&nbsp; XXX.X s” (dłuższe niż 10 minut – w minutach). Napis ma domyślnie <b>kolor znaczników odczytu</b>."),
+        ("Kierunek opisu / Kolor czcionki opisu / Położenie opisu", "Opis pisany <b>w pionie</b> (od dołu do góry) albo w poziomie; kolor czcionki; położenie w pasie: u góry, pośrodku, na dole."),
+    ], ("Pole", "Znaczenie")) + """
+<p>Zmiany działają od razu, <b>Anuluj</b> przywraca poprzednie wartości, <b>Domyślne</b> – ustawienia fabryczne. Kolory i opis pasa należą do <b>konfiguracji interfejsu</b> (zapisują się z nią i w pliku profilu);
+szerokość i sposób – do karty. Wygląd pasa jest widoczny w sposobie 3.</p>
+<p><b>Kiedy wykres NIE kontynuuje:</b> jeśli pobierane są inne sygnały niż w poprzednim przebiegu (nazwa, adres albo typ), na karcie jest wczytane nagranie albo włączony jest Auto-Reset – Start zaczyna wykres od nowa i żadnej przerwy nie ma (rozdział „Przyciski sterujące i znaczników”).</p>
+"""))
+
     # ------------------------------------------------------------------------------------------------------------ 20
-    s.append(("20. Znaczniki i wyszukiwanie w danych", """
+    s.append(("21. Znaczniki i wyszukiwanie w danych", """
 <h2>Znaczniki i wyszukiwanie w danych</h2>
 <p>Znaczniki to adnotacje do wykresu: trzymają <b>czas bezwzględny</b>, więc pasują do wykresu na żywo, nagrania z bazy i pliku CSV. Leżą w osobnym pliku
 (<tt>Dokumenty\\S7Trace\\markers.db</tt>), nigdy w nagraniach.</p>
 """ + _img("wykres_znaczniki", "Znaczniki na wykresie: punktowy, zakres czasu (półprzezroczysty obszar) i różnica sygnału") + _img("okno_glowne_znaczniki", "Całe okno ze znacznikami roboczymi (do zapisania)") + """
-<h3>Rodzaje</h3>
+<h3>Rodzaje znaczników i jak je dodać</h3>
+<p>Każdy znacznik powstaje w <b>oknie edycji</b>, które otwiera się przy dodawaniu: wpisujesz tytuł i właściwości, <b>OK</b> dodaje znacznik do <b>zapisu roboczego</b> (patrz niżej), <b>Anuluj</b> nic nie zmienia.
+Rodzaj można w oknie zmienić (pole <b>Rodzaj</b>).</p>
 <ul>
-<li><b>Punkt</b> – pionowa linia w jednej chwili.</li>
-<li><b>Zakres czasu</b> – półprzezroczysty obszar między dwiema chwilami.</li>
-<li><b>Różnica sygnału</b> – dla <b>jednego</b> sygnału: poziomy na obu końcach i różnica wartości.</li>
+<li><b>Punkt</b> – pionowa linia w jednej chwili (np. „start nagrzewania”). Dodajesz go: <b>prawym przyciskiem na wykresie → „Dodaj znacznik (punkt) tutaj…”</b> (chwila pod kursorem), albo <b>Znaczniki → „Dodaj znacznik teraz”</b> (Ctrl+Shift+M) i przyciskiem <b>Dodaj znacznik</b>
+pod wykresem – wtedy chwilą jest <b>najnowsza próbka</b> (na żywo) albo środek widocznego zakresu (wstrzymany wykres lub nagranie).</li>
+<li><b>Zakres czasu</b> – półprzezroczysty obszar między dwiema chwilami (np. „okno pomiarowe”). Dodajesz: <b>prawy przycisk → „Dodaj znacznik zakresu czasu tutaj…”</b> – zakres zaczyna się pod kursorem i trwa 10 % okna czasu (co najmniej 0,5 s); koniec ustawisz w oknie (pole <b>Do</b>) albo później przeciągnięciem krawędzi.</li>
+<li><b>Różnica sygnału</b> – dla <b>jednego</b> sygnału: dwa poziomy na końcach zakresu i różnica wartości między nimi (np. o ile wzrosła temperatura). Dodajesz: <b>prawy przycisk → „Dodaj znacznik różnicy poziomu…”</b>; sygnał to ten, w którego paśmie kliknięto
+(w układzie pasm), a w układzie offset – pierwszy rysowany sygnał. Pozycja jest niedostępna, gdy żaden sygnał nie jest narysowany. Odczyty wyliczane są z danych wykresu i odświeżają się razem z nim.</li>
 </ul>
-<p>Znacznik może dotyczyć wszystkich przebiegów albo tylko wybranych; ma tytuł, opis, uwagi, kolor, priorytet, grupę, grubość i rodzaj linii, przezroczystość obszaru,
-opcję pokazywania nazwy na wykresie, autora oraz daty założenia i modyfikacji.</p>
+<p>Znacznik może dotyczyć <b>wszystkich przebiegów</b> albo tylko wybranych (pole <b>Dotyczy</b>); ma tytuł, opis, uwagi, kolor, priorytet, grupę, grubość i rodzaj linii, przezroczystość obszaru, opcję pokazywania nazwy na wykresie,
+autora oraz daty założenia i modyfikacji. Najechanie na znacznik pokazuje dymek z jego danymi.</p>
+<h3>Przesuwanie, zmiana i usuwanie</h3>
+<ul>
+<li><b>Przesuwanie.</b> Znaczniki są domyślnie <b>zablokowane</b> – przeciągnięcie myszą przesuwa wykres, a nie znacznik (nie przesuniesz ich przypadkiem). Żeby przesunąć konkretny znacznik: prawy przycisk na nim → <b>„Zmień pozycję znacznika”</b> (pozycja z haczykiem; haczyk można zdjąć).
+Odblokowany punkt przeciągasz za linię, zakres – za krawędzie lub całość, różnicę – za jej końce. Puszczenie przycisku <b>zmienia znacznik w zapisie roboczym</b>. Dokładny czas można też wpisać w oknie edycji (<b>Czas (od)</b>, <b>Do</b>).</li>
+<li><b>Zmiana danych i właściwości.</b> Prawy przycisk → <b>„Edytuj znacznik…”</b> (albo dwuklik, albo „Lista znaczników…”) otwiera to samo okno z tytułem, opisem, uwagami, priorytetem, kolorem, rodzajem i grubością linii, przezroczystością, grupą i listą sygnałów.
+„Ukryj / Pokaż nazwę znacznika na wykresie” przełącza etykietę; „Grupa znaczników” dodaje do grupy, przenosi, podświetla całą grupę, przechodzi do następnego / poprzedniego znacznika grupy i zmienia nazwę grupy.</li>
+<li><b>Usuwanie.</b> Prawy przycisk → <b>„Usuń znacznik”</b> (albo przycisk Usuń w liście). Znacznik jest wtedy tylko <b>oznaczony do usunięcia</b> w zapisie roboczym (na liście – przekreślony); naprawdę znika po <b>Zapisz znaczniki</b>. <b>„Cofnij zmiany tego znacznika (niezapisane)”</b> przywraca stan z ostatniego zapisu.</li>
+</ul>
 """ + _img("menu_znacznik", "Prawy przycisk na znaczniku") + _table([
         ("Edycja…", "Okno właściwości znacznika (niżej)."),
         ("Zmień pozycję znacznika", "Domyślnie znaczniki są <b>zablokowane</b> – przeciągnięcie przesuwa wykres. Po zaznaczeniu tej pozycji (można odznaczyć) znacznik można przeciągać myszą."),
@@ -505,6 +618,16 @@ Pytanie nie pojawia się, gdy inna karta ma to samo połączenie. Przy trwałym 
 """ + _img("okno_znaczniki_bez_zapisu", "Pytanie przy zamykaniu karty ze znacznikami tylko dla bufora") + """
 <p>Tabela ma ten sam standard co wszystkie tabele programu (rozdział „Tabele – jeden standard”): sortowanie po kliknięciu nagłówka, regulacja szerokości kolumn, naprzemienne cieniowanie wierszy.
 Pole wyszukiwania filtruje po tytule, opisie, uwagach, autorze, grupie i kolorze. Pozycje robocze są oznaczone kolorem (nowe, zmienione, usunięte – przekreślone).</p>
+<h3>Co się dzieje ze znacznikami – podsumowanie</h3>
+""" + _table([
+        ("Dodanie, zmiana, przesunięcie, usunięcie", "Tylko w <b>zapisie roboczym</b> (oznaczone gwiazdką), dopóki nie klikniesz <b>Zapisz znaczniki</b>. Przycisk, menu i wykaz zmian pokazują liczbę niezapisanych zmian."),
+        ("Zapisz znaczniki", "Zapisuje wszystkie zmiany robocze w <b>jednej operacji</b> (albo żadnej). Zmiany można też odrzucić przy zamykaniu."),
+        ("Zamknięcie karty lub programu", "Z niezapisanymi zmianami program pokazuje <b>wykaz zmian</b> (nowe / zmienione / do usunięcia oraz niezapisane obszary Manual REC) i pyta: Zapisz / Odrzuć / Wróć."),
+        ("Znaczniki bez nagrania (tylko bufor)", "Istnieją tylko dla danych widocznych na wykresie. Przy <b>zamknięciu karty lub programu</b>, <b>Start z czyszczeniem wykresu</b> (Auto-Reset), <b>Reset</b> i <b>wczytaniu nagrania</b> zamiast wykresu program pyta: <b>Usuń znaczniki</b> / <b>Zostaw</b> / <b>Wróć</b>."),
+        ("Znaczniki z nagraniem", "Należą do nagrania (kolumna „Zapis”) i <b>wędrują z danymi</b>: po zapisie Manual REC i po „Zmień Start REC” znaczniki z tego fragmentu przechodzą do właściwego nagrania. Przy trwałym usunięciu nagrania program pyta, co zrobić z jego znacznikami (kosz nie pyta, automatyczne czyszczenie nie usuwa znaczników)."),
+        ("Znaczniki REC, odczytu i TRIG", "Rysowane przez program z przebiegu; <b>nie trafiają</b> do pliku znaczników i znikają po nowym przebiegu / Reset (Start / Stop REC, Stop / Start odczytu, linie TRIG)."),
+        ("Pokaż też znaczniki z innych połączeń", "Domyślnie wykres pokazuje znaczniki własnego połączenia; ta pozycja w menu wykresu dokłada pozostałe."),
+    ], ("Sytuacja", "Co robi program")) + """
 <h3>Szukaj w danych</h3>
 """ + _img("okno_szukaj") + """
 <p>Wyszukiwarka wartości: sygnały o zadanej wartości, w przedziale, ze zmianą albo zboczem (do 3 warunków naraz – <b>wszystkie</b> muszą być spełnione w tej samej chwili; opcjonalnie minimalny czas trwania)
@@ -543,7 +666,7 @@ Ustawienia są częścią motywu interfejsu (zapisują się w pliku konfiguracji
 """))
 
     # ------------------------------------------------------------------------------------------------------------ 21
-    s.append(("21. Okno „Sygnały do śledzenia”", """
+    s.append(("22. Okno „Sygnały do śledzenia”", """
 <h2>Okno „Sygnały do śledzenia”</h2>
 """ + _img("okno_sygnaly_stop", "Okno przy zatrzymanym połączeniu – wszystkie kolumny edytowalne") + """
 <p>Każdy wiersz to jedna zmienna. Podczas pracy połączenia można <b>dodawać nowe zmienne</b> (pobierane od następnego cyklu, w starszych próbkach mają przerwę);
@@ -587,7 +710,7 @@ nie zmienia kolejności sygnałów na wykresie (ta wynika z numeru wiersza). Mo�
 """))
 
     # ------------------------------------------------------------------------------------------------------------ 22
-    s.append(("22. Tabele – jeden standard", """
+    s.append(("23. Tabele – jeden standard", """
 <h2>Tabele – jeden standard w całym programie</h2>
 <p>Wszystkie tabele programu (Sygnały do śledzenia, Przegląd nagrań, Lista znaczników, wyniki wyszukiwania, Aktywne sesje, Zaległe bufory, wyniki kreatora, diagnostyka)
 zachowują się i wyglądają tak samo:</p>
@@ -603,7 +726,7 @@ zachowują się i wyglądają tak samo:</p>
 """))
 
     # ------------------------------------------------------------------------------------------------------------ 23
-    s.append(("23. Pasek statusu", """
+    s.append(("24. Pasek statusu", """
 <h2>Pasek statusu</h2>
 """ + _img("pasek_statusu", "Pasek statusu: komunikat o połączeniu") + """
 <p>Pasek na dole okna pokazuje komunikaty programu: stan połączenia, ścieżkę pliku REC / triggera, wynik eksportu, ostrzeżenia (np. o różnicy zegara PLC)
@@ -623,11 +746,12 @@ tekst nie ucieka poza pasek. Przy większej liczbie linii tekst przeciąga się 
 """))
 
     # ------------------------------------------------------------------------------------------------------------ 24
-    s.append(("24. Diagnostyka połączenia", """
+    s.append(("25. Diagnostyka połączenia", """
 <h2>Diagnostyka połączenia (przycisk „Diagnostyka…”, menu Diagnostyka, Ctrl+D)</h2>
 <p>Okno pokazuje na żywo (odświeżanie co 0,5 s) pełne statystyki łącza z bieżącą kartą i można je trzymać otwarte obok wykresu.
 Na górze jest <b>ocena łącza</b> (Bardzo dobre / Dobre / Przeciętne / Słabe / Brak połączenia) wraz z <b>bargrafem</b> o 10 segmentach, lista konkretnych spostrzeżeń
 i zaleceń (np. „zwiększ cykl do ≥ 41 ms”). Statystyki zerują się przy każdym Start; po Stop zostają widoczne do następnego Start.</p>
+<p>Pod nagłówkiem okna stoi zdanie <b>„Diagnostyka połączenia za adresem IP: …, port: …”</b> – adres i port karty, której dotyczy okno (przy adresie bez portu: port domyślny 102).</p>
 <h3>Zakładka „Opóźnienia”</h3>
 """ + _img("okno_diagnostyka_opoznienia") + _table([
         ("Czas odczytu PLC", "Ile trwa jeden pełny cykl odczytu (wysłanie żądań i odebranie odpowiedzi) w ms: wartość <b>chwilowa</b>, średnia z ostatnich 10 s i 60 s, średnia od startu, min, max, odchylenie standardowe oraz percentyle P95 i P99."),
@@ -654,6 +778,18 @@ i zaleceń (np. „zwiększ cykl do ≥ 41 ms”). Statystyki zerują się przy 
         ("Przepustowość danych, żądania/s", "Faktyczny przepływ danych użytkowych ze sterownika."),
         ("Ruch w sieci – szacunek [kb/s]", "Dane plus ok. 150 B nagłówków na parę żądanie/odpowiedź – wartość orientacyjna."),
     ], ("Wielkość", "Znaczenie")) + """
+<h3>Zakładka „Obciążenie sieci i PLC”</h3>
+""" + _img("okno_diagnostyka_obciazenie") + _table([
+        ("Częstotliwość odczytów [Hz]", "Ile pełnych cykli odczytu na sekundę wykonuje program."),
+        ("Dane odczytane ze sterownika [B/s]", "Dane użytkowe (bez nagłówków) pobierane ze sterownika w ciągu sekundy."),
+        ("Ruch DO sterownika / OD sterownika [kb/s]", "Przepływ żądań wysyłanych do sterownika i odpowiedzi odbieranych od niego (z nagłówkami Ethernet / IP / TCP / S7)."),
+        ("Ruch łącznie [kb/s]", "Suma obu kierunków – tyle sieci zajmuje <b>ta aplikacja</b> dla tego połączenia."),
+        ("Pakiety DO / OD sterownika [1/s]", "Liczba żądań i pakietów odpowiedzi na sekundę (odpowiedź większa niż jeden segment TCP – ok. 1460 B – liczy się jako kilka pakietów)."),
+        ("Zajętość sterownika odpowiedziami dla tej aplikacji [%]", "Jaką część czasu sterownik poświęca na odpowiadanie tej aplikacji (czas odczytu × częstotliwość). To miara <b>obciążenia komunikacyjnego sterownika przez ten program</b>."),
+    ], ("Wielkość", "Znaczenie")) + """
+<p>Kolumny to <b>chwilowo</b> (ostatnie 2 s), średnia z <b>10 s</b>, z <b>60 s</b> i <b>od początku</b> odczytu. Wartości są <b>szacunkiem</b>: program liczy je z zaplanowanego rozmiaru jednego cyklu (dane i liczba żądań S7) oraz zmierzonej częstotliwości i czasu odczytu.
+Czego z samego programu <b>nie da się zmierzyć</b>: dokładnej liczby pakietów (to robi dopiero zrzut sieci – Npcap albo port lustrzany przełącznika), obciążenia <b>procesora</b> sterownika oraz tego, <b>z jakimi adresami sterownik rozmawia</b> i czy odpowiadają.
+Przycisk <b>Kto łączy się ze sterownikiem…</b> pokazuje tylko połączenia TCP z <b>tego komputera</b> do sterownika (port lokalny, stan, program, PID) – np. czy TIA Portal albo drugi S7Trace też go odpytują.</p>
 <h3>Zakładka „Wykresy w czasie”</h3>
 """ + _img("okno_diagnostyka_wykresy") + """
 <p>Czas odczytu PLC i ping ICMP w funkcji czasu (zakres: 10 s … 60 min; dla zakresów powyżej 2 min wykres czasu odczytu pokazuje maksimum z każdej sekundy) z zaznaczonym ustawionym cyklem (czerwona linia).
@@ -667,7 +803,7 @@ Piki powyżej linii cyklu oznaczają pomijane próbki.</p>
     ], ("Przycisk", "Działanie"))))
 
     # ------------------------------------------------------------------------------------------------------------ 25
-    s.append(("25. Zapis do baz danych i przegląd nagrań", """
+    s.append(("26. Zapis do baz danych i przegląd nagrań", """
 <h2>Zapis do baz danych i przegląd nagrań</h2>
 <p>Poza plikiem CSV nagrywanie REC może pisać do bazy. Cel wybierasz w panelu „Nagrywanie REC” (pole „Zapis do”); ustawienia celu: przycisk „…” albo
 Ustawienia → Zapis nagrań w bazach danych…. Pełny opis baz jest w pliku <tt>BAZY_DANYCH.md</tt>.</p>
@@ -709,7 +845,7 @@ Kiedy program pyta o tytuł, ustawia pole <b>Nazwa nagrania</b> na zakładce „
     ], ("Element", "Działanie"))))
 
     # ------------------------------------------------------------------------------------------------------------ 26
-    s.append(("26. Renderowanie wykresu", """
+    s.append(("27. Renderowanie wykresu", """
 <h2>Ustawienia → Renderowanie wykresu</h2>
 """ + _img("okno_renderowanie") + """
 <p>Wszystko, co decyduje o obciążeniu procesora przez wykres, jest regulowane (zmiany działają od razu, „Anuluj” je cofa, „Domyślne” przywraca ustawienia oszczędne):</p>
@@ -725,7 +861,7 @@ Kiedy program pyta o tytuł, ustawia pole <b>Nazwa nagrania</b> na zakładce „
 """))
 
     # ------------------------------------------------------------------------------------------------------------ 27
-    s.append(("27. Interfejs: kolory, czcionka, tabele", """
+    s.append(("28. Interfejs: kolory, czcionka, tabele", """
 <h2>Ustawienia → Interfejs</h2>
 """ + _img("okno_interfejs", "Okno „Interfejs – kolory i czcionka” (początek listy kolorów)") + """
 <ul>
@@ -739,6 +875,7 @@ Starsze pliki konfiguracji bez tych kolorów dostają wartości wyliczone z doty
 <li><b>Czcionka</b>: rodzaj i rozmiar. <b>REC: częstotliwość migania</b> kropki (domyślnie 0,5 Hz).</li>
 <li><b>Pasek statusu</b>: maksymalna liczba linii, kolor tła i tekstu, justowanie tekstu.</li>
 <li><b>Nazwy sygnałów na wykresie</b>: „Legenda (ramka z listą)” albo „Opisy przy sygnałach” (rozdział „Wykres główny”).</li>
+<li><b>Elementy nieaktywne</b>: <b>Ukrywane</b> (domyślnie – element panelu ustawień wyłączony przez inne ustawienie znika) albo <b>Wyszarzone</b> (zostaje na miejscu, wyłączony). Szczegóły: rozdział „Zwijanie, przeciąganie i ukrywanie pól panelu”.</li>
 <li><b>Belki zmiany rozmiaru</b> (między panelem a wykresem i nad wykresem przeglądowym): kolor oraz „zawsze widoczne” – domyślnie belka jest cienka i pojawia się dopiero po najechaniu kursorem.</li>
 <li>Zmiany widać na żywo; <b>Anuluj</b> przywraca poprzedni wygląd, <b>Domyślne</b> – ustawienia fabryczne.</li>
 </ul>
@@ -750,7 +887,7 @@ plik starszej wersji bez któregoś parametru zostawia bieżącą wartość.</p>
 """))
 
     # ------------------------------------------------------------------------------------------------------------ 28
-    s.append(("28. Sesje i serwer Web", """
+    s.append(("29. Sesje i serwer Web", """
 <h2>Aktywne sesje programu i serwer Web</h2>
 <h3>Aktywne sesje programu (ten komputer)</h3>
 """ + _img("okno_sesje") + """
@@ -768,7 +905,7 @@ Lista odświeża się na żywo; wpis znika po zamknięciu programu (po ok. 10 s 
 """))
 
     # ------------------------------------------------------------------------------------------------------------ 29
-    s.append(("29. Tryb Web", """
+    s.append(("30. Tryb Web", """
 <h2>Tryb Web (centralny serwer)</h2>
 <p>Poza programem desktopowym dostępny jest <b>serwer Web</b> (<tt>python -m s7trace.web</tt> albo <tt>Web-Serwer.bat</tt> w pakiecie): te same wykresy, nagrywanie, triggery, znaczniki i przegląd nagrań
 w przeglądarce, bez instalacji programu na stanowisku. Pełny opis: plik <tt>WEB.md</tt>.</p>
@@ -783,7 +920,7 @@ układ i ukrywanie pól panelu, pomoc „?” (te same teksty).</li>
 """))
 
     # ------------------------------------------------------------------------------------------------------------ 30
-    s.append(("30. Metody połączenia i kreator", """
+    s.append(("31. Metody połączenia i kreator", """
 <h2>Metody połączenia i kreator połączenia</h2>
 <p>Program potrafi czytać sterowniki czterema metodami. Metodę wybierasz w <b>Ustawienia → Metoda połączenia…</b> (per karta) albo zostawiasz <b>Automatycznie</b> –
 przy każdym Start program sam rozpoznaje, co działa, a pole <b>Metoda</b> w panelu „Połączenie” pokazuje wynik (np. <b>Auto: S7comm (snap7, PUT/GET)</b>).</p>
@@ -814,7 +951,7 @@ albo włączyć PUT/GET. Gdy nic nie działa – kreator pokazuje raport z zalec
 """))
 
     # ------------------------------------------------------------------------------------------------------------ 31
-    s.append(("31. Ograniczenia, blokady i wymagania", """
+    s.append(("32. Ograniczenia, blokady i wymagania", """
 <h2>Ograniczenia, blokady i wymagania</h2>
 <h3>Czego program nie zrobi</h3>
 <ul>
@@ -839,7 +976,7 @@ albo włączyć PUT/GET. Gdy nic nie działa – kreator pokazuje raport z zalec
 """))
 
     # ------------------------------------------------------------------------------------------------------------ 32
-    s.append(("32. Pliki CSV i skróty klawiszowe", """
+    s.append(("33. Pliki CSV i skróty klawiszowe", """
 <h2>Pliki CSV</h2>
 <p>Pliki zawierają kolumny <tt>time_s</tt> (sekundy od startu), <tt>timestamp</tt> (data i godzina) i po jednej kolumnie na sygnał; w komentarzach <tt># signal:</tt> zapisane są definicje sygnałów.
 Puste pole = brak danych (przerwa w połączeniu lub zmienna dodana później). Zapis „tylko zmiany stanu” zawiera wiersz tylko wtedy, gdy któraś wartość się zmieniła.</p>

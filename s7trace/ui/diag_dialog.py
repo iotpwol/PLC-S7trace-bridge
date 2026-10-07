@@ -119,6 +119,9 @@ class DiagDialog(QDialog):
         self.lbl_notes = QLabel()
         self.lbl_notes.setWordWrap(True)
         self.lbl_notes.setTextFormat(Qt.RichText)                 # numbers with units are bold (core/richtext.py)
+        self.lbl_target = QLabel()
+        self.lbl_target.setTextFormat(Qt.RichText)
+        lay.addWidget(self.lbl_target)
         top = QHBoxLayout()
         top.addWidget(QLabel("Ocena łącza:"))
         top.addWidget(self.lbl_rating)
@@ -185,6 +188,24 @@ class DiagDialog(QDialog):
         self.t_thr = _Table(self.thr_names, ["Wartość"])
         tabs.addTab(self.t_thr, "Przepustowość")
 
+        # --- load of the link and of the PLC caused by this program
+        self.load_rows = [("hz", "Częstotliwość odczytów [Hz]", "{:.1f}"), ("data_Bps", "Dane odczytane ze sterownika [B/s]", "{:.0f}"),
+                          ("to_plc_kbps", "Ruch DO sterownika – żądania [kb/s]", "{:.1f}"), ("from_plc_kbps", "Ruch OD sterownika – odpowiedzi [kb/s]", "{:.1f}"),
+                          ("total_kbps", "Ruch łącznie [kb/s]", "{:.1f}"), ("pkts_to", "Pakiety DO sterownika – żądania [1/s]", "{:.1f}"),
+                          ("pkts_from", "Pakiety OD sterownika – odpowiedzi [1/s]", "{:.1f}"), ("plc_busy_pct", "Zajętość sterownika odpowiedziami dla tej aplikacji [%]", "{:.2f}")]
+        self.t_load = _Table([r[1] for r in self.load_rows], ["Chwilowo (2 s)", "Śr. 10 s", "Śr. 60 s", "Śr. całość"])
+        lw = QWidget()
+        lv = QVBoxLayout(lw)
+        lv.addWidget(self.t_load, 1)
+        note = QLabel("Wartości są <b>szacunkiem</b>: z zaplanowanego rozmiaru jednego cyklu (dane i liczba żądań S7) oraz zmierzonej częstotliwości i czasu odczytu. "
+                      "Dokładną liczbę pakietów da dopiero zrzut sieci (Npcap / port lustrzany przełącznika); <b>obciążenia procesora sterownika</b> "
+                      "ani <b>listy adresów, z którymi sterownik rozmawia</b>, nie widać z tej aplikacji – patrz przycisk „Kto łączy się ze sterownikiem…”. "
+                      "„Zajętość sterownika” = jaką część czasu sterownik poświęca na odpowiedzi dla tej aplikacji (czas odczytu × częstotliwość).")
+        note.setWordWrap(True)
+        note.setTextFormat(Qt.RichText)
+        lv.addWidget(note)
+        tabs.addTab(lw, "Obciążenie sieci i PLC")
+
         # --- charts
         self.cb_span = QComboBox()
         for label, sec in SPANS:
@@ -222,17 +243,21 @@ class DiagDialog(QDialog):
         self.btn_port = QPushButton("Test portu TCP…")
         self.btn_port.setToolTip("Jednorazowe nawiązanie połączenia TCP z portem S7 (domyślnie 102) – mierzy czas i sprawdza, "
                                  "czy port jest osiągalny (routing, zapora).")
+        self.btn_peers = QPushButton("Kto łączy się ze sterownikiem…")
+        self.btn_peers.setToolTip("Lista połączeń TCP z TEGO komputera do sterownika (port, stan, program) – np. czy TIA Portal albo drugi S7Trace "
+                                  "też go odpytują. Połączeń z innych komputerów sterownik nie pokazuje z zewnątrz.")
         self.btn_reset = QPushButton("Resetuj statystyki")
         self.btn_copy = QPushButton("Kopiuj raport")
         self.btn_save = QPushButton("Zapisz raport…")
         close = QPushButton("Zamknij")
-        for b in (self.chk_ping, self.btn_port, self.btn_reset, self.btn_copy, self.btn_save):
+        for b in (self.chk_ping, self.btn_port, self.btn_peers, self.btn_reset, self.btn_copy, self.btn_save):
             row.addWidget(b)
         row.addStretch()
         row.addWidget(close)
         lay.addLayout(row)
         close.clicked.connect(self.close)
         self.btn_port.clicked.connect(self._port_test)
+        self.btn_peers.clicked.connect(self._peers)
         self.btn_reset.clicked.connect(self._reset)
         self.btn_copy.clicked.connect(lambda: QApplication.clipboard().setText(self.report()))
         self.btn_save.clicked.connect(self._save)
@@ -261,6 +286,7 @@ class DiagDialog(QDialog):
 
     def refresh(self) -> None:
         self.setWindowTitle(f"Diagnostyka połączenia – {self.tab.title()}")
+        self.lbl_target.setText(self._target_text())
         diag, d, p = self._snap()
         if d is None:
             self.lbl_rating.setText("Brak danych")
@@ -317,6 +343,11 @@ class DiagDialog(QDialog):
                 _f(p["jitter"]) if p else "—"]
         for i, t in enumerate(vals):
             r.put(i, 0, t)
+        # load of the link / the PLC
+        for r, (key, _label, fmt) in enumerate(self.load_rows):
+            for c, wk in enumerate(("now", "w10", "w60", "all")):
+                v = d.get("load", {}).get(wk, {}).get(key)
+                self.t_load.put(r, c, "—" if v is None else fmt.format(v))
         # throughput
         thr = [f"{d['cycle_ms']:g}", _f(d["expected_rate"]), _f(d["rate10"]), _f(d["rate"]), _f(d["max_rate"]),
                str(d["safe_cycle_ms"]), str(d["bytes_per_cycle"]), str(d["req_per_cycle"]),
@@ -358,6 +389,25 @@ class DiagDialog(QDialog):
         if self.tab.ping_probe:
             self.tab.ping_probe.reset()
         self.refresh()
+
+    def _target_text(self) -> str:
+        """'Diagnostyka połączenia za adresem IP: 127.0.0.1:8080' - the address (and port) this window talks about."""
+        host, port = parse_host(self.tab.ed_ip.text())
+        if not host:
+            return "Diagnostyka połączenia – adres IP nie jest ustawiony."
+        given = ":" in self.tab.ed_ip.text()
+        return f"Diagnostyka połączenia za adresem IP: {_b(host)}, port: {_b(port)}" + ("" if given else " (domyślny)")
+
+    def _peers(self) -> None:
+        host, _port = parse_host(self.tab.ed_ip.text())
+        rows = dg.local_connections_to(host)
+        if not rows:
+            msg = f"Z tego komputera nie ma teraz żadnych połączeń TCP do {host}."
+        else:
+            msg = f"Połączenia TCP z tego komputera do {host}:\n\n" + "\n".join(
+                f"  port lokalny {r['lport']} → {r['rport']}   {r['state']}   {r['process']} (PID {r['pid']})" for r in rows)
+        QMessageBox.information(self, "Kto łączy się ze sterownikiem", msg + "\n\nSterownik nie udostępnia z zewnątrz listy adresów, "
+                                "z którymi rozmawia – widać tylko połączenia z tego komputera.")
 
     def _port_test(self) -> None:
         host, port = parse_host(self.tab.ed_ip.text())
