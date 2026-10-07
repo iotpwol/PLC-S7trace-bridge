@@ -113,6 +113,8 @@ class OpcUaDriver:
 
     def connect(self, host, rack=0, slot=0, port=0):
         from asyncua.sync import Client            # lazy: optional dependency
+        from .opcua_loop import make_daemon
+        make_daemon()
         o = self.o
         self.client = Client(f"opc.tcp://{host}:{int(o.get('opcua_port', 4840))}", timeout=5)
         if not o.get("opcua_anonymous", True) and o.get("username"):

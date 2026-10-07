@@ -6,7 +6,7 @@ from typing import Callable
 
 from PySide6.QtCore import QByteArray, QEvent, QObject, Qt, QTimer, Signal as QtSignal
 from PySide6.QtGui import QColor, QCursor
-from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QColorDialog, QComboBox,
+from PySide6.QtWidgets import (QAbstractItemView, QAbstractSpinBox, QApplication, QCheckBox, QColorDialog, QComboBox,
                                QDialog, QDoubleSpinBox, QFileDialog, QHBoxLayout, QHeaderView, QInputDialog,
                                QLabel, QLineEdit, QMenu, QMessageBox, QPushButton, QSpinBox, QTableWidget,
                                QTableWidgetItem, QToolTip, QVBoxLayout, QWidget)
@@ -174,6 +174,9 @@ class _RowFilter(QObject):
             row = self.dlg._row_of(obj)
             if row >= 0:
                 self.dlg._last_row = row
+        elif t == QEvent.Wheel and self.dlg._in_spin(obj):
+            QApplication.sendEvent(self.dlg.table.viewport(), ev)       # the wheel scrolls the list - it never changes a number by accident
+            return True
         return False
 
 
@@ -395,7 +398,17 @@ class SignalsDialog(QDialog):
         widget.installEventFilter(self._filter)
         for child in widget.findChildren(QWidget):
             child.installEventFilter(self._filter)
-        widget.setMouseTracking(True)
+        if isinstance(widget, QAbstractSpinBox):
+            widget.setFocusPolicy(Qt.StrongFocus)                  # like the number fields of the left panel: the wheel never reaches a field that was not clicked
+        else:
+            widget.setMouseTracking(True)                          # (a number field with mouse tracking got every mouse move - not needed for tooltips)
+
+    @staticmethod
+    def _in_spin(w) -> bool:
+        """True for a number field of the list (or its text part)."""
+        while w is not None and not isinstance(w, QAbstractSpinBox):
+            w = w.parentWidget()
+        return w is not None
 
     def _row_of(self, w) -> int:
         vp = self.table.viewport()

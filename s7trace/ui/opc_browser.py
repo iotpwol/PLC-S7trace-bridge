@@ -42,6 +42,8 @@ class OpcBrowser(QDialog):
         cancel.clicked.connect(self.reject)
         try:
             from asyncua.sync import Client
+            from ..core.opcua_loop import make_daemon
+            make_daemon()
             self.client = Client(f"opc.tcp://{host}:{int(opts.get('opcua_port', 4840))}", timeout=6)
             if not opts.get("opcua_anonymous", True) and opts.get("username"):
                 self.client.set_user(opts["username"])

@@ -225,3 +225,49 @@ def test_gap_text_is_the_marker_colour_and_reads_przerwa_with_two_spaces():
     assert 'f"Przerwa:  {L:.1f} s"' in src
     js = open(os.path.join(STATIC, "app.js"), encoding="utf-8").read()
     assert "`Przerwa:  ${gm.L[i].toFixed(1)} s`" in js
+
+
+def test_signal_names_stay_visible_in_the_offset_layout_without_data(app):
+    """'Opisy przy sygnałach' in the Offset + Gain layout stood at the median of the curve - with no data in view (stopped, empty chart) the names vanished."""
+    t = TraceTab(TabConfig(ip="10.1.2.3"), lambda: [])
+    t.resize(1200, 700)
+    t.show()
+    QApplication.processEvents()
+    t.plot.set_legend_style("labels")
+    t.cb_ylayout.setCurrentIndex(t.cb_ylayout.findData("offset"))
+    QApplication.processEvents()
+    t.plot.refresh(force=True)
+    QApplication.processEvents()
+    assert t.plot.tags and all(tag.isVisible() for tag in t.plot.tags)
+    t.shutdown()
+
+
+def test_wheel_over_a_number_field_of_the_signal_list_does_not_change_it(app):
+    from PySide6.QtCore import QPoint, QPointF, Qt
+    from PySide6.QtGui import QWheelEvent
+    from s7trace.core.types import Signal
+    from s7trace.ui.signals_dialog import SignalsDialog
+    d = SignalsDialog([Signal(name=f"S{i}", dtype="BYTE", db=1, byte=160 + i) for i in range(3)], False, lambda: [])
+    d.resize(1250, 460)
+    d.show()
+    QApplication.processEvents()
+    for key in ("byte", "bit", "share"):
+        w = d._cell(1, key)
+        v = w.value()
+        assert w.focusPolicy() == Qt.StrongFocus and not w.hasMouseTracking()          # built like the fields of the left panel
+        for target in (w, w.lineEdit()):
+            ev = QWheelEvent(QPointF(10, 10), QPointF(10, 10), QPoint(0, 0), QPoint(0, 120), Qt.NoButton, Qt.NoModifier, Qt.NoScrollPhase, False)
+            QApplication.sendEvent(target, ev)
+        assert w.value() == v, key
+    d.close()
+
+
+def test_asyncua_helper_threads_are_daemons():
+    """asyncua's synchronous client / server start a ThreadLoop thread that was not a daemon: it kept the process alive after a failed OPC UA probe."""
+    pytest.importorskip("asyncua")
+    from asyncua.sync import ThreadLoop
+    from s7trace.core.opcua_loop import make_daemon
+    make_daemon()
+    make_daemon()                                                    # idempotent
+    t = ThreadLoop()
+    assert t.daemon

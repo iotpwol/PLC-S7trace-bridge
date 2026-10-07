@@ -479,6 +479,9 @@ class PlotView(QWidget):
                 yv = (b + t) / 2
             else:
                 yv = self._tag_y.get(k)
+                if yv is None and k < len(self.signals):       # no data in view (stopped, empty chart): the name stands at the signal's own zero line
+                    lo, hi = self.vb.viewRange()[1]
+                    yv = min(max(self.signals[k].offset_y, lo), hi)
             pos.append(None if yv is None else self.vb.mapFromView(QPointF(0.0, yv)).y())
         for tag, p in zip(self.tags, pos):
             tag.setVisible(p is not None)

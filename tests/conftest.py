@@ -1,5 +1,22 @@
 """Shared test setup: no modal prompt may block a test run, no test writes into the real user profile."""
+import os
+import sys
+
 import pytest
+
+_EXIT = {"code": 0}
+
+
+def pytest_sessionfinish(session, exitstatus):
+    _EXIT["code"] = int(exitstatus)
+
+
+def pytest_unconfigure(config):
+    """Safety net: a stray non-daemon thread or child process left by a test (e.g. the helper thread of asyncua's synchronous server) must never keep
+    the Python process alive after the run - it used to hang for hours with the result already written. The run is over here: leave at once."""
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(_EXIT["code"])
 
 
 @pytest.fixture(autouse=True)

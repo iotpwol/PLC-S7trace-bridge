@@ -371,6 +371,8 @@ def probe_opcua(host: str, opts: dict, res: DetectResult) -> Step:
     st = Step("opcua", f"OPC UA (port {port})")
     try:
         from asyncua.sync import Client
+        from .opcua_loop import make_daemon
+        make_daemon()
     except Exception as e:
         st.status, st.detail = "fail", f"brak biblioteki asyncua: {e}"
         res.methods["opcua"] = {"ok": False, "note": st.detail}

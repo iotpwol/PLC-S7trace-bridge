@@ -177,6 +177,8 @@ def test_webapi_driver_login_and_batch_read(web):
 def opc():
     pytest.importorskip("asyncua")
     from asyncua.sync import Server
+    from s7trace.core.opcua_loop import make_daemon
+    make_daemon()
     port = free_port()
     srv = Server()
     srv.set_endpoint(f"opc.tcp://127.0.0.1:{port}")

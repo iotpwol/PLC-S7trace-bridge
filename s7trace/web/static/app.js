@@ -457,7 +457,7 @@ function drawChart(cv, ds, t0, t1, o) {
       if (o.points && inRange(i)) pts.push(x, y);
     }
     if (offsetMode) { const ys = fin.map((v) => bot - (v - lo) / span * (bot - top - 6) - 3).sort((a, b) => a - b); if (ys.length) medY = ys[ys.length >> 1]; }
-    lanes[k].tagY = offsetMode ? medY : (top + bot) / 2;
+    lanes[k].tagY = offsetMode ? (medY ?? top + (bot - top) * (k + 1) / (n + 1)) : (top + bot) / 2;       // no data in view: the names are spread evenly instead of vanishing
     if (o.hold && pen) g.lineTo(X(t1), py);          // a recording of changes: the last value holds to the end of the range
     g.stroke();
     if (o.points && pts.length <= 6000) { g.fillStyle = c; for (let i = 0; i < pts.length; i += 2) g.fillRect(pts[i] - 2, pts[i + 1] - 2, 4, 4); }   // "Punkty": at most 3000 shown
