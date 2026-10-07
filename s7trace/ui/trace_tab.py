@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDoubleSpinBo
                                QGroupBox, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMenu, QMessageBox,
                                QPushButton, QScrollArea, QSizePolicy, QSpinBox, QSplitter, QTabWidget, QVBoxLayout, QWidget)
 
-from ..core import panel_cfg, render_cfg, sysinfo
+from ..core import ext_bridge, panel_cfg, render_cfg, sysinfo
 from ..core import trigger as trg
 from ..core.trigger import DEFAULT_REC_NAME
 from ..core.acq_process import ProcAcquirer
@@ -143,6 +143,7 @@ class TraceTab(QWidget):
         self._continued = False          # the running connection continues the chart of the previous run (no reset, a gap in between)
         self._run_signals: list[Signal] = []
         self._pending: deque = deque()
+        self.ext = ext_bridge.NULL       # Ustawienia -> Analizator: the main window swaps in a real feed while this tab is the source
         self.engine = trg.TriggerEngine(cfg.trigger)
         self.trig_state = "idle"       # idle / armed / post / hold
         self.trig_t = 0.0
@@ -1382,6 +1383,7 @@ class TraceTab(QWidget):
         self._run_signals = [Signal.from_dict(s.to_dict()) for s in run]
         self.plot.set_signals(run)
         self._pending.clear()
+        self.send_ext_meta()
         self.engine = trg.TriggerEngine(c.trigger)
         self.trig_state = "armed" if c.trigger.enabled else "idle"
         self.btn_pause.setChecked(False)
@@ -1401,6 +1403,15 @@ class TraceTab(QWidget):
         self._set_buttons()
         self.stateChanged.emit(self.state)
         acq.start()
+
+    def send_ext_meta(self) -> None:
+        """Describes the running signal set to the analyzer (also called by the main window when this tab becomes the source)."""
+        if not self._run_signals:
+            return
+        self.ext.meta([{"name": s.name, "address": s.address, "dtype": s.dtype} for s in self._run_signals],
+                      self.cfg.cycle_ms / 1000.0, int(self.start_wall.timestamp() * 1e6), self.title(), self.cfg.ip)
+        if self.state in ("running", "reconnecting"):
+            self.ext.state(self.state)
 
     # ------------------------------------------------- Reset / Auto-Reset
     @staticmethod
@@ -1735,6 +1746,7 @@ class TraceTab(QWidget):
     def _on_state(self, state: str, msg: str):
         """Runs in GUI thread (queued from worker)."""
         gap = getattr(self.acq, "gap", None) if self.acq else None
+        self.ext.state("stopped" if state == "error" else state, gap)   # the analyzer forgets its lag window at pauses / reconnects
         if gap is not None:                                      # this run continues the chart after a pause: mark where it stopped / began again
             self.acq.gap = None
             self.mk.rec.m.add_gap(*gap)
@@ -1818,6 +1830,7 @@ class TraceTab(QWidget):
         names = [s.name for s in self._run_signals]
         while self._pending:
             t, vals = self._pending.popleft()
+            self.ext.sample(t, vals)
             if self.recorder:
                 self.recorder.write(t, vals)
             if self.trig_state == "armed" and tc.enabled and tc.signal in names \

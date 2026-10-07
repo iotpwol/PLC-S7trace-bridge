@@ -1,0 +1,12 @@
+Version 1.26: bridge to the external anomaly analyzer (S7SignalAnalyzer)
+
+Ustawienia -> "Analizator anomalii": an OFF-by-default TCP server on 127.0.0.1 (token, one source tab) that streams
+the samples of one tab to the separate S7SignalAnalyzer program and keeps its answers (status / events / score).
+
+- core/ext_bridge.py (Qt-free): Bridge, Feed / NULL feed, NDJSON proto 1, sender thread (~10 batches/s), hmac token
+- ui/analyzer_dialog.py + MainWindow (_start_bridge / _wire_bridge / menu item / ui["analyzer"])
+- TraceTab hooks: ext.meta (send_ext_meta), ext.sample (_drain), ext.state (_on_state); a no-op feed on every other tab
+- Help text, README, CLAUDE.md, WEB.md ch. 15 (no Web mirror, intentional); tests/test_ext_bridge.py (14 tests)
+- results are not drawn on the chart yet (stage C)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

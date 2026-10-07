@@ -368,6 +368,7 @@ dla zamkniętych połączeń; nagłówki `Cache-Control: no-store`, `X-Content-T
 Tryb Web **nie zastępuje** programu okienkowego, tylko go uzupełnia. Czego w przeglądarce nie ma (lub działa inaczej):
 
 - **Napisy osi „Sygnały” / „Czas”** (v1.20: nieprzezroczyste tło nad liczbami osi, przeciągane wzdłuż osi) są tylko w programie okienkowym; wykres w przeglądarce nie ma tytułów osi (opisy znaczników stojących w tym samym czasie układa w osobnych rzędach).
+- **Most do analizatora anomalii** (Ustawienia → Analizator anomalii, v1.26: serwer TCP na 127.0.0.1 przekazujący dane jednej karty zewnętrznemu programowi S7SignalAnalyzer) działa tylko w programie okienkowym; serwer Web nie ma odpowiednika (świadoma różnica na etapie wprowadzania funkcji).
 - **Ikona programu przy zegarze** (Ustawienia → Ikona programu: pasek zadań / obszar powiadomień / oba) i jej menu (połączenia W / LU / AU, obciążenie, Pokaż / Ukryj, Przypnij do belki, Zakończ z pytaniem; v1.22) dotyczą tylko okna programu; strona w przeglądarce nie ma odpowiednika.
 - **Wykres nagrania z bazy (v1.22):** rodzaj przerwy Stop → Start (pasek wykresu: „Przerwy Stop → Start”) działa też w widoku nagrania; przerwy są wykrywane z pustych wierszy nagrania (co najmniej 1 s), a nie z rejestru przebiegów serwera, więc przy mocnym przerzedzeniu danych (min / maks) bardzo krótka przerwa może zniknąć. Domyślny rodzaj przerwy dla nagrań to „pełna przerwa” (ustawienie połączenia dotyczy wykresu na żywo).
 

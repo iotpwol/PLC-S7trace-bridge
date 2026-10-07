@@ -9,7 +9,7 @@ from PySide6.QtGui import QAction, QActionGroup, QKeySequence
 from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QInputDialog, QMainWindow, QMenu,
                                QMessageBox, QStackedWidget, QTabBar, QToolButton, QToolTip, QWidget)
 
-from ..core import marker_look, panel_cfg, render_cfg, sessions, web_agent
+from ..core import ext_bridge, marker_look, panel_cfg, render_cfg, sessions, web_agent
 from ..core import symbols as sym
 from ..core.config import GAP_PX_MAX, GAP_PX_MIN, TabConfig, app_dir, load_app_config, save_app_config, symbols_path
 from ..core.naming import suggest_config_name
@@ -17,7 +17,7 @@ from ..core.types import LEGEND_STYLES
 from . import theme as th
 from .help_dialog import HelpDialog
 from .conn_dialog import ConnectionDialog
-from ..version import about_lines
+from ..version import VERSION, about_lines
 from . import help_mode, tray
 from .interface_dialog import InterfaceDialog
 from .render_dialog import RenderDialog
@@ -109,6 +109,8 @@ class MainWindow(QMainWindow):
         self.ui.pop("folds", None)
         self.ui.pop("info_tab", None)
         self.web_cfg = web_agent.normalize(self.ui.get("web_server"))         # Ustawienia -> Serwer Web
+        self.analyzer_cfg = ext_bridge.normalize(self.ui.get("analyzer"))     # Ustawienia -> Analizator anomalii
+        self.bridge: ext_bridge.Bridge | None = None
         self.render_cfg = render_cfg.normalize(self.ui.get("render"))      # Ustawienia -> Renderowanie wykresu
         self.marker_look = self.theme["marker_look"]       # Znaczniki -> Wygląd znaczników (part of the interface configuration)
 
@@ -187,6 +189,8 @@ class MainWindow(QMainWindow):
         self._reporter = None
         self._refresh_agent_payload()
         self._start_reporter()
+        self._start_bridge()
+        self._heartbeat.timeout.connect(self._wire_bridge)       # new / renamed / closed tabs change who the source is
         self._autosave = QTimer(self)
         self._autosave.setInterval(20000)
         self._autosave.timeout.connect(self._save_config)
@@ -290,6 +294,7 @@ class MainWindow(QMainWindow):
         self._act(st, "Interfejs (kolory, czcionki)…", self.edit_interface)
         self._act(st, "Renderowanie wykresu (odświeżanie, punkty, obciążenie CPU)…", self.edit_render)
         self._act(st, "Serwer Web (zgłaszanie sesji i wspólny rejestr)…", self.edit_web_server)
+        self._act(st, "Analizator anomalii (most do S7SignalAnalyzer)…", self.edit_analyzer)
         self.menu_icon = st.addMenu("Ikona programu (pasek zadań / przy zegarze)")
         self.grp_icon = QActionGroup(self)
         self.act_icon = {}
@@ -390,6 +395,47 @@ class MainWindow(QMainWindow):
         if dlg.exec():
             self.web_cfg = dlg.result_cfg()
             self._start_reporter()
+
+    # ---------------------------------------------------------- bridge to the external analyzer
+    def _start_bridge(self) -> None:
+        """(Re)starts the bridge from `analyzer_cfg`; off by default (nothing listens, nothing is sent)."""
+        if self.bridge is not None:
+            self.bridge.stop()
+            self.bridge = None
+        for i in range(self.tabs.count()):
+            self.tabs.widget(i).ext = ext_bridge.NULL
+        c = self.analyzer_cfg
+        if c["enabled"]:
+            self.bridge = ext_bridge.Bridge(c["token"], c["port"], app_version=VERSION)
+            self.bridge.start()                                  # a failure stays in bridge.error (shown in the dialog)
+            self._wire_bridge()
+
+    def _wire_bridge(self) -> None:
+        """Only the source tab (matched by its title) feeds the bridge; every other tab keeps the no-op feed."""
+        if self.bridge is None or not self.bridge.running:
+            return
+        src = self.analyzer_cfg["source"]
+        mine = next((self.tabs.widget(i) for i in range(self.tabs.count()) if self.tabs.widget(i).title() == src), None)
+        for i in range(self.tabs.count()):
+            tab = self.tabs.widget(i)
+            if tab is mine:
+                if tab.ext is ext_bridge.NULL:
+                    tab.ext = self.bridge.feed()
+                    tab.send_ext_meta()                          # the tab may be running already: tell the analyzer what flows
+            elif tab.ext is not ext_bridge.NULL:
+                tab.ext = ext_bridge.NULL
+
+    def edit_analyzer(self) -> None:
+        from .analyzer_dialog import AnalyzerDialog
+        titles = [self.tabs.widget(i).title() for i in range(self.tabs.count())]
+        info = lambda: self.bridge.info() if self.bridge is not None else {"running": False, "error": "", "port": 0,
+                                                                         "clients": [], "status": None, "events": 0}
+        if not self.analyzer_cfg["source"] and self.tabs.currentWidget() is not None:
+            self.analyzer_cfg = {**self.analyzer_cfg, "source": self.tabs.currentWidget().title()}
+        dlg = AnalyzerDialog(self.analyzer_cfg, titles, info, self)
+        if dlg.exec():
+            self.analyzer_cfg = dlg.result_cfg()
+            self._start_bridge()
 
     def _apply_marker_look(self, cfg: dict) -> None:
         self.marker_look = marker_look.normalize(cfg)
@@ -661,6 +707,7 @@ class MainWindow(QMainWindow):
         self.ui["render"] = self.render_cfg
         self.ui.pop("marker_look", None)                       # now inside ui["theme"]
         self.ui["web_server"] = self.web_cfg
+        self.ui["analyzer"] = self.analyzer_cfg
         return {"tabs": [self.tabs.widget(i).to_config().to_dict() for i in range(self.tabs.count())],
                 "current": self.tabs.currentIndex(), "ui": self.ui}
 
@@ -822,6 +869,8 @@ class MainWindow(QMainWindow):
                     return
         self.tray.icon.setVisible(False)                          # no ghost icon left in the notification area
         self._heartbeat.stop()
+        if self.bridge is not None:
+            self.bridge.stop()
         if self._reporter is not None:
             self._reporter.stop()
         if sessions.REMOTE is self._reporter:

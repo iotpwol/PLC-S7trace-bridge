@@ -160,6 +160,7 @@ programu</b> (menu, pola, okna) i opis: co to jest, do czego służy, jak się z
          "użytkownik / hasło, certyfikat klienta OPC UA, Unit ID Modbus. Przycisk „Testuj” sprawdza wybraną metodę. Rozdział „Metody połączenia i kreator”."),
         ("Kreator połączenia (rozpoznawanie metody)…", "Rozpoznaje, która metoda działa, i podaje zalecenia."),
         ("Serwer Web (zgłaszanie sesji i wspólny rejestr)…", "Zgłaszanie sesji centralnemu serwerowi Web (wspólny rejestr dla wielu komputerów)."),
+        ("Analizator anomalii (most do S7SignalAnalyzer)…", "Udostępnianie danych jednej karty zewnętrznemu analizatorowi anomalii (port, token, karta źródłowa)."),
         ("Zapis nagrań w bazach danych (SQLite / InfluxDB / TimescaleDB)…", "Ustawienia celu zapisu REC (SQLite, InfluxDB, TimescaleDB), czasy, bufory, nagrania i użytkownicy."),
         ("Ikona programu (pasek zadań / przy zegarze)", "Gdzie ma być ikona programu: <b>Pasek zadań</b> (domyślnie), <b>Obszar powiadomień (przy zegarze)</b> albo <b>oba miejsca</b>. W trybie „przy zegarze” zminimalizowane okno znika z paska zadań, a kliknięcie ikony przy zegarze przywraca je; prawy przycisk na ikonie: „Pokaż S7Trace” i „Zakończ”. Gdy system nie ma obszaru powiadomień, program zostaje na pasku zadań. Wybór jest zapamiętywany."),
         ("Renderowanie wykresu (odświeżanie, punkty, obciążenie CPU)…", "Odświeżanie, limity punktów, wygładzanie – decyduje o obciążeniu procesora przez wykres."),
@@ -902,6 +903,16 @@ Lista odświeża się na żywo; wpis znika po zamknięciu programu (po ok. 10 s 
         ("Test połączenia", "Sprawdza adres i token."),
     ]) + """
 <p>Dzięki temu ostrzeżenie przed Start działa także wtedy, gdy ten sam sterownik skanuje ktoś na innym komputerze.</p>
+<h3>Analizator anomalii (most do S7SignalAnalyzer)</h3>
+""" + _table([
+        ("Udostępniaj dane analizatorowi", "Włącza most: program nasłuchuje na tym komputerze (127.0.0.1) i po połączeniu analizatora przesyła mu próbki jednej karty. Domyślnie wyłączone – wtedy nic nie nasłuchuje i nic nie jest wysyłane."),
+        ("Port", "Port TCP mostu (domyślnie 7700). Analizator musi łączyć się z tym samym portem."),
+        ("Token", "Hasło analizatora. „Nowy token” losuje inne, „Kopiuj” wkłada token do schowka – wpisz go po stronie analizatora. Połączenie bez poprawnego tokenu jest odrzucane."),
+        ("Karta źródłowa", "Karta, której dane trafiają do analizatora (jedna naraz). Wybór dotyczy karty o tej nazwie – po zmianie nazwy karty wybierz ją ponownie."),
+    ]) + """
+<p>Okno pokazuje na żywo, czy analizator jest połączony, ile zdarzeń zgłosił i jego ostatni status. Analizator (osobny program S7SignalAnalyzer)
+uczy się normalnej pracy maszyny i potem zgłasza odchylenia; <b>wyświetlanie wyników na wykresie nie jest jeszcze częścią programu</b>.
+Most nie zmienia akwizycji ani nagrywania, a w trybie Web nie ma odpowiednika.</p>
 """))
 
     # ------------------------------------------------------------------------------------------------------------ 29
